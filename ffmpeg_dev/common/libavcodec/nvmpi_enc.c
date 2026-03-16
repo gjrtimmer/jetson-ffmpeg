@@ -33,7 +33,7 @@ static const AVRational NVENC_TIMEBASE = {1, 1000000};
 
 #define OPT_packet_pool_size_MIN 1
 #define OPT_packet_pool_size_MAX 32
-#define OPT_packet_pool_size_DEFAULT 5
+#define OPT_packet_pool_size_DEFAULT 10
 
 typedef struct {
 	const AVClass *class;
