@@ -8,6 +8,7 @@ The goal is to ensure that anyone can continue development, update patches for n
 
 ## Table of Contents
 
+- [Dev Container](#dev-container)
 - [Repository Structure](#repository-structure)
 - [Architecture Overview](#architecture-overview)
 - [The nvmpi Library (libnvmpi)](#the-nvmpi-library-libnvmpi)
@@ -22,6 +23,14 @@ The goal is to ensure that anyone can continue development, update patches for n
 - [Codec Registration Reference](#codec-registration-reference)
 - [Version Compatibility Notes](#version-compatibility-notes)
 - [Troubleshooting](#troubleshooting)
+
+---
+
+## Dev Container
+
+A containerized development environment is available for working directly on Jetson hardware via VS Code Remote SSH. The container uses NVIDIA's L4T JetPack base image with GPU access through the NVIDIA container runtime.
+
+See [DEVCONTAINER.md](DEVCONTAINER.md) for setup instructions covering host prerequisites, VS Code configuration, and JetPack version selection.
 
 ---
 

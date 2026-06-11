@@ -1,0 +1,61 @@
+{
+    "name": "jetson-ffmpeg",
+    "build": {
+        "dockerfile": "Dockerfile",
+        "args": {
+            "L4T_VERSION": "r36.4.0"
+        }
+    },
+    "runArgs": [
+        "--runtime=nvidia",
+        "--hostname=jetson"
+    ],
+    "mounts": [
+        "source=/usr/lib/aarch64-linux-gnu/tegra,target=/usr/lib/aarch64-linux-gnu/tegra,type=bind,readonly",
+        "source=/usr/src/jetson_multimedia_api,target=/usr/src/jetson_multimedia_api,type=bind,readonly",
+        "source=/usr/local/cuda,target=/usr/local/cuda,type=bind,readonly"
+    ],
+    "containerEnv": {
+        "NVIDIA_VISIBLE_DEVICES": "all",
+        "NVIDIA_DRIVER_CAPABILITIES": "all",
+        "LD_LIBRARY_PATH": "/usr/lib/aarch64-linux-gnu/tegra:${containerEnv:LD_LIBRARY_PATH}"
+    },
+    "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
+    "workspaceFolder": "/workspace",
+    "remoteUser": "vscode",
+    "customizations": {
+        "vscode": {
+            "settings": {
+                "cmake.buildDirectory": "${workspaceFolder}/build",
+                "cmake.sourceDirectory": "${workspaceFolder}",
+                "cmake.configureOnOpen": true,
+                "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+                "C_Cpp.default.compileCommands": "${workspaceFolder}/build/compile_commands.json",
+                "workbench.editorAssociations": {
+                    "*.md": "bierner.markdown-preview-github-styles"
+                }
+            },
+            "extensions": [
+                "ms-vscode.cpptools",
+                "ms-vscode.cmake-tools",
+                "bierner.github-markdown-preview",
+                "bierner.markdown-preview-github-styles",
+                "bierner.markdown-mermaid",
+                "bierner.markdown-checkbox",
+                "bierner.markdown-emoji",
+                "bierner.markdown-footnotes",
+                "yzhang.markdown-all-in-one",
+                "davidanson.vscode-markdownlint",
+                "timonwong.shellcheck",
+                "redhat.vscode-yaml",
+                "mhutchie.git-graph",
+                "waderyan.gitblame",
+                "streetsidesoftware.code-spell-checker",
+                "Anthropic.claude-code",
+                "ms-azuretools.vscode-docker",
+                "ms-vscode.cpptools-extension-pack"
+            ]
+        }
+    },
+    "postStartCommand": "brew update && brew upgrade"
+}
