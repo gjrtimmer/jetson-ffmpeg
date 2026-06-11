@@ -1,4 +1,40 @@
 {
+    "files.eol": "\n",
+    "files.trimTrailingWhitespace": true,
+    "files.insertFinalNewline": true,
+    "files.trimFinalNewlines": true,
+
+    "editor.rulers": [80, 120],
+    "editor.tabSize": 4,
+    "editor.insertSpaces": true,
+    "editor.detectIndentation": false,
+    "editor.renderWhitespace": "boundary",
+    "editor.bracketPairColorization.enabled": true,
+    "editor.formatOnSave": false,
+
+    "[c]": {
+        "editor.tabSize": 4
+    },
+    "[cpp]": {
+        "editor.tabSize": 4
+    },
+    "[cmake]": {
+        "editor.tabSize": 4
+    },
+    "[shellscript]": {
+        "editor.tabSize": 4
+    },
+    "[yaml]": {
+        "editor.tabSize": 2
+    },
+    "[json]": {
+        "editor.tabSize": 4
+    },
+    "[markdown]": {
+        "editor.wordWrap": "on",
+        "files.trimTrailingWhitespace": false
+    },
+
     "workbench.editorAssociations": {
         "*.md": "bierner.markdown-preview-github-styles"
     }
