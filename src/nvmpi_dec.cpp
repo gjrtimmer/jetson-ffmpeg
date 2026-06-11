@@ -634,7 +634,7 @@ int nvmpi_decoder_put_packet(nvmpictx* ctx,nvPacket* packet)
 		ret = ctx->dec->output_plane.dqBuffer(v4l2_buf, &nvBuffer, NULL, -1);
 		if (ret < 0)
 		{
-			cout << "Error DQing buffer at output plane" << std::endl;
+			cerr << "Error DQing buffer at output plane" << std::endl;
 			return -1;
 		}
 	}
@@ -686,7 +686,7 @@ int copyNvBufToFrame(nvmpictx* ctx, NVMPI_frameBuf *nvmpiBuf, nvFrame* frame)
 #endif
 		if(ret != 0)
 		{
-			printf("NvBufferMap failed \n");
+			fprintf(stderr, "NvBufferMap failed \n");
 			return ret;
 		}
 		
