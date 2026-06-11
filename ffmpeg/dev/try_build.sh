@@ -1,36 +1,26 @@
 #!/bin/bash
+# Build-validate every supported FFmpeg version.
+#
+# Regenerates the patches (update_patch.sh), then runs
+# ./configure --enable-nvmpi && make in each cloned FFmpeg tree.
+#
+# Safe to run from any working directory.
+set -u
 
-source update_patch.sh
+DEV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # <repo>/ffmpeg/dev
 
-cd ./ffmpeg4.2
-./configure --enable-nvmpi
-make -j10
-if [ $? -eq 0 ]; then
-    echo "ffmpeg4.2 BUILD OK"
-else
-    echo "ffmpeg4.2 BUILD FAIL"
-    exit 0
-fi
-cd ..
+VERSIONS="4.2 4.4 6.0"
 
-cd ./ffmpeg4.4
-./configure --enable-nvmpi
-make -j10
-if [ $? -eq 0 ]; then
-    echo "ffmpeg4.4 BUILD OK"
-else
-    echo "ffmpeg4.4 BUILD FAIL"
-    exit 0
-fi
-cd ..
+# (Re)generate patches and clone the FFmpeg trees.
+"${DEV_DIR}/update_patch.sh"
 
-cd ./ffmpeg6.0
-./configure --enable-nvmpi
-make -j10
-if [ $? -eq 0 ]; then
-    echo "ffmpeg6.0 BUILD OK"
-else
-    echo "ffmpeg6.0 BUILD FAIL"
-    exit 0
-fi
-cd ..
+for ver in ${VERSIONS}; do
+    src="${DEV_DIR}/ffmpeg${ver}"
+    echo "=== building ffmpeg${ver} ==="
+    if ( cd "${src}" && ./configure --enable-nvmpi && make -j"$(nproc)" ); then
+        echo "ffmpeg${ver} BUILD OK"
+    else
+        echo "ffmpeg${ver} BUILD FAIL"
+        exit 1
+    fi
+done
