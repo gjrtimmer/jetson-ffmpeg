@@ -50,7 +50,10 @@
                 "redhat.vscode-yaml",
                 "mhutchie.git-graph",
                 "waderyan.gitblame",
-                "streetsidesoftware.code-spell-checker"
+                "streetsidesoftware.code-spell-checker",
+                "Anthropic.claude-code",
+                "ms-azuretools.vscode-docker",
+                "ms-vscode.cpptools-extension-pack"
             ]
         }
     },
