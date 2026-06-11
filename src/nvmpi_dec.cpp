@@ -607,6 +607,7 @@ nvmpictx* nvmpi_create_decoder(nvDecParam* param)
 		ctx->dmaBufferFileDescriptor[index]=0;
 	ctx->numberCaptureBuffers=0;
 	ctx->dec_capture_loop = std::thread(dec_capture_loop_fcn,ctx);
+	pthread_setname_np(ctx->dec_capture_loop.native_handle(), "dec_capture");
 
 	return ctx;
 }
