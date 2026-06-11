@@ -127,20 +127,19 @@ patch:ffmpeg-8.0:
 # ---------------------------------------------------------------------------
 # Stage: test — HW encode/decode on real Jetson hardware.
 #
-# The nvmpi FFmpeg wrapper compiles into a few DISTINCT builds depending on the
-# libavcodec version (see "Wrapper code paths by FFmpeg version" in
-# docs/DEVELOPMENT.md). Each hw-test job below targets one "breakpoint" version
-# that represents a distinct wrapper code path, so every path is exercised on
-# hardware without rebuilding versions that compile identical code:
+# One hw-test job per supported FFmpeg version, each reusing its version's patch
+# artifact (installed ffmpeg + libnvmpi) — no rebuild on the Jetson runner.
 #
-#   4.2 -> path A (old AVCodec, old encode API)
-#   4.4 -> path B (old AVCodec, new receive_packet API)
-#   6.0 -> path C (FFCodec)            ** represents 6.0, 6.1, 7.0, 7.1 **
-#   8.0 -> path D (FFCodec + AV_PROFILE)
+# The nvmpi FFmpeg wrapper compiles into a few DISTINCT builds by libavcodec
+# version (see "Wrapper code paths by FFmpeg version" in docs/DEVELOPMENT.md):
 #
-# The patch stage still builds ALL seven versions; only the runtime hw-test is
-# subset to the breakpoints. Each job reuses its version's patch artifact (the
-# installed ffmpeg + libnvmpi) — no rebuild on the Jetson runner.
+#   4.2           -> path A (old AVCodec, old encode API)
+#   4.4           -> path B (old AVCodec, new receive_packet API)
+#   6.0,6.1,7.0,7.1 -> path C (FFCodec) — identical wrapper code
+#   8.0           -> path D (FFCodec + AV_PROFILE)
+#
+# 6.0–7.1 share wrapper code (path C) but are each hw-tested anyway, to also
+# cover FFmpeg ABI/runtime differences between those releases.
 #
 # To add a hardware variant, add it to the matrix and register a runner with
 # tags: jetson, <variant>.
@@ -172,9 +171,21 @@ test:hw-ffmpeg-4.4:           # path B
   <<: *hw-test
   needs: ["patch:ffmpeg-4.4"]
 
-test:hw-ffmpeg-6.0:           # path C — represents 6.0, 6.1, 7.0, 7.1
+test:hw-ffmpeg-6.0:           # path C
   <<: *hw-test
   needs: ["patch:ffmpeg-6.0"]
+
+test:hw-ffmpeg-6.1:           # path C
+  <<: *hw-test
+  needs: ["patch:ffmpeg-6.1"]
+
+test:hw-ffmpeg-7.0:           # path C
+  <<: *hw-test
+  needs: ["patch:ffmpeg-7.0"]
+
+test:hw-ffmpeg-7.1:           # path C
+  <<: *hw-test
+  needs: ["patch:ffmpeg-7.1"]
 
 test:hw-ffmpeg-8.0:           # path D
   <<: *hw-test

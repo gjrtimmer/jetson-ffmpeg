@@ -556,28 +556,27 @@ extern const FFCodec ff_h264_nvmpi_encoder;
 ### Wrapper code paths by FFmpeg version
 
 Because those guards are compile-time, each supported FFmpeg release compiles
-into one of a small number of **distinct wrapper builds**. This is what drives
-the hardware test matrix: it is enough to hw-test one *representative* version
-per distinct path (a "breakpoint"), since versions that share a path compile
-identical wrapper code.
+into one of a small number of **distinct wrapper builds** (a "path"). Versions
+that share a path compile byte-for-byte identical wrapper code.
 
-| FFmpeg | libavcodec | new encode API | `FFCodec` | `AV_PROFILE` | Path | hw-test breakpoint |
-|--------|-----------|:---:|:---:|:---:|:---:|:---:|
-| 4.2 | 58.54  | ✗ | ✗ | ✗ | **A** | ✅ 4.2 |
-| 4.4 | 58.134 | ✓ | ✗ | ✗ | **B** | ✅ 4.4 |
-| 6.0 | 60.3   | ✓ | ✓ | ✗ | **C** | ✅ 6.0 |
-| 6.1 | 60.31  | ✓ | ✓ | ✗ | C | ↳ covered by 6.0 |
-| 7.0 | 61.3   | ✓ | ✓ | ✗ | C | ↳ covered by 6.0 |
-| 7.1 | 61.19  | ✓ | ✓ | ✗ | C | ↳ covered by 6.0 |
-| 8.0 | 62.11  | ✓ | ✓ | ✓ | **D** | ✅ 8.0 |
+| FFmpeg | libavcodec | new encode API | `FFCodec` | `AV_PROFILE` | Path |
+|--------|-----------|:---:|:---:|:---:|:---:|
+| 4.2 | 58.54  | ✗ | ✗ | ✗ | **A** |
+| 4.4 | 58.134 | ✓ | ✗ | ✗ | **B** |
+| 6.0 | 60.3   | ✓ | ✓ | ✗ | **C** |
+| 6.1 | 60.31  | ✓ | ✓ | ✗ | C |
+| 7.0 | 61.3   | ✓ | ✓ | ✗ | C |
+| 7.1 | 61.19  | ✓ | ✓ | ✗ | C |
+| 8.0 | 62.11  | ✓ | ✓ | ✓ | **D** |
 
-There is no `#if` keyed on libavcodec major 61, so **7.0/7.1 compile the same
-wrapper branch as 6.0/6.1** (path C). The CI **patch stage still builds all
-seven** versions (to catch FFmpeg-internal compile breakage that is independent
-of our wrapper), but the **hw-test stage runs only the breakpoints**
-`4.2, 4.4, 6.0, 8.0` (with `6.0` representing the whole 6.0–7.1 path-C group).
-Widening hw-test to all seven only adds ABI/runtime coverage of duplicate
-wrapper paths.
+There is no `#if` keyed on libavcodec major 61, so **6.0/6.1/7.0/7.1 all compile
+the same wrapper branch** (path C). CI **builds and hw-tests all seven**
+versions: the patch stage compiles each (catching FFmpeg-internal breakage
+independent of our wrapper), and a per-version `test:hw-ffmpeg-<ver>` job runs
+the hardware smoke test on each. The path column above documents *why* several
+of those builds are wrapper-identical — useful when triaging a failure (a
+path-C-only regression should reproduce across 6.0–7.1, whereas an A/B/D-only
+failure points at a version-guarded branch).
 
 ### Adding support for future FFmpeg API changes
 
