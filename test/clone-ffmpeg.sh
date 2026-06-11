@@ -41,7 +41,7 @@ for v in $VERSIONS; do
         continue
     fi
     echo "[i] cloning release/$v -> $tree"
-    rm -rf "$tree"
+    rm -rf "$tree" 2>/dev/null || sudo rm -rf "$tree" 2>/dev/null || true
     git clone --quiet --depth=1 -b "release/$v" "$URL" "$tree"
 done
 echo "[i] clones ready in $DEST"

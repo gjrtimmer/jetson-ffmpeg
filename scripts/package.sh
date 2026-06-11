@@ -65,6 +65,28 @@ for sub in bin lib include share; do
     [ -d "${PREFIX}/${sub}" ] && cp -a "${PREFIX}/${sub}" "${DEST}/"
 done
 
+# --- bundle the binaries' external shared-lib dependencies ----------------
+# Offline fallback for install.sh: collect every lib the ffmpeg/ffprobe binaries
+# link EXCEPT (a) the device-provided tegra/cuda libs, (b) the glibc/loader core,
+# and (c) our own libs already in lib/. On install, apt is preferred; whatever
+# is still missing is filled from here (so an apt-less Jetson still works).
+echo "[i] collecting bundled fallback libs"
+mkdir -p "${DEST}/bundled-libs"
+export LD_LIBRARY_PATH="${PREFIX}/lib:/usr/lib/aarch64-linux-gnu/tegra:${LD_LIBRARY_PATH:-}"
+for bin in "${DEST}"/bin/*; do
+    [ -x "$bin" ] || continue
+    ldd "$bin" 2>/dev/null | awk '/=>/ && $3 ~ /^\// {print $1" "$3}'
+done | sort -u | while read -r soname path; do
+    [ -f "$path" ] || continue
+    case "$path" in *tegra*|*/cuda*) continue ;; esac
+    case "$soname" in
+        ld-linux*|libc.so*|libm.so*|libdl.so*|libpthread.so*|librt.so*|libresolv.so*|linux-vdso*) continue ;;
+        libnvmpi*|libav*|libsw*|libpostproc*) continue ;;   # ours; already in lib/
+    esac
+    cp -Ln "$path" "${DEST}/bundled-libs/${soname}" 2>/dev/null || true
+done
+echo "[i] bundled $(find "${DEST}/bundled-libs" -type f | wc -l) fallback libs"
+
 # --- generated install.sh -------------------------------------------------
 cat > "${DEST}/install.sh" <<'INSTALL_EOF'
 #!/usr/bin/env bash
@@ -84,12 +106,35 @@ for sub in bin lib include share; do
     [ -d "${HERE}/${sub}" ] && cp -a "${HERE}/${sub}/." "${PREFIX}/${sub}/"
 done
 
-# Refresh the dynamic linker cache so libnvmpi.so is found. For a non-standard
-# prefix, register its lib dir so the libraries resolve at runtime.
+# Register the lib dir for a non-standard prefix so libraries resolve at runtime.
 if [ "${PREFIX}" != "/usr/local" ] && [ -w /etc/ld.so.conf.d ] 2>/dev/null; then
     echo "${PREFIX}/lib" > /etc/ld.so.conf.d/jetson-ffmpeg.conf
 fi
 if command -v ldconfig >/dev/null 2>&1; then ldconfig || true; fi
+
+export LD_LIBRARY_PATH="${PREFIX}/lib:/usr/lib/aarch64-linux-gnu/tegra:${LD_LIBRARY_PATH:-}"
+
+# Runtime codec deps (libx264/x265/vpx/opus/mp3lame/vorbis/dav1d/ass/freetype, …).
+# Prefer the system package manager; whatever is still missing afterwards is
+# filled from the bundled fallback libs, so an apt-less Jetson also works offline.
+if command -v apt-get >/dev/null 2>&1; then
+    echo "[i] installing runtime codec libs via apt-get"
+    apt-get update -qq || true
+    apt-get install -y -qq --no-install-recommends \
+        libx264-163 libx265-199 libvpx7 libopus0 libmp3lame0 libvorbis0a libvorbisenc2 \
+        libdav1d5 libass9 libfreetype6 libnuma1 libv4l-0 2>/dev/null || true
+    command -v ldconfig >/dev/null 2>&1 && ldconfig || true
+fi
+if [ -d "${HERE}/bundled-libs" ]; then
+    missing=$(ldd "${PREFIX}/bin/ffmpeg" 2>/dev/null | awk '/not found/{print $1}')
+    if [ -n "${missing}" ]; then
+        echo "[i] filling missing libs from bundle:" ${missing}
+        for so in ${missing}; do
+            [ -f "${HERE}/bundled-libs/${so}" ] && cp -a "${HERE}/bundled-libs/${so}" "${PREFIX}/lib/"
+        done
+        command -v ldconfig >/dev/null 2>&1 && ldconfig || true
+    fi
+fi
 
 echo "[i] installed. Verifying nvmpi codecs..."
 export LD_LIBRARY_PATH="${PREFIX}/lib:/usr/lib/aarch64-linux-gnu/tegra:${LD_LIBRARY_PATH:-}"
@@ -111,9 +156,10 @@ jetson-ffmpeg ${VERSION} — FFmpeg ${FFVER} with NVIDIA Jetson nvmpi hardware c
 L4T/JetPack: ${L4T}   Arch: ${ARCH}
 
 Contents:
-  bin/      ffmpeg, ffprobe (and friends) built with --enable-nvmpi
-  lib/      libnvmpi + FFmpeg shared libraries
-  include/  headers
+  bin/           ffmpeg, ffprobe (and friends) built with --enable-nvmpi
+  lib/           libnvmpi + FFmpeg shared libraries
+  include/       headers
+  bundled-libs/  offline fallback copies of the external codec libs
   install.sh
 
 Install (on a Jetson):
@@ -121,6 +167,11 @@ Install (on a Jetson):
   cd ${NAME}
   sudo ./install.sh            # installs into /usr/local
   # or: sudo ./install.sh /opt/jetson-ffmpeg
+
+install.sh installs the runtime codec deps (libx264/x265/vpx/opus/…) via apt-get
+when it is available, and fills anything still missing from bundled-libs/ — so it
+also works on an apt-less / offline system. Stub libraries are intentionally NOT
+shipped (they are non-functional placeholders for off-Jetson compilation only).
 
 Verify:
   ffmpeg -hide_banner -encoders | grep nvmpi
@@ -133,7 +184,8 @@ mkdir -p "${OUTDIR}"
 TARBALL="${OUTDIR}/${NAME}.tar.gz"
 echo "[i] writing ${TARBALL}"
 tar -C "${STAGE}" -czf "${TARBALL}" "${NAME}"
-rm -rf "${STAGE}"
+# Cleanup must never fail the job once the archive is written.
+rm -rf "${STAGE}" 2>/dev/null || sudo rm -rf "${STAGE}" 2>/dev/null || true
 
 echo "[i] done: ${TARBALL}"
 echo "${TARBALL}"

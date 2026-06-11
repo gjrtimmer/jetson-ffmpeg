@@ -102,7 +102,9 @@ fi
 
 if [ "${DO_CLEAN}" -eq 1 ]; then
     echo "[i] Removing ${BUILD_DIR}"
-    rm -rf "${BUILD_DIR}"
+    # Tolerant: never let cleanup fail the run (root-owned leftovers from a
+    # prior sudo --install, missing dir, etc.). Try sudo, then ignore.
+    rm -rf "${BUILD_DIR}" 2>/dev/null || sudo rm -rf "${BUILD_DIR}" 2>/dev/null || true
 fi
 
 mkdir -p "${BUILD_DIR}"
