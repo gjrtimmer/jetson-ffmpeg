@@ -17,7 +17,7 @@
 #define TEST_ERROR(condition, message, errorCode)    \
 	if (condition)                               \
 {                                                    \
-	std::cout<< message;			     \
+	std::cerr<< message;			     \
 }
 
 using namespace std;
@@ -635,7 +635,7 @@ int nvmpi_decoder_put_packet(nvmpictx* ctx,nvPacket* packet)
 		ret = ctx->dec->output_plane.dqBuffer(v4l2_buf, &nvBuffer, NULL, -1);
 		if (ret < 0)
 		{
-			cout << "Error DQing buffer at output plane" << std::endl;
+			cerr << "Error DQing buffer at output plane" << std::endl;
 			return -1;
 		}
 	}
@@ -651,7 +651,7 @@ int nvmpi_decoder_put_packet(nvmpictx* ctx,nvPacket* packet)
 	ret = ctx->dec->output_plane.qBuffer(v4l2_buf, NULL);
 	if (ret < 0)
 	{
-		std::cout << "Error Qing buffer at output plane" << std::endl;
+		std::cerr << "Error Qing buffer at output plane" << std::endl;
 		ctx->index--;
 		return -2;
 	}
@@ -687,7 +687,7 @@ int copyNvBufToFrame(nvmpictx* ctx, NVMPI_frameBuf *nvmpiBuf, nvFrame* frame)
 #endif
 		if(ret != 0)
 		{
-			printf("NvBufferMap failed \n");
+			fprintf(stderr, "NvBufferMap failed \n");
 			return ret;
 		}
 		
