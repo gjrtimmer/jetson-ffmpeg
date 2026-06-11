@@ -1,0 +1,112 @@
+name: Bug Report
+description: Report a bug with nvmpi encoding, decoding, or runtime behavior
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting a bug. Please fill out the information below to help us reproduce and fix the issue.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: Clear description of the bug
+      placeholder: What happened? What did you expect to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Minimal steps to reproduce the issue
+      placeholder: |
+        1. Build with...
+        2. Run command...
+        3. Observe...
+    validations:
+      required: true
+
+  - type: textarea
+    id: ffmpeg-command
+    attributes:
+      label: FFmpeg command
+      description: The exact ffmpeg command that triggers the issue (if applicable)
+      render: bash
+
+  - type: textarea
+    id: error-output
+    attributes:
+      label: Error output
+      description: Relevant error messages, logs, or stack traces
+      render: text
+
+  - type: input
+    id: jetson-model
+    attributes:
+      label: Jetson model
+      placeholder: "e.g. Orin NX 16GB, AGX Orin 64GB, Orin Nano 8GB"
+    validations:
+      required: true
+
+  - type: input
+    id: jetpack-version
+    attributes:
+      label: JetPack / L4T version
+      placeholder: "e.g. JetPack 6.1 / L4T r36.4.0"
+    validations:
+      required: true
+
+  - type: input
+    id: ffmpeg-version
+    attributes:
+      label: FFmpeg version
+      description: Output of `ffmpeg -version` (first line)
+      placeholder: "e.g. ffmpeg version 7.1"
+    validations:
+      required: true
+
+  - type: input
+    id: nvmpi-version
+    attributes:
+      label: jetson-ffmpeg commit or version
+      description: Git commit hash or tag of jetson-ffmpeg used
+      placeholder: "e.g. 64df5aa or v1.0.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: build-method
+    attributes:
+      label: Build method
+      options:
+        - ffpatch.sh (patched ffmpeg source)
+        - CMake (nvmpi library only)
+        - Docker / container
+        - Pre-built package
+    validations:
+      required: true
+
+  - type: dropdown
+    id: codec
+    attributes:
+      label: Affected codec(s)
+      multiple: true
+      options:
+        - h264_nvmpi (encoder)
+        - h264_nvmpi (decoder)
+        - hevc_nvmpi (encoder)
+        - hevc_nvmpi (decoder)
+        - mpeg2_nvmpi (decoder)
+        - mpeg4_nvmpi (decoder)
+        - vp8_nvmpi (decoder)
+        - vp9_nvmpi (decoder)
+        - Not codec-specific
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Any other relevant information (workarounds tried, related issues, etc.)

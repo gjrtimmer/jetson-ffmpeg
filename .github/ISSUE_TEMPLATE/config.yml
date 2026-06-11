@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Upstream (Keylost/jetson-ffmpeg)
+    url: https://github.com/Keylost/jetson-ffmpeg/issues
+    about: Issues specific to the upstream project
