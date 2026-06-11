@@ -53,57 +53,31 @@ This library provides the ability to use hardware acceleration for video encodin
 ### Other Features
   - Hardware accelerated video scaling during decoding
 
-### Building and usage
-**1.build and install library**
+### Quick Start
 
-    git clone https://github.com/Keylost/jetson-ffmpeg.git
-    cd jetson-ffmpeg
-    mkdir build
-    cd build
-    cmake ..
-    make
-    sudo make install
-    sudo ldconfig
+```bash
+# 1. Build and install libnvmpi
+git clone https://github.com/Keylost/jetson-ffmpeg.git
+cd jetson-ffmpeg
+mkdir build && cd build
+cmake ..
+make
+sudo make install
+sudo ldconfig
 
-Cmake options:
-  - -DJETSON_MULTIMEDIA_API_DIR=<path_to_dir> Path to custom Jetson Multimedia API headers and common sources directory. Default: /usr/src/jetson_multimedia_api.
-  - -DJETSON_MULTIMEDIA_LIB_DIR=<path_to_dir> Path to custom Jetson Multimedia libraries directory. Default: /usr/lib/aarch64-linux-gnu/tegra.
-  - -DCUDA_INCLUDE_DIR=<path_to_dir> Path to custom CUDA headers directory. Default: /usr/local/cuda/include.
-  - -DCUDA_LIB_DIR=<path_to_dir> Path to custom CUDA libraries directory. Default: /usr/local/cuda/lib64.
-  - -DWITH_STUBS=[ON/OFF] Build nvmpi library and link stubs instead of original libraries. Default: OFF. Could be user to create automated builds or Docker images. See https://github.com/Keylost/jetson-ffmpeg/pull/9 for details and script example.
+# 2. Patch and build FFmpeg
+git clone git://source.ffmpeg.org/ffmpeg.git -b release/7.1 --depth=1
+cd jetson-ffmpeg
+./ffpatch.sh ../ffmpeg
+cd ../ffmpeg
+./configure --enable-nvmpi
+make
+sudo make install
+```
 
-Build with stubs and custom dirs example:
+For full build instructions, CMake options, cross-compilation, and usage examples see **[docs/BUILD.md](docs/BUILD.md)**.
 
-    cmake -DWITH_STUBS=ON -DJETSON_MULTIMEDIA_API_DIR=/home/user/build_deps/jetson_multimedia_api ..
-    make
+### Documentation
 
-**2.patch ffmpeg and build**
-
-    clone one of supported ffmpeg versions (for example ffmpeg 7.1)
-    git clone git://source.ffmpeg.org/ffmpeg.git -b release/7.1 --depth=1
-    Go to the directory with the jetson-ffmpeg sources and patch the ffmpeg using the ffpatch.sh script.
-    cd jetson-ffmpeg
-    ./ffpatch.sh ../ffmpeg
-    Go to ffmpeg sources directory configure and build ffmpeg with nvmpi enabled and your custom options 
-    cd ../ffmpeg
-    ./configure --enable-nvmpi
-    make
-    sudo make install
-    
-**3.using**
-  
-**Decode h264 video example**
-
-    ffmpeg -c:v h264_nvmpi -i <input.mp4> -f null -
-    
-**Decode h264 video with fast scaling during decoding example**
-
-    ffmpeg -c:v h264_nvmpi -resize:v 1920x1080 -i <input.mp4> -f null -
-  
-**Encode h264 video example**
-
-    ffmpeg -i <input.mp4> -c:v h264_nvmpi <output.mp4>
-
-**Transcode h264 to h265 video example**
-
-    ffmpeg -c:v h264_nvmpi -i <input.mp4> -c:v hevc_nvmpi <output.mp4>
+- **[Build Guide](docs/BUILD.md)** — Complete build, installation, and usage instructions
+- **[Development Guide](docs/DEVELOPMENT.md)** — Architecture, patch system, and how to add new FFmpeg versions
