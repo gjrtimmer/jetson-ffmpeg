@@ -50,11 +50,12 @@ RUN groupadd --gid ${USER_GID} ${USERNAME} 2>/dev/null || true \
     && echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/${USERNAME} \
     && chmod 0440 /etc/sudoers.d/${USERNAME}
 
-USER ${USERNAME}
+COPY bashrc /tmp/bashrc-custom
+RUN cat /etc/skel/.bashrc /tmp/bashrc-custom > /home/${USERNAME}/.bashrc \
+    && chown ${USER_UID}:${USER_GID} /home/${USERNAME}/.bashrc \
+    && rm /tmp/bashrc-custom
 
-RUN cat /etc/skel/.bashrc > /home/${USERNAME}/.bashrc
-COPY --chown=${USER_UID}:${USER_GID} bashrc /tmp/bashrc-custom
-RUN cat /tmp/bashrc-custom >> /home/${USERNAME}/.bashrc && rm /tmp/bashrc-custom
+USER ${USERNAME}
 
 RUN NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
