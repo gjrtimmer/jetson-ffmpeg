@@ -1,3 +1,31 @@
+/*
+ * nvmpi_enc.cpp — hardware video encoder pipeline of libnvmpi (layer 1).
+ *
+ * Implements the encoder half of the public C API in include/nvmpi.h on top
+ * of NVIDIA's V4L2 NvVideoEncoder sample class. Consumed by the FFmpeg
+ * wrapper in ffmpeg/dev/common/libavcodec/nvmpi_enc.c. Encodes H.264/HEVC.
+ *
+ * V4L2 encoder model (M2M device, two queues — note the naming is from the
+ * device's point of view, mirrored relative to the decoder):
+ *   - OUTPUT plane  = input side: raw YUV frames go in.
+ *   - CAPTURE plane = output side: encoded bitstream comes out.
+ *
+ * Data flow / threading:
+ *   user thread:      nvmpi_encoder_put_frame() copies the caller's planes
+ *                     into an OUTPUT-plane buffer and queues it (blocks in
+ *                     dqBuffer once all buffers are in flight).
+ *   DQ thread:        NvVideoEncoder's capture-plane dequeue thread invokes
+ *                     encoder_capture_plane_dq_callback() per encoded
+ *                     buffer; the callback copies the bitstream into an
+ *                     "empty" nvPacket from pktPool and publishes it as
+ *                     "filled", then re-queues the V4L2 buffer.
+ *   user thread:      nvmpi_encoder_get_packet() pops filled packets;
+ *                     the caller returns them via qEmptyPacket().
+ *
+ * The nvPacket pool itself is filled by the caller (the FFmpeg wrapper
+ * allocates packets backed by AVPacket buffers) — libnvmpi never allocates
+ * or frees packet memory.
+ */
 #include "nvmpi.h"
 #include "NvVideoEncoder.h"
 #include "nvUtils2NvBuf.h"
@@ -10,28 +38,37 @@
 #include <unistd.h>
 
 #define MAX_BUFFERS 32
+//Error reporting helper: logs to stderr but does NOT abort or return;
+//setup continues best-effort (errorCode is unused).
 #define TEST_ERROR(condition, message, errorCode)    \
 	if (condition)                               \
 {                                                    \
 	std::cerr<< message;                         \
 }
 
+//Compile-time choice of OUTPUT-plane (raw input) memory type:
+//MMAP = driver-allocated buffers mapped into userspace (current default),
+//DMA  = self-allocated NvBufSurface dmabufs (alternate path, NvUtils only).
 #define OUTPLANE_MEMTYPE_MMAP 0
 #define OUTPLANE_MEMTYPE_DMA 1
 #define OUTPLANE_MEMTYPE OUTPLANE_MEMTYPE_MMAP
 
 using namespace std;
 
+//Encoder context behind the opaque nvmpictx* handle of the public API
+//(a different struct than the decoder's nvmpictx in nvmpi_dec.cpp — the
+//two are never mixed). Most fields mirror nvEncParam after translation to
+//V4L2 enums; shared between the user thread and the capture DQ thread.
 struct nvmpictx
 {
-	uint32_t index;
+	uint32_t index;                //next OUTPUT-plane buffer index until all used once
 	uint32_t width;
 	uint32_t height;
-	uint32_t profile;
-	uint32_t bitrate;
-	uint32_t peak_bitrate;
-	uint32_t raw_pixfmt;
-	uint32_t encoder_pixfmt;
+	uint32_t profile;              //V4L2 H.264/H.265 profile enum value
+	uint32_t bitrate;              //target bitrate (bit/s)
+	uint32_t peak_bitrate;         //VBR peak bitrate (bit/s)
+	uint32_t raw_pixfmt;           //V4L2 fourcc of the raw input frames
+	uint32_t encoder_pixfmt;       //V4L2 fourcc of the compressed output (H264/H265)
 	uint32_t iframe_interval;
 	uint32_t idr_interval;
 	uint32_t fps_n;
@@ -41,26 +78,37 @@ struct nvmpictx
 	uint32_t num_b_frames;
 	uint32_t num_reference_frames;
 	uint32_t vbv_buffer_size; //virtual buffer size of the encoder
-	uint32_t packets_num;
+	uint32_t packets_num;          //V4L2 buffer count per plane (param->capture_num)
 
 	bool insert_sps_pps_at_idr;
 	bool max_perf; //enable max performance mode
 	bool enable_extended_colorformat;
-	bool enableLossless;
-	bool blocking_mode;
-	bool capPlaneGotEOS;
-	bool flushing;
+	bool enableLossless;           //constant QP 0 + High 4:4:4 profile (H.264)
+	bool blocking_mode;            //true: use NvVideoEncoder's DQ thread (only mode implemented)
+	bool capPlaneGotEOS;           //set by the DQ callback on the zero-byte EOS buffer
+	bool flushing;                 //set once a NULL frame (EOS) was submitted
 
-	enum v4l2_mpeg_video_bitrate_mode ratecontrol;
+	enum v4l2_mpeg_video_bitrate_mode ratecontrol; //CBR or VBR
 	enum v4l2_mpeg_video_h264_level level;
-	enum v4l2_enc_hw_preset_type hw_preset_type;
+	enum v4l2_enc_hw_preset_type hw_preset_type;   //speed/quality preset
 
-	NvVideoEncoder *enc;
+	NvVideoEncoder *enc;           //NVIDIA V4L2 encoder device wrapper
+	//producer/consumer pool of caller-allocated packets: DQ thread fills,
+	//user thread consumes and recycles
 	NVMPI_bufPool<nvPacket*>* pktPool;
 	int *output_plane_fd; //array to store dmabuf fd's
 };
 
 
+//Callback run on NvVideoEncoder's capture-plane DQ thread for every
+//dequeued (encoded) buffer. Contract: return true to keep the thread
+//running, false to stop it (EOS or fatal error).
+//Steps: detect the zero-byte EOS buffer; fetch encode metadata (keyframe
+//flag); take an "empty" nvPacket from the pool and memcpy the bitstream
+//into it, then publish it "filled" for nvmpi_encoder_get_packet(); finally
+//re-queue the V4L2 buffer so the encoder can reuse it. If the pool is
+//empty the encoded data is DROPPED (warning printed) — the FFmpeg wrapper
+//sizes the pool via the packet_pool_size option to avoid this.
 static bool encoder_capture_plane_dq_callback(struct v4l2_buffer *v4l2_buf, NvBuffer * buffer, NvBuffer * shared_buffer __attribute__((unused)), void *arg)
 {
 	nvmpictx *ctx = (nvmpictx*)arg;
@@ -111,6 +159,10 @@ static bool encoder_capture_plane_dq_callback(struct v4l2_buffer *v4l2_buf, NvBu
 	return true;
 }
 
+//Alternate OUTPUT-plane setup used only when OUTPLANE_MEMTYPE_DMA is
+//selected: REQBUFS as V4L2_MEMORY_DMABUF and self-allocate one pitch-linear
+//YUV420 NvBufSurface per buffer, storing the fds in ctx->output_plane_fd
+//(freed in nvmpi_encoder_close). NvUtils-only code path.
 #if (OUTPLANE_MEMTYPE == OUTPLANE_MEMTYPE_DMA)
 static int setup_output_dmabuf(nvmpictx *ctx, uint32_t num_buffers )
 {
@@ -192,6 +244,13 @@ static int setup_output_dmabuf(nvmpictx *ctx, uint32_t num_buffers )
 }
 #endif
 
+//Public API: create and start an encoder.
+//Copies/translates all nvEncParam settings into the context, then programs
+//the V4L2 encoder: plane formats, bitrate & rate control, profile/level,
+//presets, GOP structure, QP range, SPS/PPS insertion, framerate; sets up
+//both planes, STREAMONs them, starts the capture DQ thread and pre-queues
+//all empty CAPTURE buffers. Returns the new context (setup errors are only
+//logged). The caller still must populate the packet pool afterwards.
 nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 {
 	int ret;
@@ -225,6 +284,9 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 	ctx->max_perf = true; //TODO invistigate why encoder is slow without max_perf even with MAXN power mode
 	ctx->vbv_buffer_size = param->vbv_buffer_size;
 	
+	//Profile mapping: the caller passes FFmpeg-style H.264 profile ids
+	//(numeric values of FF_PROFILE_H264_*); translate to V4L2 enums.
+	//Unknown/unset values fall back to Main.
 	switch(param->profile)
 	{
 		case 77://FF_PROFILE_H264_MAIN
@@ -242,6 +304,8 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 			break;
 	}
 
+	//Level mapping: level_idc style values (10*level, e.g. 41 = 4.1) to
+	//V4L2 enums; defaults to 5.1 (also for the "auto"/0 option value).
 	switch(param->level)
 	{
 		case 10:
@@ -294,6 +358,8 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 			break;	
 	}
 
+	//HW preset mapping: 1=ultrafast .. 4=slow (default medium); trades
+	//encoding speed against quality inside the hw encoder.
 	switch(param->hw_preset_type)
 	{
 		case 1:
@@ -316,6 +382,7 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 	if(param->enableLossless)
 		ctx->enableLossless=true;
 
+	//rate control: CBR by default, VBR when requested
 	if(param->mode_vbr)
 		ctx->ratecontrol=V4L2_MPEG_VIDEO_BITRATE_MODE_VBR;
 
@@ -336,10 +403,14 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 	}
 	TEST_ERROR(!ctx->enc, "Could not create encoder",ret);
 
+	//CAPTURE plane carries the compressed bitstream; each buffer is sized
+	//NVMPI_ENC_CHUNK_SIZE — the same constant the wrapper uses for packets
 	ret = ctx->enc->setCapturePlaneFormat(ctx->encoder_pixfmt, ctx->width,ctx->height, NVMPI_ENC_CHUNK_SIZE);
 
 	TEST_ERROR(ret < 0, "Could not set output plane format", ret);
 
+	//pick the raw input format: 10-bit semi-planar for HEVC Main10,
+	//8-bit planar YUV420 otherwise
 	switch (ctx->profile)
 	{
 		case V4L2_MPEG_VIDEO_H265_PROFILE_MAIN10:
@@ -350,6 +421,8 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 			ctx->raw_pixfmt = V4L2_PIX_FMT_YUV420M;
 	}
 
+	//lossless H.264 requires the High 4:4:4 Predictive profile and YUV444
+	//input; otherwise use the raw format chosen above
 	if (ctx->enableLossless && param->codingType == NV_VIDEO_CodingH264)
 	{
 		ctx->profile = V4L2_MPEG_VIDEO_H264_PROFILE_HIGH_444_PREDICTIVE;
@@ -401,6 +474,8 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 	}
 
 
+	//Rate control: lossless mode pins QP to 0 (no rate control); otherwise
+	//apply CBR/VBR, and for VBR also program a peak bitrate.
 	if (ctx->enableLossless)
 	{
 		ret = ctx->enc->setConstantQp(0);
@@ -416,6 +491,7 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 		{
 			uint32_t peak_bitrate;
 			//TODO log warning?
+			//peak must be >= target; derive 1.2x target if unset/invalid
 			if (ctx->peak_bitrate < ctx->bitrate)
 				peak_bitrate = 1.2f * ctx->bitrate;
 			else
@@ -428,6 +504,7 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 	ret = ctx->enc->setIDRInterval(ctx->idr_interval);
 	TEST_ERROR(ret < 0, "Could not set encoder IDR interval", ret);
 
+	//same QP range applied to I, P and B frames
 	if(ctx->qmax>0 ||ctx->qmin >0){
 		ctx->enc->setQpRange(ctx->qmin, ctx->qmax, ctx->qmin,ctx->qmax, ctx->qmin, ctx->qmax);	
 	}
@@ -505,6 +582,10 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 	return ctx;
 }
 
+//Copy the caller's raw frame planes into a V4L2 OUTPUT-plane NvBuffer.
+//Line-by-line memcpy because the caller's linesize and the hw buffer's
+//stride generally differ; sets bytesused per plane so the driver knows the
+//payload extent. The source frame is untouched (caller keeps ownership).
 int copyFrameToNvBuf(nvFrame* frame, NvBuffer& buffer)
 {
 	uint32_t i, j;
@@ -529,6 +610,14 @@ int copyFrameToNvBuf(nvFrame* frame, NvBuffer& buffer)
 	return 0;
 }
 
+//Public API: submit one raw frame for encoding (or EOS when frame==NULL).
+//Buffer acquisition mirrors the decoder's put_packet: use each OUTPUT-plane
+//buffer once by index, then block in dqBuffer(-1) until the encoder frees
+//one. The frame is copied in, the pts (microseconds) goes into the V4L2
+//timestamp, caches are synced for device access, and the buffer is queued.
+//frame==NULL queues a zero-byte buffer = V4L2 EOS signal and sets
+//ctx->flushing. Returns 0 on success, -2 if already flushing, negative on
+//encoder error.
 int nvmpi_encoder_put_frame(nvmpictx* ctx,nvFrame* frame)
 {
 	if(ctx->flushing) return -2;
@@ -579,6 +668,7 @@ int nvmpi_encoder_put_frame(nvmpictx* ctx,nvFrame* frame)
 	
 	if(frame)
 	{
+		//normal frame: copy planes in and carry the pts on the buffer
 		copyFrameToNvBuf(frame, *nvBuffer);
 		v4l2_buf.flags |= V4L2_BUF_FLAG_TIMESTAMP_COPY;
 		v4l2_buf.timestamp.tv_usec = frame->timestamp % 1000000;
@@ -587,12 +677,14 @@ int nvmpi_encoder_put_frame(nvmpictx* ctx,nvFrame* frame)
 	else
 	{
 		//send EOS and flush
+		//(a buffer queued with bytesused==0 tells the encoder to drain)
 		ctx->flushing = true;
 		v4l2_buf.m.planes[0].m.userptr = 0;
 		v4l2_buf.m.planes[0].bytesused = v4l2_buf.m.planes[1].bytesused = v4l2_buf.m.planes[2].bytesused = 0;
 	}
 
 	//needed for V4L2_MEMORY_MMAP and V4L2_MEMORY_DMABUF
+	//flush CPU caches so the hw encoder sees the bytes just written
 	for (uint32_t j = 0 ; j < nvBuffer->n_planes; j++)
 	{
 #ifdef WITH_NVUTILS
@@ -630,6 +722,9 @@ int nvmpi_encoder_put_frame(nvmpictx* ctx,nvFrame* frame)
 	return 0;
 }
 
+//Public API: take an empty packet out of the pool (e.g. to free or replace
+//it). Non-blocking: -1 when the empty queue is exhausted. The caller
+//assumes ownership of the returned packet.
 int nvmpi_encoder_dqEmptyPacket(nvmpictx* ctx,nvPacket** packet)
 {
 	nvPacket* pkt = ctx->pktPool->dqEmptyBuf();
@@ -638,16 +733,25 @@ int nvmpi_encoder_dqEmptyPacket(nvmpictx* ctx,nvPacket** packet)
 	return 0;
 }
 
+//Public API: donate an empty, caller-allocated packet to the pool so the
+//capture DQ callback can fill it. The pool stores only the pointer; the
+//caller remains responsible for the packet's eventual deallocation.
 void nvmpi_encoder_qEmptyPacket(nvmpictx* ctx,nvPacket* packet)
 {
 	ctx->pktPool->qEmptyBuf(packet);
 	return;
 }
 
+//Public API: fetch the next encoded packet.
+//While encoding: non-blocking, -1 when nothing is ready (wrapper maps this
+//to EAGAIN). While flushing: poll every 1ms until either a packet arrives
+//(0) or the DQ callback saw the EOS buffer and no packet remains (-2).
+//On success the caller holds the packet until re-queueing it via
+//nvmpi_encoder_qEmptyPacket().
 int nvmpi_encoder_get_packet(nvmpictx* ctx,nvPacket** packet)
 {
 	nvPacket* pkt = ctx->pktPool->dqFilledBuf();
-	
+
 	if(!pkt)
 	{
 		if(!ctx->flushing) return -1;
@@ -660,11 +764,16 @@ int nvmpi_encoder_get_packet(nvmpictx* ctx,nvPacket** packet)
 		}
 		if(!pkt) return -2; //if got eos
 	}
-	
+
 	*packet = pkt;
 	return 0;
 }
 
+//Public API: stop the encoder and free the context.
+//Stops/joins the capture DQ thread, releases self-allocated OUTPUT-plane
+//dmabufs (DMA mode only), then destroys the device and the (by now empty)
+//packet pool. Packets still inside the pool are NOT freed here — the
+//FFmpeg wrapper drains and frees them first (nvmpienc_deinitPktPool).
 int nvmpi_encoder_close(nvmpictx* ctx)
 {
 	if(ctx->blocking_mode)

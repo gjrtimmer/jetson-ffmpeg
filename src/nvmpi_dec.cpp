@@ -1,3 +1,35 @@
+/*
+ * nvmpi_dec.cpp — hardware video decoder pipeline of libnvmpi (layer 1).
+ *
+ * Implements the decoder half of the public C API in include/nvmpi.h on top
+ * of NVIDIA's V4L2 NvVideoDecoder sample class (from the Jetson Multimedia
+ * API). The FFmpeg wrapper (ffmpeg/dev/common/libavcodec/nvmpi_dec.c) is
+ * the primary consumer.
+ *
+ * V4L2 decoder model (M2M device, two queues):
+ *   - OUTPUT plane  = input side: compressed bitstream chunks go in.
+ *   - CAPTURE plane = output side: decoded (block-linear NV12) frames
+ *     come out into DMA buffers we allocate and enqueue.
+ *
+ * Data flow / threading:
+ *   user thread:    nvmpi_decoder_put_packet() -> memcpy packet into an
+ *                   OUTPUT-plane buffer -> qBuffer (blocks on dqBuffer once
+ *                   all buffers are in flight).
+ *   capture thread: dec_capture_loop_fcn() waits for the resolution-change
+ *                   event, (re)allocates CAPTURE-plane DMA buffers, then
+ *                   loops: dqBuffer decoded frame -> hw transform (VIC) into
+ *                   a pitch-linear NVMPI_frameBuf taken from the frame
+ *                   pool's "empty" queue (converting to NV12/YUV420 and
+ *                   optionally scaling) -> push to the pool's "filled"
+ *                   queue -> re-queue the V4L2 buffer.
+ *   user thread:    nvmpi_decoder_get_frame() -> pop a filled NVMPI_frameBuf,
+ *                   memcpy planes into the caller's nvFrame, return the
+ *                   buffer to the "empty" queue.
+ *
+ * Both NVIDIA buffer APIs are supported: NvUtils/NvBufSurface when
+ * WITH_NVUTILS is defined (JetPack 5+), legacy nvbuf_utils otherwise
+ * (see include/nvUtils2NvBuf.h).
+ */
 #include "nvmpi.h"
 #include "NvVideoDecoder.h"
 #include "nvUtils2NvBuf.h"
@@ -11,9 +43,13 @@
 #include <mutex>
 #include <condition_variable>
 
+//max size (bytes) of one compressed input chunk on the OUTPUT plane
 #define CHUNK_SIZE 4000000
+//upper bound for CAPTURE-plane DMA buffers (sizes the fd/surface arrays)
 #define MAX_BUFFERS 32
 
+//Error reporting helper: logs to stderr but does NOT abort or return —
+//decoding continues on a best-effort basis (errorCode is unused).
 #define TEST_ERROR(condition, message, errorCode)    \
 	if (condition)                               \
 {                                                    \
@@ -22,57 +58,75 @@
 
 using namespace std;
 
+//Decoder context behind the opaque nvmpictx* handle of the public API.
+//Created by nvmpi_create_decoder(), owned by the caller via
+//nvmpi_decoder_close(). Shared between the user thread and the internal
+//capture thread; cross-thread handoff happens through framePool, and the
+//'eos' flag is the (best-effort) shutdown signal.
 struct nvmpictx
 {
-	NvVideoDecoder *dec{nullptr};
-	bool eos{false};
-	int index{0};
-	unsigned int coded_width{0};
+	NvVideoDecoder *dec{nullptr};       //NVIDIA V4L2 decoder device wrapper
+	bool eos{false};                    //set on EOS or fatal error; stops capture loop
+	int index{0};                       //next OUTPUT-plane buffer index until all are used once
+	unsigned int coded_width{0};        //stream resolution reported by the decoder (crop)
 	unsigned int coded_height{0};
-	unsigned int output_width{0};
+	unsigned int output_width{0};       //resolution delivered to the user (resized or coded)
 	unsigned int output_height{0};
-	nvSize resized{0, 0};
-	
-	int numberCaptureBuffers{0};
-	
+	nvSize resized{0, 0};               //requested hw downscale target; {0,0} = no resize
+
+	int numberCaptureBuffers{0};        //actual CAPTURE-plane DMA buffer count (min + 5)
+
+	//dmabuf fds of the CAPTURE-plane buffers the decoder writes into
 	int dmaBufferFileDescriptor[MAX_BUFFERS];
-	
+
 #ifdef WITH_NVUTILS
+	//NvBufSurface views of the fds above (needed by NvBufSurfTransform)
 	NvBufSurface *dmaBufferSurface[MAX_BUFFERS];
+	//VIC transform session config (compute device selection etc.)
 	NvBufSurfTransformConfigParams session;
 #else
 	NvBufferSession session;
 #endif
+	//cached parameters for the per-frame VIC transform (crop rects, filter)
 	NvBufferTransformParams transform_params;
 	NvBufferRect src_rect, dest_rect;
-	
-	nvPixFormat out_pixfmt;
-	unsigned int decoder_pixfmt{0};
-	std::thread dec_capture_loop;
-	
-	int frame_pool_size{12};
+
+	nvPixFormat out_pixfmt;             //user-requested output layout (NV12/YUV420)
+	unsigned int decoder_pixfmt{0};     //V4L2 fourcc of the compressed input
+	std::thread dec_capture_loop;       //runs dec_capture_loop_fcn()
+
+	int frame_pool_size{12};            //number of NVMPI_frameBuf's to allocate
+	//producer/consumer pool: capture thread fills, user thread consumes
 	NVMPI_bufPool<NVMPI_frameBuf*>* framePool;
-	
+
 	//output frame size params
+	//(describes the pitch-linear dst_dma buffers; filled by
+	// updateFrameSizeParams() and used when copying out to the user)
 	unsigned int num_planes;
-	unsigned int frame_linesize[MAX_NUM_PLANES];
-	unsigned int frame_height[MAX_NUM_PLANES];
+	unsigned int frame_linesize[MAX_NUM_PLANES]; //stride (pitch) of each plane in bytes
+	unsigned int frame_height[MAX_NUM_PLANES];   //number of lines in each plane
 	unsigned int frame_linedatasize[MAX_NUM_PLANES]; //usable data size for 1 line
-	
+
 	//empty frame queue and free buffers memory
 	void deinitFramePool();
 	//alloc frame buffers based on frame_size data in nvmpictx
 	void initFramePool();
-	
+
 	//get dst_dma buffer params and set corresponding frame size and linesize in nvmpictx
 	void updateFrameSizeParams();
+	//refresh src/dst rects and filter settings for the per-frame transform
 	void updateBufferTransformParams();
-	
+
+	//allocate CAPTURE-plane DMA buffers, REQBUFS/STREAMON, enqueue them all
 	void initDecoderCapturePlane(v4l2_format &format);
 	/* deinitPlane unmaps the buffers and calls REQBUFS with count 0 */
 	void deinitDecoderCapturePlane();
 };
 
+//Map the colorspace/quantization reported by the decoder on its CAPTURE
+//plane to the matching NvBuffer NV12 color format variant (BT.601/709/2020,
+//standard vs extended luma range). Used when allocating the CAPTURE-plane
+//DMA buffers so the subsequent VIC transform interprets colors correctly.
 NvBufferColorFormat getNvColorFormatFromV4l2Format(v4l2_format &format)
 {
 	NvBufferColorFormat ret_cf = NvBufferColorFormat_NV12; 
@@ -125,6 +179,11 @@ NvBufferColorFormat getNvColorFormatFromV4l2Format(v4l2_format &format)
 }
 
 
+//(Re)initialize the decoder CAPTURE plane after a resolution-change event:
+//set the negotiated plane format, allocate numberCaptureBuffers block-linear
+//NV12 DMA buffers sized to the coded resolution, REQBUFS them as
+//V4L2_MEMORY_DMABUF, start streaming and enqueue every buffer so the
+//decoder can start writing. Called from the capture thread only.
 void nvmpictx::initDecoderCapturePlane(v4l2_format &format)
 {
 	int ret=0;
@@ -141,6 +200,8 @@ void nvmpictx::initDecoderCapturePlane(v4l2_format &format)
 	/* Request (min + extra) buffers, export and map buffers. */
 	numberCaptureBuffers = minimumDecoderCaptureBuffers + 5;
 
+	//Block-linear layout matches what the hw decoder writes natively; the
+	//buffers are converted to pitch-linear later by the VIC transform.
 	cParams.colorFormat = getNvColorFormatFromV4l2Format(format);
 	cParams.width = coded_width;
 	cParams.height = coded_height;
@@ -148,7 +209,9 @@ void nvmpictx::initDecoderCapturePlane(v4l2_format &format)
 #ifdef WITH_NVUTILS
 	cParams.memType = NVBUF_MEM_SURFACE_ARRAY;
 	cParams.memtag = NvBufSurfaceTag_VIDEO_DEC;
-	
+
+	//NvUtils path: allocate all buffers in one call, then resolve the
+	//NvBufSurface view of each fd for use with NvBufSurfTransform.
 	ret = NvBufSurf::NvAllocate(&cParams, numberCaptureBuffers, dmaBufferFileDescriptor);
 	TEST_ERROR(ret < 0, "Failed to create buffers", error);
 	for (int index = 0; index < numberCaptureBuffers; index++)
@@ -157,9 +220,10 @@ void nvmpictx::initDecoderCapturePlane(v4l2_format &format)
 		TEST_ERROR(ret < 0, "Failed to get surface for buffer", ret);
 	}
 #else
+	//legacy nvbuf_utils path: allocate the buffers one by one
 	cParams.payloadType = NvBufferPayload_SurfArray;
 	cParams.nvbuf_tag = NvBufferTag_VIDEO_DEC;
-	
+
 	for (int index = 0; index < numberCaptureBuffers; index++)
 	{
 		ret = NvBufferCreateEx(&dmaBufferFileDescriptor[index], &cParams);
@@ -197,6 +261,9 @@ void nvmpictx::initDecoderCapturePlane(v4l2_format &format)
 	return;
 }
 
+//Tear down the CAPTURE plane: STREAMOFF, unmap/release the V4L2 buffers
+//(deinitPlane issues REQBUFS with count 0) and destroy our DMA buffers.
+//Called on resolution change (before re-init) and from nvmpi_decoder_close.
 void nvmpictx::deinitDecoderCapturePlane()
 {
 	int ret = 0;
@@ -213,6 +280,11 @@ void nvmpictx::deinitDecoderCapturePlane()
 	return;
 }
 
+//Query the actual plane geometry (count, pitch, height, bytes-per-line) of
+//one freshly allocated dst_dma frame buffer and cache it in the context.
+//These values drive the memcpy in copyNvBufToFrame(); the allocator may
+//choose pitches different from width, so they must be read back, not
+//assumed. Uses peekEmptyBuf() — safe only because no consumer runs yet.
 void nvmpictx::updateFrameSizeParams()
 {
 	//it's safe when called from respondToResolutionEvent() after initFramePool()
@@ -236,6 +308,8 @@ void nvmpictx::updateFrameSizeParams()
 #ifdef WITH_NVUTILS
 		frame_linedatasize[i] = parm.width[i] * parm.bytesPerPix[i]; //valid only for nvutils
 #else
+		//legacy API lacks bytesPerPix: the interleaved UV plane of NV12
+		//variants carries 2 bytes per pixel, everything else 1.
 		if(i == 1 && (parm.pixel_format == NvBufferColorFormat_NV12 ||
 				parm.pixel_format == NvBufferColorFormat_NV16 ||
 				parm.pixel_format == NvBufferColorFormat_NV24 ||
@@ -256,6 +330,11 @@ void nvmpictx::updateFrameSizeParams()
 	return;
 }
 
+//Build the cached VIC transform parameters used for every decoded frame:
+//src rect = coded (cropped) decoder resolution, dst rect = user-visible
+//output resolution (downscale happens here when the resize option is set).
+//The two APIs differ slightly: NvUtils takes rect pointers, the legacy API
+//embeds the rects and needs the explicit session handle.
 void nvmpictx::updateBufferTransformParams()
 {
 	src_rect.top = 0;
@@ -282,6 +361,9 @@ void nvmpictx::updateBufferTransformParams()
 #endif
 }
 
+//Drain both pool queues and destroy every frame buffer. Buffers currently
+//checked out by a consumer would leak — callers must ensure the capture
+//thread is stopped and the user is no longer holding frames.
 void nvmpictx::deinitFramePool()
 {
 	//TODO check that all allocated buffers returned to pool before deinit
@@ -301,6 +383,10 @@ void nvmpictx::deinitFramePool()
 	return;
 }
 
+//Allocate frame_pool_size pitch-linear DMA buffers at the output resolution
+//and user-requested pixel format, and seed the pool's "empty" queue with
+//them. These are the destination buffers of the VIC transform — distinct
+//from the block-linear CAPTURE-plane buffers the decoder writes into.
 void nvmpictx::initFramePool()
 {
 	//if(bufNumber <= 0) return false; //TODO log msg //TODO check if it's already allocated and deinit first
@@ -331,6 +417,10 @@ void nvmpictx::initFramePool()
 	return;
 }
 
+//Handle V4L2_EVENT_RESOLUTION_CHANGE (also fired once at stream start when
+//the decoder has parsed the headers): query the new format/crop, rebuild
+//the CAPTURE plane and the destination frame pool, and refresh the cached
+//transform/copy parameters. Runs on the capture thread.
 void respondToResolutionEvent(v4l2_format &format, v4l2_crop &crop,nvmpictx* ctx)
 {
 	int ret=0;
@@ -346,11 +436,12 @@ void respondToResolutionEvent(v4l2_format &format, v4l2_crop &crop,nvmpictx* ctx
 	ret = ctx->dec->capture_plane.getCrop(crop);
 	TEST_ERROR(ret < 0, "Error: Could not get crop from decoder capture plane", ret);
 
+	//output resolution = resize target if requested, else stream resolution
 	ctx->coded_width = crop.c.width;
 	ctx->coded_height = crop.c.height;
 	ctx->output_width = ctx->resized.width ? ctx->resized.width : crop.c.width;
 	ctx->output_height = ctx->resized.height ? ctx->resized.height : crop.c.height;
-	
+
 	//init/reinit DecoderCapturePlane
 	ctx->deinitDecoderCapturePlane();
 	ctx->initDecoderCapturePlane(format);
@@ -406,6 +497,16 @@ void transFormWorker::workerFnc()
 }
 */
 
+//Body of the decoder capture thread (started by nvmpi_create_decoder).
+//Responsibilities:
+//  1. block until the first resolution-change event so buffer sizes are
+//     known, then set up the CAPTURE plane and frame pool;
+//  2. loop: dequeue decoded CAPTURE buffers, VIC-transform each into an
+//     "empty" NVMPI_frameBuf from the pool (format convert + optional
+//     scale), stamp the pts, publish it as "filled", and re-queue the V4L2
+//     buffer to the decoder;
+//  3. handle mid-stream resolution changes and EOS/error shutdown.
+//Exits when ctx->eos is set (EOS buffer, fatal error, or close()).
 void dec_capture_loop_fcn(void *arg)
 {
 	nvmpictx* ctx=(nvmpictx*)arg;
@@ -467,6 +568,8 @@ void dec_capture_loop_fcn(void *arg)
 			v4l2_buf.m.planes = planes;
 			
 			/* Dequeue a filled buffer. */
+			//(0 retries: EAGAIN means nothing decoded yet, poll again;
+			// the V4L2_BUF_FLAG_LAST flag marks the final buffer => EOS)
 			if (dec->capture_plane.dqBuffer(v4l2_buf, &dec_buffer, NULL, 0))
 			{
 				if (errno == EAGAIN)
@@ -486,25 +589,35 @@ void dec_capture_loop_fcn(void *arg)
 				break;
 			}
 			
+			//point the buffer at the DMA fd it was queued with
 			dec_buffer->planes[0].fd = ctx->dmaBufferFileDescriptor[v4l2_buf.index];
-			
+
+			//grab a free destination buffer from the pool (non-blocking)
 			fb = ctx->framePool->dqEmptyBuf();
-			
+
 			if(fb)
 			{
+				//hw transform: block-linear decoder output -> pitch-linear
+				//dst buffer, converting format and scaling as configured
 #ifdef WITH_NVUTILS
 				ret = NvBufSurfTransform(ctx->dmaBufferSurface[v4l2_buf.index], fb->dst_dma_surface, &(ctx->transform_params));
 #else
 				ret = NvBufferTransform(dec_buffer->planes[0].fd, fb->dst_dma_fd, &(ctx->transform_params));
 #endif
 				TEST_ERROR(ret==-1, "Transform failed",ret);
+				//carry the pts through (V4L2 timeval -> microseconds)
 				fb->timestamp = (v4l2_buf.timestamp.tv_usec % 1000000) + (v4l2_buf.timestamp.tv_sec * 1000000UL);
-				
+
+				//hand the filled frame to the consumer (user thread)
 				ctx->framePool->qFilledBuf(fb);
 			}
 			else
 			{
 				//no buffers available in the pool. wait for EOS or for user to read.
+				//Backpressure: poll every 500us until the user returns a
+				//buffer via nvmpi_decoder_get_frame(), then do the same
+				//transform/publish as above. The V4L2 buffer is held back
+				//meanwhile, eventually stalling the decoder.
 				while(!ctx->eos)
 				{
 					std::this_thread::sleep_for(std::chrono::microseconds(500));
@@ -525,6 +638,7 @@ void dec_capture_loop_fcn(void *arg)
 				}
 			}
 
+			//return the DMA buffer to the decoder so it can be refilled
 			v4l2_buf.m.planes[0].m.fd = ctx->dmaBufferFileDescriptor[v4l2_buf.index];
 			if (dec->capture_plane.qBuffer(v4l2_buf, NULL) < 0)
 			{
@@ -541,6 +655,13 @@ void dec_capture_loop_fcn(void *arg)
 }
 
 //TODO: accept in nvmpi_create_decoder input stream params (width and height, etc...) from ffmpeg.
+//Public API: create and start a decoder.
+//Opens the V4L2 decoder device, subscribes to resolution-change events,
+//configures the OUTPUT (bitstream) plane with USERPTR buffers and starts
+//streaming on it, then spawns the capture thread. The CAPTURE plane and
+//frame pool are NOT set up here — that happens on the capture thread once
+//the first resolution-change event reveals the stream geometry.
+//Returns the new context (errors are currently only logged, not returned).
 nvmpictx* nvmpi_create_decoder(nvDecParam* param)
 {
 	int ret;
@@ -555,7 +676,8 @@ nvmpictx* nvmpi_create_decoder(nvDecParam* param)
 	TEST_ERROR(ret < 0, "Could not subscribe to V4L2_EVENT_RESOLUTION_CHANGE", ret);
 	
 	ctx->frame_pool_size = param->frame_pool_size;
-	
+
+	//map the API codec enum to the V4L2 compressed pixel format fourcc
 	switch(param->codingType)
 	{
 		case NV_VIDEO_CodingH264:
@@ -581,10 +703,12 @@ nvmpictx* nvmpi_create_decoder(nvDecParam* param)
 			break;
 	}
 
+	//OUTPUT plane: compressed input, buffers sized CHUNK_SIZE
 	ret=ctx->dec->setOutputPlaneFormat(ctx->decoder_pixfmt, CHUNK_SIZE);
 
 	TEST_ERROR(ret < 0, "Could not set output plane format", ret);
 
+	//input mode 0 = feed complete NAL units / frames per buffer
 	ret = ctx->dec->setFrameInputMode(0);
 	TEST_ERROR(ret < 0, "Error in decoder setFrameInputMode for NALU", ret);
 	
@@ -592,6 +716,8 @@ nvmpictx* nvmpi_create_decoder(nvDecParam* param)
 	//ret = ctx->dec->setMaxPerfMode(true);
 	//TEST_ERROR(ret < 0, "Error while setting decoder to max perf", ret);
 
+	//10 USERPTR buffers on the OUTPUT plane; packet data is memcpy'd into
+	//them in nvmpi_decoder_put_packet()
 	ret = ctx->dec->output_plane.setupPlane(V4L2_MEMORY_USERPTR, 10, false, true);
 	TEST_ERROR(ret < 0, "Error while setting up output plane", ret);
 
@@ -612,6 +738,13 @@ nvmpictx* nvmpi_create_decoder(nvDecParam* param)
 	return ctx;
 }
 
+//Public API: feed one compressed packet to the decoder OUTPUT plane.
+//Buffer acquisition strategy: first use each of the plane's buffers once
+//(by index), afterwards block in dqBuffer(-1 = infinite) until the decoder
+//releases one. The packet payload is memcpy'd, so the caller keeps
+//ownership of it. pts (microseconds) is carried in the V4L2 timestamp.
+//A zero-sized payload is the EOS marker and flips ctx->eos.
+//Returns 0 on success, -1 on dequeue failure, -2 on queue failure.
 int nvmpi_decoder_put_packet(nvmpictx* ctx,nvPacket* packet)
 {
 	int ret;
@@ -665,12 +798,18 @@ int nvmpi_decoder_put_packet(nvmpictx* ctx,nvPacket* packet)
 	return 0;
 }
 
+//Copy one filled DMA frame buffer into the caller's nvFrame planes.
+//Per plane: map the dmabuf for CPU access, sync caches (device -> CPU),
+//then copy line by line because the source pitch (hw-chosen) and the
+//destination linesize (caller-chosen) usually differ; only
+//frame_linedatasize valid bytes per line are copied. Unmaps when done.
+//frame->payload[] must point at sufficiently large caller-owned memory.
 int copyNvBufToFrame(nvmpictx* ctx, NVMPI_frameBuf *nvmpiBuf, nvFrame* frame)
 {
 	int ret;
 	char *dataDst;
 	char *dataSrc;
-	
+
 	for(unsigned int plane=0; plane<ctx->num_planes; plane++)
 	{
 #ifdef WITH_NVUTILS
@@ -712,6 +851,12 @@ int copyNvBufToFrame(nvmpictx* ctx, NVMPI_frameBuf *nvmpiBuf, nvFrame* frame)
     return 0;
 }
 
+//Public API: fetch the next decoded frame.
+//Non-blocking: returns -1 immediately when no filled frame is queued (the
+//'wait' parameter is currently unused). On success the frame data is
+//copied into the caller's buffers, the pts is set, and the pool buffer is
+//immediately recycled to the "empty" queue — nothing internal is exposed
+//to the caller, so there is no lifetime to manage.
 int nvmpi_decoder_get_frame(nvmpictx* ctx,nvFrame* frame,bool wait)
 {
 	int ret;
@@ -727,6 +872,11 @@ int nvmpi_decoder_get_frame(nvmpictx* ctx,nvFrame* frame,bool wait)
 	return ret;
 }
 
+//Public API: shut the decoder down and free everything.
+//Order matters: signal eos and STREAMOFF the capture plane (unblocks the
+//capture thread), join the thread, then release the CAPTURE-plane DMA
+//buffers, the frame pool and finally the device/context. The handle is
+//invalid after this call.
 int nvmpi_decoder_close(nvmpictx* ctx)
 {
 	ctx->eos=true;
