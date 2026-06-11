@@ -158,7 +158,7 @@ ls /usr/lib/aarch64-linux-gnu/tegra/libnvv4l2.so && echo "Tegra libs OK"
 
 Project runner tokens are created by maintainers. To request one:
 
-1. Open an issue using the **Runner Token Request** template
+1. Open an issue using the **GitLab Runner Token Request** template
 2. A maintainer will create the project runner and share the `glrt-...` token via a secure channel
 3. Once you have the token, follow this guide from [step 3](#3-register-the-runner)
 

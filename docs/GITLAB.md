@@ -29,7 +29,7 @@ This means:
 
 ### Step 1: Request a runner token
 
-Open an issue using the **Runner Token Request** template. A maintainer will create a project runner with tags `jetson, <variant>` and share the `glrt-...` token with you.
+Open an issue using the **GitLab Runner Token Request** template. A maintainer will create a project runner with tags `jetson, <variant>` and share the `glrt-...` token with you.
 
 ### Step 2: Set up the runner
 
@@ -112,4 +112,4 @@ The CI `before_script` already handles this fallback.
 | `ffmpeg_patches/` | Static patch files for older ffmpeg versions |
 | `docs/GITLAB_RUNNER_K8S.md` | Runner setup guide for Kubernetes |
 | `docs/GITLAB_RUNNER_MANUAL.md` | Runner setup guide for bare-metal Jetson |
-| `.gitlab/issue_templates/Runner Token Request.md` | Issue template for requesting a runner token |
+| `.gitlab/issue_templates/GitLab Runner Token Request.md` | Issue template for requesting a runner token |
