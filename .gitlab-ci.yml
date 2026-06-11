@@ -125,15 +125,28 @@ patch:ffmpeg-8.0:
     FFMPEG_BRANCH: "release/8.0"
 
 # ---------------------------------------------------------------------------
-# Stage: test — HW encode/decode on each Jetson hardware variant
-# Uses the ffmpeg 8.0 build artifacts from the patch stage.
+# Stage: test — HW encode/decode on real Jetson hardware.
 #
-# To add a new hardware variant, add it to the matrix below and register
-# a runner with tags: jetson, <variant>
+# The nvmpi FFmpeg wrapper compiles into a few DISTINCT builds depending on the
+# libavcodec version (see "Wrapper code paths by FFmpeg version" in
+# docs/DEVELOPMENT.md). Each hw-test job below targets one "breakpoint" version
+# that represents a distinct wrapper code path, so every path is exercised on
+# hardware without rebuilding versions that compile identical code:
+#
+#   4.2 -> path A (old AVCodec, old encode API)
+#   4.4 -> path B (old AVCodec, new receive_packet API)
+#   6.0 -> path C (FFCodec)            ** represents 6.0, 6.1, 7.0, 7.1 **
+#   8.0 -> path D (FFCodec + AV_PROFILE)
+#
+# The patch stage still builds ALL seven versions; only the runtime hw-test is
+# subset to the breakpoints. Each job reuses its version's patch artifact (the
+# installed ffmpeg + libnvmpi) — no rebuild on the Jetson runner.
+#
+# To add a hardware variant, add it to the matrix and register a runner with
+# tags: jetson, <variant>.
 # ---------------------------------------------------------------------------
-test:hw-encode:
+.hw-test: &hw-test
   stage: test
-  needs: ["patch:ffmpeg-8.0"]
   tags: [jetson, "${JETSON_VARIANT}"]
   parallel:
     matrix:
@@ -145,8 +158,24 @@ test:hw-encode:
     NVIDIA_DRIVER_CAPABILITIES: "all"
   before_script: []
   script:
-    - echo "=== HW test on ${JETSON_VARIANT} ==="
+    - echo "=== HW test (${CI_JOB_NAME}) on ${JETSON_VARIANT} ==="
     - export PATH="${FFMPEG_PREFIX}/bin:${PATH}"
     - export LD_LIBRARY_PATH="${FFMPEG_PREFIX}/lib:/usr/lib/aarch64-linux-gnu/tegra:${LD_LIBRARY_PATH:-}"
     - ldconfig || true
     - bash test/hw-test.sh
+
+test:hw-ffmpeg-4.2:           # path A
+  <<: *hw-test
+  needs: ["patch:ffmpeg-4.2"]
+
+test:hw-ffmpeg-4.4:           # path B
+  <<: *hw-test
+  needs: ["patch:ffmpeg-4.4"]
+
+test:hw-ffmpeg-6.0:           # path C — represents 6.0, 6.1, 7.0, 7.1
+  <<: *hw-test
+  needs: ["patch:ffmpeg-6.0"]
+
+test:hw-ffmpeg-8.0:           # path D
+  <<: *hw-test
+  needs: ["patch:ffmpeg-8.0"]

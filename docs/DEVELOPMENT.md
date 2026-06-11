@@ -553,6 +553,32 @@ extern const FFCodec ff_h264_nvmpi_encoder;
 | `FF_PROFILE_*` → `AV_PROFILE_*` | libavcodec 62.11+ | `nvmpi_enc.c` |
 | `nvbuf_utils` → `NvBufSurface` API | JetPack 5+ | `nvUtils2NvBuf.h`, `WITH_NVUTILS` define |
 
+### Wrapper code paths by FFmpeg version
+
+Because those guards are compile-time, each supported FFmpeg release compiles
+into one of a small number of **distinct wrapper builds**. This is what drives
+the hardware test matrix: it is enough to hw-test one *representative* version
+per distinct path (a "breakpoint"), since versions that share a path compile
+identical wrapper code.
+
+| FFmpeg | libavcodec | new encode API | `FFCodec` | `AV_PROFILE` | Path | hw-test breakpoint |
+|--------|-----------|:---:|:---:|:---:|:---:|:---:|
+| 4.2 | 58.54  | ✗ | ✗ | ✗ | **A** | ✅ 4.2 |
+| 4.4 | 58.134 | ✓ | ✗ | ✗ | **B** | ✅ 4.4 |
+| 6.0 | 60.3   | ✓ | ✓ | ✗ | **C** | ✅ 6.0 |
+| 6.1 | 60.31  | ✓ | ✓ | ✗ | C | ↳ covered by 6.0 |
+| 7.0 | 61.3   | ✓ | ✓ | ✗ | C | ↳ covered by 6.0 |
+| 7.1 | 61.19  | ✓ | ✓ | ✗ | C | ↳ covered by 6.0 |
+| 8.0 | 62.11  | ✓ | ✓ | ✓ | **D** | ✅ 8.0 |
+
+There is no `#if` keyed on libavcodec major 61, so **7.0/7.1 compile the same
+wrapper branch as 6.0/6.1** (path C). The CI **patch stage still builds all
+seven** versions (to catch FFmpeg-internal compile breakage that is independent
+of our wrapper), but the **hw-test stage runs only the breakpoints**
+`4.2, 4.4, 6.0, 8.0` (with `6.0` representing the whole 6.0–7.1 path-C group).
+Widening hw-test to all seven only adds ABI/runtime coverage of duplicate
+wrapper paths.
+
 ### Adding support for future FFmpeg API changes
 
 When FFmpeg deprecates or renames an API:
