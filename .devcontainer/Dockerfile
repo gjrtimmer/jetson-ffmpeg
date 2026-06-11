@@ -50,10 +50,7 @@ RUN groupadd --gid ${USER_GID} ${USERNAME} 2>/dev/null || true \
     && echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/${USERNAME} \
     && chmod 0440 /etc/sudoers.d/${USERNAME}
 
-COPY bashrc /tmp/bashrc-custom
-RUN cat /etc/skel/.bashrc /tmp/bashrc-custom > /home/${USERNAME}/.bashrc \
-    && chown ${USER_UID}:${USER_GID} /home/${USERNAME}/.bashrc \
-    && rm /tmp/bashrc-custom
+COPY bashrc /etc/bashrc-custom
 
 USER ${USERNAME}
 
