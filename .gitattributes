@@ -1,0 +1,28 @@
+# Normalize line endings. This is a Linux/Jetson project — all text files use
+# LF in the repository AND in working trees (eol=lf) to avoid stray CRLF/^M.
+* text=auto eol=lf
+
+# Explicit text types (defensive; keeps intent clear if auto-detection is unsure)
+*.c     text eol=lf
+*.cpp   text eol=lf
+*.h     text eol=lf
+*.hpp   text eol=lf
+*.sh    text eol=lf
+*.cmake text eol=lf
+*.in    text eol=lf
+*.md    text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.json  text eol=lf
+*.patch text eol=lf
+*.pc    text eol=lf
+CMakeLists.txt text eol=lf
+Dockerfile     text eol=lf
+
+# Binary files — never normalize.
+*.so    binary
+*.a     binary
+*.png   binary
+*.jpg   binary
+*.mp4   binary
+*.mkv   binary
