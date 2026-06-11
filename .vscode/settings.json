@@ -42,7 +42,27 @@
         "jetson": "linux"
     },
     "cSpell.words": [
+        "glab",
+        "jetpack",
+        "jetson",
+        "Jetson",
         "jiangwei",
-        "Timmer"
+        "libass",
+        "libfreetype",
+        "libgnutls",
+        "libsdl",
+        "libv",
+        "libvorbis",
+        "libxcb",
+        "linuxbrew",
+        "nasm",
+        "noninteractive",
+        "NONINTERACTIVE",
+        "NOPASSWD",
+        "nvcr",
+        "texinfo",
+        "Timmer",
+        "xfixes",
+        "yasm"
     ]
 }
