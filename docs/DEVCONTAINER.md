@@ -112,14 +112,25 @@ When connecting to a Jetson via Remote SSH for the first time, there is no works
 
 > **Note:** The repository must be cloned on the Jetson itself, not on your local machine. The dev container mounts the workspace from the Jetson's filesystem, so a local clone cannot be used.
 
-### 3. Open Dev Container
+### 3. Switch to the Dev Container Branch
+
+The dev container configuration lives on the `feat/devcontainer` branch. Switch to it before opening the container:
+
+1. Open the terminal in VS Code (`Ctrl+``)
+1. Run:
+
+   ```bash
+   git checkout feat/devcontainer
+   ```
+
+### 4. Open Dev Container
 
 1. VS Code detects `.devcontainer/` and prompts: **"Reopen in Container"**
-1. Click **Reopen in Container** (or `Ctrl+Shift+P` → **Dev Containers: Reopen in Container**)
+1. Click **Reopen in Container** (or `Ctrl+Shift+P` → **Dev Containers: Rebuild and Reopen in Container**)
 
 First build pulls the L4T JetPack image (~2-5 GB depending on version) and installs dev tools. Subsequent opens use the cached image.
 
-### 3. Build the Project
+### 5. Build the Project
 
 Once inside the container, CMake auto-configures on first open. To build:
 
