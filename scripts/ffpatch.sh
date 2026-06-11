@@ -1,5 +1,10 @@
 #!/bin/bash
-#path to root ffmpeg soyrces dir must be passed as first arg to the script
+#path to root ffmpeg sources dir must be passed as first arg to the script
+
+# Resolve the repository root from this script's location so ffpatch.sh can be
+# invoked from any working directory (it lives in <repo>/scripts/).
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 FF_DIR_ROOT=${1}
 FF_DIR_LIBAVCODEC=${FF_DIR_ROOT}"/libavcodec"
@@ -9,7 +14,7 @@ FF_FILE_LIBAVCODEC_ALLCODECSC=${FF_DIR_LIBAVCODEC}"/allcodecs.c"
 FF_FILE_LIBAVCODEC_VERSIONH=${FF_DIR_LIBAVCODEC}"/version.h"
 FF_FILE_LIBAVCODEC_VERSIONMAJORH=${FF_DIR_LIBAVCODEC}"/version_major.h"
 FF_LIBAVCODEC_VERSION_MAJOR=0
-BKP_DIR=./bkp
+BKP_DIR="${REPO_ROOT}/bkp"
 BKP_FILE_CONFIGURE=${BKP_DIR}/configure
 BKP_FILE_LIBAVCODEC_MAKEFILE=${BKP_DIR}/Makefile
 BKP_FILE_LIBAVCODEC_ALLCODECSC=${BKP_DIR}/allcodecs.c
@@ -245,8 +250,8 @@ cp "$BKP_FILE_LIBAVCODEC_MAKEFILE" "$FF_FILE_LIBAVCODEC_MAKEFILE"
 cp "$BKP_FILE_LIBAVCODEC_ALLCODECSC" "$FF_FILE_LIBAVCODEC_ALLCODECSC"
 
 #copy nvmpi enc and dec files to ffmpeg libavcodec dir
-cp ffmpeg_dev/common/libavcodec/nvmpi_dec.c ${FF_DIR_LIBAVCODEC}"/nvmpi_dec.c"
-cp ffmpeg_dev/common/libavcodec/nvmpi_enc.c ${FF_DIR_LIBAVCODEC}"/nvmpi_enc.c"
+cp "${REPO_ROOT}/ffmpeg/dev/common/libavcodec/nvmpi_dec.c" ${FF_DIR_LIBAVCODEC}"/nvmpi_dec.c"
+cp "${REPO_ROOT}/ffmpeg/dev/common/libavcodec/nvmpi_enc.c" ${FF_DIR_LIBAVCODEC}"/nvmpi_enc.c"
 
 echo "Success!"
 
