@@ -19,6 +19,9 @@ HISTFILESIZE=20000
 HISTCONTROL=ignoreboth:erasedups
 shopt -s histappend
 
+# Homebrew
+eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv 2>/dev/null)"
+
 # Bash completion
 if [ -f /usr/share/bash-completion/bash_completion ]; then
     . /usr/share/bash-completion/bash_completion

@@ -53,4 +53,11 @@ COPY bashrc /etc/profile.d/devcontainer-prompt.sh
 RUN chmod 644 /etc/profile.d/devcontainer-prompt.sh
 
 USER ${USERNAME}
+
+RUN NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+ENV PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:${PATH}"
+
+RUN brew install gh glab
+
 WORKDIR /workspace
