@@ -32,6 +32,7 @@ In the dev container these are also exposed as aliases (`build`, `ffpatch`,
 ./scripts/build.sh                 # alias: build
 ./scripts/build.sh --stubs         # force stubs build (off-Jetson / CI)
 ./scripts/build.sh --install       # build then sudo make install + ldconfig
+./scripts/build.sh --ffmpeg 7.1    # also build a full FFmpeg <ver> with nvmpi
 # Equivalent raw CMake build:
 mkdir build && cd build && cmake .. && make -j$(nproc) && sudo make install && sudo ldconfig
 
@@ -64,6 +65,7 @@ The files in `ffmpeg/patches/*.patch` are **generated artifacts**. To change the
 - Run `ffmpeg/dev/update_patch.sh` to regenerate the patches, then commit **both** the source edits and the regenerated patches.
 
 Two patching mechanisms exist and must stay in sync:
+
 - **`scripts/ffpatch.sh`** — the *runtime* patcher users run. It uses `sed` against anchor strings in FFmpeg source to insert nvmpi entries. If FFmpeg moves/renames an anchor, these `sed` commands break; failures point at which file's anchor is missing.
 - **`ffmpeg/dev/` overlays + `update_patch.sh`** — the *development* path that produces the committed `.patch` files.
 

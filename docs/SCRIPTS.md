@@ -13,7 +13,7 @@ need to `cd` anywhere first.
 
 | Alias (dev container) | Script | Purpose |
 |-----------------------|--------|---------|
-| `build` | `scripts/build.sh` | Build / install the libnvmpi library |
+| `build` | `scripts/build.sh` | Build / install libnvmpi (and, with `--ffmpeg <ver>`, a full FFmpeg) |
 | `ffpatch` | `scripts/ffpatch.sh` | Patch a vanilla FFmpeg source tree |
 | `update-patch` | `ffmpeg/dev/update_patch.sh` | Regenerate the committed FFmpeg patches |
 | `try-build` | `ffmpeg/dev/try_build.sh` | Build-validate every supported FFmpeg version |
@@ -29,12 +29,17 @@ every freshly created dev container. They reference `JETSON_FFMPEG_ROOT`
 
 ---
 
-## `scripts/build.sh` — build libnvmpi
+## `scripts/build.sh` — build libnvmpi (and optionally FFmpeg)
 
 Wraps the CMake build documented in [BUILD.md](BUILD.md). By default it builds
-against the real Jetson Multimedia API libraries; if those are not present
-(e.g. building off-Jetson or in CI) it automatically falls back to the stubs in
-`stubs/` so the library still compiles (but is **not** runnable).
+libnvmpi against the real Jetson Multimedia API libraries; if those are not
+present (e.g. building off-Jetson or in CI) it automatically falls back to the
+stubs in `stubs/` so the library still compiles (but is **not** runnable).
+
+With `--ffmpeg <ver|path>` it goes further — after building + installing
+libnvmpi it clones (or reuses) that FFmpeg version, patches it with
+`ffpatch.sh`, configures with `--enable-nvmpi`, and builds it. This is the
+quick way to build a specific version end-to-end.
 
 ```bash
 scripts/build.sh [options]
@@ -52,17 +57,35 @@ scripts/build.sh [options]
 | `-j N` / `-jN` | Parallel build jobs (default: `nproc`) |
 | `-h`, `--help` | Show usage |
 
+FFmpeg options (only meaningful with `--ffmpeg`):
+
+| Option | Description |
+|--------|-------------|
+| `--ffmpeg VER\|PATH` | Also build FFmpeg with nvmpi. `VER` (e.g. `7.1`) is cloned; a `PATH` to an existing tree is patched in place. Implies installing libnvmpi. |
+| `--ffmpeg-dir DIR` | Where to clone FFmpeg (default: `$FFMPEG_SRC_DIR`, else `$HOME/ffmpeg-build`) |
+| `--ffmpeg-prefix DIR` | FFmpeg `--prefix` used when `--install` is given |
+| `--ffmpeg-args "ARGS"` | Extra `./configure` args appended to the FFmpeg defaults |
+| `--no-libx264` | Drop the default FFmpeg `--enable-gpl --enable-libx264` |
+
 The `JETSON_MULTIMEDIA_API_DIR` and `JETSON_MULTIMEDIA_LIB_DIR` environment
 variables override the paths used for stub auto-detection.
 
 Examples:
 
 ```bash
-build                       # native build (or stubs off-Jetson)
-build --install             # build then install + ldconfig
+build                       # libnvmpi only (native, or stubs off-Jetson)
+build --install             # libnvmpi installed system-wide
 build --stubs --clean       # fresh stubs build (CI / non-Jetson)
-build --prefix ~/_nvmpi     # install into a custom prefix
+build --prefix ~/_nvmpi     # install libnvmpi into a custom prefix
+build --ffmpeg 7.1          # libnvmpi + FFmpeg 7.1 with nvmpi (quick version build)
+build --ffmpeg 8.0 --install            # also 'make install' the ffmpeg
+build --ffmpeg /path/to/ffmpeg          # patch+build an existing checkout
 ```
+
+> Default FFmpeg configure flags: `--enable-nvmpi --enable-gpl --enable-libx264
+> --disable-doc`. For full control of the FFmpeg build (custom flags, multiple
+> versions, hardware verification) use [`test/smoke-all.sh`](#testsmoke-allsh--full-cross-version-smoke-test)
+> or run `ffpatch.sh` + `./configure` by hand.
 
 ---
 

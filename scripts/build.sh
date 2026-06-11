@@ -1,24 +1,46 @@
 #!/bin/bash
-# Build (and optionally install) the libnvmpi shared library.
+# Build (and optionally install) the libnvmpi shared library, and optionally a
+# full FFmpeg with nvmpi support.
 #
-# Wraps the CMake build documented in docs/BUILD.md. By default it builds
-# against the real Jetson Multimedia API libraries; if those are not present
-# (e.g. building off-Jetson or in CI) it automatically falls back to the
-# stubs in stubs/ so the library still compiles (but is NOT runnable).
+# By default it builds libnvmpi against the real Jetson Multimedia API
+# libraries; if those are not present (e.g. building off-Jetson or in CI) it
+# automatically falls back to the stubs in stubs/ so the library still compiles
+# (but is NOT runnable).
+#
+# With --ffmpeg it goes further: after building + installing libnvmpi, it
+# clones (or reuses) the requested FFmpeg version, patches it with
+# scripts/ffpatch.sh, configures it with --enable-nvmpi, and builds it.
 #
 # Usage:
 #   scripts/build.sh [options]
 #
-# Options:
+# libnvmpi options:
 #   --stubs            Force linking against stubs/ (-DWITH_STUBS=ON).
 #   --no-stubs         Force linking against real Jetson libraries.
-#   --install          Run 'make install' (uses sudo if not root) + ldconfig.
+#   --install          Install (uses sudo if not root) + ldconfig. With --ffmpeg
+#                      this also installs the built ffmpeg.
 #   --clean            Remove the build directory before configuring.
-#   --build-dir DIR    Build directory (default: <repo>/build).
-#   --prefix DIR       CMAKE_INSTALL_PREFIX (default: CMake default /usr/local).
+#   --build-dir DIR    libnvmpi build directory (default: <repo>/build).
+#   --prefix DIR       libnvmpi CMAKE_INSTALL_PREFIX (default: /usr/local).
 #   --build-type TYPE  CMAKE_BUILD_TYPE (default: Release).
 #   -j N               Parallel build jobs (default: nproc).
 #   -h, --help         Show this help.
+#
+# FFmpeg options (only meaningful with --ffmpeg):
+#   --ffmpeg VER|PATH  Also build FFmpeg with nvmpi. VER (e.g. 7.1) is cloned;
+#                      a PATH to an existing tree is patched in place. Implies
+#                      installing libnvmpi (FFmpeg must find it via pkg-config).
+#   --ffmpeg-dir DIR   Where to clone FFmpeg (default: $FFMPEG_SRC_DIR, else
+#                      $HOME/ffmpeg-build).
+#   --ffmpeg-prefix D  FFmpeg --prefix used when --install is given.
+#   --ffmpeg-args "A"  Extra ./configure args appended to the FFmpeg defaults.
+#   --no-libx264       Drop the default FFmpeg "--enable-gpl --enable-libx264".
+#
+# Quick builds:
+#   scripts/build.sh                 # libnvmpi only
+#   scripts/build.sh --install       # libnvmpi, installed system-wide
+#   scripts/build.sh --stubs         # libnvmpi against stubs (off-Jetson / CI)
+#   scripts/build.sh --ffmpeg 7.1    # libnvmpi + FFmpeg 7.1 with nvmpi
 #
 # Safe to run from any working directory.
 set -euo pipefail
@@ -36,21 +58,32 @@ PREFIX="/usr/local"   # CMake's default install prefix; override with --prefix
 WITH_STUBS=""   # "", "ON" or "OFF"; "" means auto-detect
 JETSON_API_DIR="${JETSON_MULTIMEDIA_API_DIR:-/usr/src/jetson_multimedia_api}"
 JETSON_LIB_DIR="${JETSON_MULTIMEDIA_LIB_DIR:-/usr/lib/aarch64-linux-gnu/tegra}"
+# FFmpeg
+FFMPEG_TARGET=""
+FFMPEG_DIR="${FFMPEG_SRC_DIR:-$HOME/ffmpeg-build}"
+FFMPEG_PREFIX=""
+FFMPEG_ARGS=""
+WITH_X264=1
 
 usage() { sed -n '2,/^set /{/^set /d;s/^# \{0,1\}//;p}' "${BASH_SOURCE[0]}"; }
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        --stubs)       WITH_STUBS="ON" ;;
-        --no-stubs)    WITH_STUBS="OFF" ;;
-        --install)     DO_INSTALL=1 ;;
-        --clean)       DO_CLEAN=1 ;;
-        --build-dir)   BUILD_DIR="$2"; shift ;;
-        --prefix)      PREFIX="$2"; shift ;;
-        --build-type)  BUILD_TYPE="$2"; shift ;;
-        -j)            JOBS="$2"; shift ;;
-        -j*)           JOBS="${1#-j}" ;;
-        -h|--help)     usage; exit 0 ;;
+        --stubs)        WITH_STUBS="ON" ;;
+        --no-stubs)     WITH_STUBS="OFF" ;;
+        --install)      DO_INSTALL=1 ;;
+        --clean)        DO_CLEAN=1 ;;
+        --build-dir)    BUILD_DIR="$2"; shift ;;
+        --prefix)       PREFIX="$2"; shift ;;
+        --build-type)   BUILD_TYPE="$2"; shift ;;
+        --ffmpeg)       FFMPEG_TARGET="$2"; shift ;;
+        --ffmpeg-dir)   FFMPEG_DIR="$2"; shift ;;
+        --ffmpeg-prefix) FFMPEG_PREFIX="$2"; shift ;;
+        --ffmpeg-args)  FFMPEG_ARGS="$2"; shift ;;
+        --no-libx264)   WITH_X264=0 ;;
+        -j)             JOBS="$2"; shift ;;
+        -j*)            JOBS="${1#-j}" ;;
+        -h|--help)      usage; exit 0 ;;
         *) echo "[E] unknown option: $1" >&2; usage; exit 1 ;;
     esac
     shift
@@ -85,15 +118,60 @@ CMAKE_ARGS=(
 echo "[i] Configuring: cmake ${CMAKE_ARGS[*]}"
 cmake -S "${REPO_ROOT}" -B "${BUILD_DIR}" "${CMAKE_ARGS[@]}"
 
-echo "[i] Building with ${JOBS} jobs"
+echo "[i] Building libnvmpi with ${JOBS} jobs"
 cmake --build "${BUILD_DIR}" -j "${JOBS}"
 
-if [ "${DO_INSTALL}" -eq 1 ]; then
-    SUDO=""
-    [ "$(id -u)" -ne 0 ] && SUDO="sudo"
-    echo "[i] Installing"
+SUDO=""
+[ "$(id -u)" -ne 0 ] && SUDO="sudo"
+
+# Install libnvmpi if requested, or unconditionally when building FFmpeg (the
+# FFmpeg build must find libnvmpi via pkg-config and link it at runtime).
+if [ "${DO_INSTALL}" -eq 1 ] || [ -n "${FFMPEG_TARGET}" ]; then
+    echo "[i] Installing libnvmpi to ${PREFIX}"
     ${SUDO} cmake --install "${BUILD_DIR}"
-    ${SUDO} ldconfig
+    ${SUDO} ldconfig || true
 fi
 
-echo "[i] Done. Artifacts in ${BUILD_DIR}"
+if [ -z "${FFMPEG_TARGET}" ]; then
+    echo "[i] Done. libnvmpi artifacts in ${BUILD_DIR}"
+    exit 0
+fi
+
+# ---------------------------------------------------------------------------
+# FFmpeg build (--ffmpeg)
+# ---------------------------------------------------------------------------
+# Resolve the FFmpeg tree: an existing dir is patched in place; otherwise the
+# argument is treated as a release version and cloned via test/clone-ffmpeg.sh.
+if [ -d "${FFMPEG_TARGET}" ]; then
+    FF_DIR="$(cd "${FFMPEG_TARGET}" && pwd)"
+    echo "[i] Using existing FFmpeg tree: ${FF_DIR}"
+else
+    "${REPO_ROOT}/test/clone-ffmpeg.sh" -d "${FFMPEG_DIR}" "${FFMPEG_TARGET}"
+    FF_DIR="${FFMPEG_DIR}/ffmpeg${FFMPEG_TARGET}"
+fi
+
+# Make sure pkg-config and the runtime linker can see the libnvmpi we installed.
+export PKG_CONFIG_PATH="${PREFIX}/lib/pkgconfig:${PREFIX}/share/pkgconfig:${PKG_CONFIG_PATH:-}"
+export LD_LIBRARY_PATH="${PREFIX}/lib:/usr/lib/aarch64-linux-gnu/tegra:${LD_LIBRARY_PATH:-}"
+
+"${REPO_ROOT}/scripts/ffpatch.sh" "${FF_DIR}"
+
+FF_CONF=(--enable-nvmpi --disable-doc)
+[ "${WITH_X264}" -eq 1 ] && FF_CONF+=(--enable-gpl --enable-libx264)
+[ -n "${FFMPEG_PREFIX}" ] && FF_CONF+=(--prefix "${FFMPEG_PREFIX}")
+# shellcheck disable=SC2206
+[ -n "${FFMPEG_ARGS}" ] && FF_CONF+=(${FFMPEG_ARGS})
+
+echo "[i] Configuring FFmpeg: ${FF_CONF[*]}"
+( cd "${FF_DIR}" && ./configure "${FF_CONF[@]}" )
+
+echo "[i] Building FFmpeg with ${JOBS} jobs"
+( cd "${FF_DIR}" && make -j"${JOBS}" )
+
+if [ "${DO_INSTALL}" -eq 1 ]; then
+    echo "[i] Installing FFmpeg"
+    ( cd "${FF_DIR}" && ${SUDO} make install )
+    ${SUDO} ldconfig || true
+fi
+
+echo "[i] Done. FFmpeg built at ${FF_DIR}/ffmpeg"
