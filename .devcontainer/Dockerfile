@@ -1,3 +1,4 @@
+# check=skip=InvalidBaseImagePlatform
 # Dev container for jetson-ffmpeg
 # Runs ON Jetson hardware via VS Code Remote SSH + Dev Containers
 #
