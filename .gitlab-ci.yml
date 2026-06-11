@@ -83,6 +83,7 @@ build:nvmpi:
       --enable-libass --enable-libfreetype --enable-gnutls
     - make -j"$(nproc)"
     - make install
+    - cp -a ${NVMPI_PREFIX}/lib/libnvmpi* ${FFMPEG_PREFIX}/lib/
   artifacts:
     paths:
       - _ffmpeg/
