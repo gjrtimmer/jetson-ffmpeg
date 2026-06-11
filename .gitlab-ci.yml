@@ -34,7 +34,9 @@ variables:
   L4T_TAG: "r36.4.0"
   NVMPI_PREFIX: "${CI_PROJECT_DIR}/_nvmpi"
   FFMPEG_PREFIX: "${CI_PROJECT_DIR}/_ffmpeg"
-  RELEASE_IMAGE: "${CI_REGISTRY_IMAGE}/release-tools:latest"
+  # release-tools image lives in Harbor (this instance's registry convention),
+  # under a distinct sub-path so it never collides with the project's own image.
+  RELEASE_IMAGE: "${HARBOR_REGISTRY}/${CI_PROJECT_PATH}/release-tools:latest"
 
 # Reusable pipeline rules:
 #   .not-on-tag — branch/MR work; skipped on tag pipelines
@@ -267,7 +269,9 @@ package:ffmpeg-8.0: { extends: .package, variables: { FFVER: "8.0" } }
 release:
   stage: release
   <<: *only-tag
-  image: "${RELEASE_IMAGE}"
+  image:
+    name: "${RELEASE_IMAGE}"
+    pull_policy: always
   needs:
     - "package:ffmpeg-4.2"
     - "package:ffmpeg-4.4"
@@ -284,25 +288,44 @@ release:
     - bash ./scripts/release.sh
 
 # ---------------------------------------------------------------------------
-# Bootstrap: build + push the release-tools image to the project registry.
-# Run this once (manually) before the first release, and again whenever
-# ci/release-tools.Dockerfile changes. Uses kaniko (no Docker daemon needed).
+# Bootstrap: build + push the release-tools image to Harbor.
+#
+# Mirrors this instance's image-build convention (the docker/arm64 CI component):
+# docker buildx against the remote buildkit backend, registry auth from
+# $DOCKER_AUTH_CONFIG, pushed to $HARBOR_REGISTRY. We replicate the mechanism in
+# one job (rather than `include:`-ing the component) because that component sets
+# a global stages list + a docker-CLI default image, which would clash with this
+# pipeline's l4t-based build/patch/test/package jobs.
+#
+# Run this once before the first release, and whenever ci/release-tools.Dockerfile
+# changes (it auto-runs on default-branch changes to that file; also manual).
+# Requires the group CI vars: HARBOR_REGISTRY, DOCKER_HUB_PROXY, DOCKER_AUTH_CONFIG.
 # ---------------------------------------------------------------------------
 build:release-image:
   stage: build
   image:
-    name: gcr.io/kaniko-project/executor:debug
-    entrypoint: [""]
-  before_script: []
+    name: "${DOCKER_HUB_PROXY}/docker:28.2.2-cli"
+    pull_policy: always
+  # no tags -> the k8s-executor default runner (which reaches the buildkit backend)
+  variables:
+    DOCKER_CLI_EXPERIMENTAL: enabled
+    BUILDKIT_BUILDER_ID: "${CI_PROJECT_NAME}_${CI_JOB_ID}_builder"
   rules:
     - if: '$CI_COMMIT_TAG'
       when: never
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        paths: ["ci/release-tools.Dockerfile"]
     - when: manual
       allow_failure: true
+  before_script:
+    - mkdir -p "$HOME/.docker"; cat "$DOCKER_AUTH_CONFIG" > "$HOME/.docker/config.json"
+    - docker buildx create --use --driver remote --name "$BUILDKIT_BUILDER_ID" tcp://buildkit.coding.svc:1234
+  after_script:
+    - docker buildx rm "$BUILDKIT_BUILDER_ID" --force || true
   script:
-    - mkdir -p /kaniko/.docker
-    - echo "{\"auths\":{\"${CI_REGISTRY}\":{\"username\":\"${CI_REGISTRY_USER}\",\"password\":\"${CI_REGISTRY_PASSWORD}\"}}}" > /kaniko/.docker/config.json
     - >-
-      /kaniko/executor --context "${CI_PROJECT_DIR}"
-      --dockerfile "${CI_PROJECT_DIR}/ci/release-tools.Dockerfile"
-      --destination "${RELEASE_IMAGE}"
+      docker buildx build --push --provenance=false --platform=linux/arm64
+      --build-arg=DOCKER_HUB_PROXY="$DOCKER_HUB_PROXY"
+      --file ci/release-tools.Dockerfile
+      --tag "${RELEASE_IMAGE}" .

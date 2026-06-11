@@ -26,11 +26,17 @@ The version is the **libnvmpi version** in `CMakeLists.txt`
 2. **Protected tags** (Settings → Repository → Protected tags): protect `v*`.
    Protected variables are only exposed to protected refs, and releases run on
    tags — without this the mirror won't see `GITHUB_TOKEN`.
-3. **Build the release-tools image once**: run the manual `build:release-image`
-   job (Pipelines → a branch pipeline → ▶ on `build:release-image`). It builds
-   `ci/release-tools.Dockerfile` (release-cli + git-cliff + gh) and pushes it to
-   the project registry as `…/release-tools:latest`. Re-run it when that
-   Dockerfile changes.
+3. **Group CI variables** (already provided instance-wide by the cluster
+   convention, same as other projects here): `HARBOR_REGISTRY`,
+   `DOCKER_HUB_PROXY`, `DOCKER_AUTH_CONFIG`. The release-tools image build uses
+   these to reach the buildkit backend and push to Harbor.
+4. **Build the release-tools image**: the `build:release-image` job builds
+   `ci/release-tools.Dockerfile` (release-cli + git-cliff + gh) via the
+   instance's `docker buildx` remote-buildkit backend and pushes it to Harbor as
+   `${HARBOR_REGISTRY}/${CI_PROJECT_PATH}/release-tools:latest` (the same
+   mechanism as the `docker/arm64` CI component). It runs **automatically** when
+   `ci/release-tools.Dockerfile` changes on the default branch, and can be run
+   **manually** any time. Build it once before the first release.
 
 ## Cutting a release
 
