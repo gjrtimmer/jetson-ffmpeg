@@ -49,9 +49,8 @@ RUN groupadd --gid ${USER_GID} ${USERNAME} 2>/dev/null || true \
     && echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/${USERNAME} \
     && chmod 0440 /etc/sudoers.d/${USERNAME}
 
-RUN cp /etc/skel/.bashrc /home/${USERNAME}/.bashrc \
-    && chown ${USER_UID}:${USER_GID} /home/${USERNAME}/.bashrc
-COPY --chown=${USER_UID}:${USER_GID} bashrc /home/${USERNAME}/.bash_aliases
+COPY bashrc /etc/profile.d/devcontainer-prompt.sh
+RUN chmod 644 /etc/profile.d/devcontainer-prompt.sh
 
 USER ${USERNAME}
 WORKDIR /workspace
