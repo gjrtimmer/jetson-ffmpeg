@@ -98,6 +98,20 @@ All commits MUST follow [Conventional Commits](https://www.conventionalcommits.o
 
 Examples: `feat(scripts): add build.sh for libnvmpi`, `fix(nvmpi): guard against null frame buffer`, `docs: document dev-container aliases`.
 
+## Interacting with GitLab and GitHub
+
+Use the official CLIs — **`glab`** for GitLab (`gitlab.timmertech.nl`) and **`gh`**
+for GitHub — for all remote operations (pipelines, releases, tags, variables,
+issues, API calls). Prefer them over raw `curl`/REST. The project's GitLab repo
+auto-syncs (push-mirrors) tags/branches to the GitHub mirror, so a tag deleted on
+GitLab also disappears from GitHub.
+
+**Always verify authentication before using them.** Run `glab auth status` /
+`gh auth status` first. If a CLI is **not** authenticated, do **not** improvise
+(e.g. scraping tokens from CI variables) — instead **stop and print a clear
+message asking the user to authenticate** (`glab auth login` / `gh auth login`)
+and wait for them to confirm before continuing.
+
 ## Further docs
 
 - `docs/BUILD.md` — full build/install, CMake options, verification.
