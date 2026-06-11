@@ -159,6 +159,19 @@ Verifies that the nvmpi encoders/decoders are present and that a real hardware
 transcode (h264_nvmpi decode → hevc_nvmpi / h264_nvmpi encode) succeeds.
 Requires a real Jetson — there is no software fallback for nvmpi codecs.
 
+It also runs three RTP-over-loopback decode cases (publisher + receiver ffmpeg
+processes wired through an SDP file — same demuxer code path as RTSP, no
+server needed):
+
+| Case | Parameter sets | Purpose |
+|------|----------------|---------|
+| `inband_h264` | in-band at every IDR | control — proves the RTP harness itself works |
+| `oob_h264` | SDP `sprop-parameter-sets` only | regression test for upstream Keylost/jetson-ffmpeg#14: streams with out-of-band-only SPS/PPS decoded zero frames before the decoder wrapper primed the hardware with Annex-B extradata |
+| `oob_hevc` | SDP only (VPS/SPS/PPS) | same fix path for hevc_nvmpi; also exercises concurrent HW encode |
+
+Each case must decode 25 frames within a 60 s timeout; a decoder that never
+produces frames fails the case.
+
 ```bash
 JETSON_VARIANT=orin-nano test/hw-test.sh   # alias: hw-test (or test)
 ```

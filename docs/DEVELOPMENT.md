@@ -473,7 +473,7 @@ The project includes a CI smoke test (`test/hw-test.sh`) that verifies hardware 
 JETSON_VARIANT=orin-nano ./test/hw-test.sh
 ```
 
-It creates a test video with software H.264, transcodes it through h264_nvmpi decode → hevc_nvmpi encode, and verifies the output codec.
+It creates a test video with software H.264, transcodes it through h264_nvmpi decode → hevc_nvmpi encode, and verifies the output codec. It then runs three RTP-over-loopback decode cases driven from an SDP file: in-band SPS/PPS (control), out-of-band-only SPS/PPS (regression test for upstream Keylost/jetson-ffmpeg#14 — parameter sets reach the decoder only via SDP `sprop-parameter-sets`, exercising the decoder's extradata priming), and the HEVC equivalent (out-of-band VPS/SPS/PPS).
 
 ---
 
