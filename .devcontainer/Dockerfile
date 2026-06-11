@@ -13,14 +13,31 @@ ARG DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
+    ninja-build \
     pkg-config \
     git \
     gdb \
+    strace \
+    clang-format \
     libv4l-dev \
     nasm \
     yasm \
+    curl \
+    wget \
+    vim \
     sudo \
     bash-completion \
+    libass-dev \
+    libfreetype-dev \
+    libgnutls28-dev \
+    libsdl2-dev \
+    libtool \
+    libvorbis-dev \
+    libxcb1-dev \
+    libxcb-shm0-dev \
+    libxcb-xfixes0-dev \
+    texinfo \
+    zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
 
 ARG USERNAME=vscode
