@@ -84,6 +84,7 @@ jobs:
           - "release/6.1"
           - "release/7.0"
           - "release/7.1"
+          - "release/8.0"
     steps:
       - uses: actions/checkout@v4
 
@@ -124,7 +125,7 @@ jobs:
           make install
 
       - name: Upload ffmpeg artifacts
-        if: matrix.ffmpeg == 'release/7.1'
+        if: matrix.ffmpeg == 'release/8.0'
         uses: actions/upload-artifact@v4
         with:
           name: ffmpeg-build

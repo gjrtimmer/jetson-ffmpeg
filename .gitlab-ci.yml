@@ -119,16 +119,21 @@ patch:ffmpeg-7.1:
   variables:
     FFMPEG_BRANCH: "release/7.1"
 
+patch:ffmpeg-8.0:
+  <<: *patch-and-build
+  variables:
+    FFMPEG_BRANCH: "release/8.0"
+
 # ---------------------------------------------------------------------------
 # Stage: test — HW encode/decode on each Jetson hardware variant
-# Uses the ffmpeg 7.1 build artifacts from the patch stage.
+# Uses the ffmpeg 8.0 build artifacts from the patch stage.
 #
 # To add a new hardware variant, add it to the matrix below and register
 # a runner with tags: jetson, <variant>
 # ---------------------------------------------------------------------------
 test:hw-encode:
   stage: test
-  needs: ["patch:ffmpeg-7.1"]
+  needs: ["patch:ffmpeg-8.0"]
   tags: [jetson, "${JETSON_VARIANT}"]
   parallel:
     matrix:
