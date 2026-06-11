@@ -1,0 +1,41 @@
+{
+    "name": "jetson-ffmpeg",
+    "build": {
+        "dockerfile": "Dockerfile",
+        "args": {
+            "L4T_VERSION": "r36.4.0"
+        }
+    },
+    "runArgs": [
+        "--runtime=nvidia"
+    ],
+    "containerEnv": {
+        "NVIDIA_VISIBLE_DEVICES": "all",
+        "NVIDIA_DRIVER_CAPABILITIES": "all"
+    },
+    "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
+    "workspaceFolder": "/workspace",
+    "remoteUser": "vscode",
+    "customizations": {
+        "vscode": {
+            "settings": {
+                "cmake.buildDirectory": "${workspaceFolder}/build",
+                "cmake.sourceDirectory": "${workspaceFolder}",
+                "cmake.configureOnOpen": true,
+                "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+                "C_Cpp.default.compileCommands": "${workspaceFolder}/build/compile_commands.json",
+                "workbench.editorAssociations": {
+                    "*.md": "bierner.markdown-preview-github-styles"
+                }
+            },
+            "extensions": [
+                "ms-vscode.cpptools",
+                "ms-vscode.cmake-tools",
+                "twxs.cmake",
+                "bierner.github-markdown-preview",
+                "mhutchie.git-graph"
+            ]
+        }
+    },
+    "postCreateCommand": "cmake -S . -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
+}
