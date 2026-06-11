@@ -5,19 +5,26 @@ This guide covers running the jetson-ffmpeg development environment inside a con
 ## Architecture
 
 ```
-┌──────────────┐      SSH       ┌──────────────────────────────────┐
-│  Local PC    │ ──────────────▸│  Jetson Device                   │
-│  (VS Code)   │                │  ┌────────────────────────────┐  │
-│              │                │  │  Docker (nvidia runtime)   │  │
-│  Extensions: │                │  │  ┌──────────────────────┐  │  │
-│  - Remote SSH│                │  │  │  Dev Container       │  │  │
-│  - Dev Cont. │                │  │  │  - L4T JetPack base  │  │  │
-│              │                │  │  │  - cmake, gcc, gdb   │  │  │
-│              │                │  │  │  - GPU access         │  │  │
-│              │                │  │  └──────────────────────┘  │  │
-│              │                │  └────────────────────────────┘  │
-└──────────────┘                └──────────────────────────────────┘
+┌──────────────┐      SSH       ┌───────────────────────────────────────┐
+│  Local PC    │ ──────────────▸│  Jetson Device                        │
+│  (VS Code)   │                │  ┌─────────────────────────────────┐  │
+│              │                │  │  Docker (nvidia runtime)        │  │
+│  Extensions: │                │  │  ┌───────────────────────────┐  │  │
+│  - Remote SSH│                │  │  │  Dev Container            │  │  │
+│  - Dev Cont. │                │  │  │  - L4T JetPack base      │  │  │
+│              │                │  │  │  - cmake, gcc, gdb       │  │  │
+│              │                │  │  │  - GPU access             │  │  │
+│              │                │  │  │                           │  │  │
+│              │                │  │  │  Host bind mounts (ro):  │  │  │
+│              │                │  │  │  - /usr/lib/.../tegra/   │  │  │
+│              │                │  │  │  - /usr/src/jetson_mm..  │  │  │
+│              │                │  │  │  - /usr/local/cuda/      │  │  │
+│              │                │  │  └───────────────────────────┘  │  │
+│              │                │  └─────────────────────────────────┘  │
+└──────────────┘                └───────────────────────────────────────┘
 ```
+
+The container bind-mounts three host directories read-only to provide the NVIDIA libraries, Jetson Multimedia API headers/sources, and CUDA toolkit that CMake needs to build libnvmpi.
 
 ## Prerequisites
 
@@ -198,6 +205,20 @@ The container runs as `vscode` (UID 1000). If your host user has a different UID
     }
 }
 ```
+
+### CMake fails with libraries NOTFOUND
+
+CMake cannot find `nvv4l2`, `nvjpeg`, `nvbufsurface`, or `nvbufsurftransform`. This means the host bind mounts are missing or the paths don't match your JetPack installation.
+
+Verify the host directories exist:
+
+```bash
+ls /usr/lib/aarch64-linux-gnu/tegra/libnvv4l2.so
+ls /usr/src/jetson_multimedia_api/include/nvbufsurface.h
+ls /usr/local/cuda/include/cuda.h
+```
+
+If your libraries are at a different path, update the `mounts` array in `.devcontainer/devcontainer.json`.
 
 ### No GPU access inside container
 

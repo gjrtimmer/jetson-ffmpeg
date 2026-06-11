@@ -7,11 +7,18 @@
         }
     },
     "runArgs": [
-        "--runtime=nvidia"
+        "--runtime=nvidia",
+        "--hostname=jetson"
+    ],
+    "mounts": [
+        "source=/usr/lib/aarch64-linux-gnu/tegra,target=/usr/lib/aarch64-linux-gnu/tegra,type=bind,readonly",
+        "source=/usr/src/jetson_multimedia_api,target=/usr/src/jetson_multimedia_api,type=bind,readonly",
+        "source=/usr/local/cuda,target=/usr/local/cuda,type=bind,readonly"
     ],
     "containerEnv": {
         "NVIDIA_VISIBLE_DEVICES": "all",
-        "NVIDIA_DRIVER_CAPABILITIES": "all"
+        "NVIDIA_DRIVER_CAPABILITIES": "all",
+        "LD_LIBRARY_PATH": "/usr/lib/aarch64-linux-gnu/tegra:${containerEnv:LD_LIBRARY_PATH}"
     },
     "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
     "workspaceFolder": "/workspace",
@@ -31,7 +38,6 @@
             "extensions": [
                 "ms-vscode.cpptools",
                 "ms-vscode.cmake-tools",
-                "twxs.cmake",
                 "bierner.github-markdown-preview",
                 "bierner.markdown-preview-github-styles",
                 "bierner.markdown-mermaid",
