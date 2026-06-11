@@ -33,7 +33,18 @@
                 "ms-vscode.cmake-tools",
                 "twxs.cmake",
                 "bierner.github-markdown-preview",
-                "mhutchie.git-graph"
+                "bierner.markdown-preview-github-styles",
+                "bierner.markdown-mermaid",
+                "bierner.markdown-checkbox",
+                "bierner.markdown-emoji",
+                "bierner.markdown-footnotes",
+                "yzhang.markdown-all-in-one",
+                "davidanson.vscode-markdownlint",
+                "timonwong.shellcheck",
+                "redhat.vscode-yaml",
+                "mhutchie.git-graph",
+                "waderyan.gitblame",
+                "streetsidesoftware.code-spell-checker"
             ]
         }
     },
