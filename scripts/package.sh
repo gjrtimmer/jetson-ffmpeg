@@ -75,7 +75,7 @@ mkdir -p "${DEST}/bundled-libs"
 export LD_LIBRARY_PATH="${PREFIX}/lib:/usr/lib/aarch64-linux-gnu/tegra:${LD_LIBRARY_PATH:-}"
 for bin in "${DEST}"/bin/*; do
     [ -x "$bin" ] || continue
-    ldd "$bin" 2>/dev/null | awk '/=>/ && $3 ~ /^\// {print $1" "$3}'
+    { ldd "$bin" 2>/dev/null || true; } | awk '/=>/ && $3 ~ /^\// {print $1" "$3}'
 done | sort -u | while read -r soname path; do
     [ -f "$path" ] || continue
     case "$path" in *tegra*|*/cuda*) continue ;; esac
@@ -92,8 +92,11 @@ cat > "${DEST}/install.sh" <<'INSTALL_EOF'
 #!/usr/bin/env bash
 # Install this jetson-ffmpeg bundle (libnvmpi + FFmpeg with nvmpi) on a Jetson.
 #
-# Usage:  sudo ./install.sh [PREFIX]      (PREFIX default: /usr/local)
-#         sudo PREFIX=/opt/ff ./install.sh
+# Usage:  ./install.sh [PREFIX]            (PREFIX default: /usr/local)
+#         PREFIX=/opt/ff ./install.sh
+#
+# Auto-elevates with sudo for privileged steps when not already root, so it can
+# be run either as 'sudo ./install.sh' or plain './install.sh'.
 #
 # Requires a real Jetson with the NVIDIA tegra libraries present
 # (/usr/lib/aarch64-linux-gnu/tegra) — the nvmpi codecs are hardware-only.
@@ -101,16 +104,30 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PREFIX="${1:-${PREFIX:-/usr/local}}"
 
+# Elevate privileged steps with sudo when not already root.
+SUDO=""
+if [ "$(id -u)" -ne 0 ]; then
+    if command -v sudo >/dev/null 2>&1; then
+        SUDO="sudo"
+        echo "[i] not root — using sudo for privileged steps"
+    else
+        echo "[!] not root and 'sudo' not found; re-run as root or pick a writable PREFIX"
+    fi
+fi
+
 echo "[i] installing into ${PREFIX}"
 for sub in bin lib include share; do
-    [ -d "${HERE}/${sub}" ] && cp -a "${HERE}/${sub}/." "${PREFIX}/${sub}/"
+    if [ -d "${HERE}/${sub}" ]; then
+        ${SUDO} mkdir -p "${PREFIX}/${sub}"
+        ${SUDO} cp -a "${HERE}/${sub}/." "${PREFIX}/${sub}/"
+    fi
 done
 
 # Register the lib dir for a non-standard prefix so libraries resolve at runtime.
-if [ "${PREFIX}" != "/usr/local" ] && [ -w /etc/ld.so.conf.d ] 2>/dev/null; then
-    echo "${PREFIX}/lib" > /etc/ld.so.conf.d/jetson-ffmpeg.conf
+if [ "${PREFIX}" != "/usr/local" ]; then
+    echo "${PREFIX}/lib" | ${SUDO} tee /etc/ld.so.conf.d/jetson-ffmpeg.conf >/dev/null 2>&1 || true
 fi
-if command -v ldconfig >/dev/null 2>&1; then ldconfig || true; fi
+command -v ldconfig >/dev/null 2>&1 && ${SUDO} ldconfig || true
 
 export LD_LIBRARY_PATH="${PREFIX}/lib:/usr/lib/aarch64-linux-gnu/tegra:${LD_LIBRARY_PATH:-}"
 
@@ -119,20 +136,20 @@ export LD_LIBRARY_PATH="${PREFIX}/lib:/usr/lib/aarch64-linux-gnu/tegra:${LD_LIBR
 # filled from the bundled fallback libs, so an apt-less Jetson also works offline.
 if command -v apt-get >/dev/null 2>&1; then
     echo "[i] installing runtime codec libs via apt-get"
-    apt-get update -qq || true
-    apt-get install -y -qq --no-install-recommends \
+    ${SUDO} apt-get update -qq || true
+    ${SUDO} apt-get install -y -qq --no-install-recommends \
         libx264-163 libx265-199 libvpx7 libopus0 libmp3lame0 libvorbis0a libvorbisenc2 \
         libdav1d5 libass9 libfreetype6 libnuma1 libv4l-0 2>/dev/null || true
-    command -v ldconfig >/dev/null 2>&1 && ldconfig || true
+    command -v ldconfig >/dev/null 2>&1 && ${SUDO} ldconfig || true
 fi
 if [ -d "${HERE}/bundled-libs" ]; then
     missing=$(ldd "${PREFIX}/bin/ffmpeg" 2>/dev/null | awk '/not found/{print $1}')
     if [ -n "${missing}" ]; then
         echo "[i] filling missing libs from bundle:" ${missing}
         for so in ${missing}; do
-            [ -f "${HERE}/bundled-libs/${so}" ] && cp -a "${HERE}/bundled-libs/${so}" "${PREFIX}/lib/"
+            [ -f "${HERE}/bundled-libs/${so}" ] && ${SUDO} cp -a "${HERE}/bundled-libs/${so}" "${PREFIX}/lib/"
         done
-        command -v ldconfig >/dev/null 2>&1 && ldconfig || true
+        command -v ldconfig >/dev/null 2>&1 && ${SUDO} ldconfig || true
     fi
 fi
 
@@ -165,8 +182,8 @@ Contents:
 Install (on a Jetson):
   tar xzf ${NAME}.tar.gz
   cd ${NAME}
-  sudo ./install.sh            # installs into /usr/local
-  # or: sudo ./install.sh /opt/jetson-ffmpeg
+  ./install.sh                 # installs into /usr/local (auto-uses sudo)
+  # or: ./install.sh /opt/jetson-ffmpeg
 
 install.sh installs the runtime codec deps (libx264/x265/vpx/opus/…) via apt-get
 when it is available, and fills anything still missing from bundled-libs/ — so it
