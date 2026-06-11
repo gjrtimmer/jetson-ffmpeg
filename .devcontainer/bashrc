@@ -1,0 +1,25 @@
+# shellcheck shell=bash
+
+# Git branch for prompt
+__git_ps1_branch() {
+    local branch
+    branch=$(git symbolic-ref --short HEAD 2>/dev/null || git rev-parse --short HEAD 2>/dev/null)
+    [[ -n "$branch" ]] && printf ' (%s)' "$branch"
+}
+
+PS1='\[\e[1;32m\]\h\[\e[0m\]:\[\e[1;34m\]\w\[\e[0;33m\]$(__git_ps1_branch)\[\e[0m\]\$ '
+
+# Enable color support
+alias ls='ls --color=auto'
+alias grep='grep --color=auto'
+
+# History
+HISTSIZE=10000
+HISTFILESIZE=20000
+HISTCONTROL=ignoreboth:erasedups
+shopt -s histappend
+
+# Bash completion
+if [ -f /usr/share/bash-completion/bash_completion ]; then
+    . /usr/share/bash-completion/bash_completion
+fi

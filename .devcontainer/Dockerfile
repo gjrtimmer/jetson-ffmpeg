@@ -49,5 +49,7 @@ RUN groupadd --gid ${USER_GID} ${USERNAME} 2>/dev/null || true \
     && echo "${USERNAME} ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/${USERNAME} \
     && chmod 0440 /etc/sudoers.d/${USERNAME}
 
+COPY --chown=${USER_UID}:${USER_GID} bashrc /home/${USERNAME}/.bashrc
+
 USER ${USERNAME}
 WORKDIR /workspace
