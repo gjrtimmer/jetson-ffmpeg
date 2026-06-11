@@ -16,6 +16,19 @@ PROMPT_COMMAND="__set_ps1${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
 alias ls='ls --color=auto'
 alias grep='grep --color=auto'
 
+# jetson-ffmpeg project shortcuts.
+# The dev container always mounts the repository at /workspace; the underlying
+# scripts resolve their own paths, so these run correctly from any directory.
+export JETSON_FFMPEG_ROOT="/workspace"
+alias build='"${JETSON_FFMPEG_ROOT}/scripts/build.sh"'           # build libnvmpi
+alias ffpatch='"${JETSON_FFMPEG_ROOT}/scripts/ffpatch.sh"'       # patch an ffmpeg tree
+alias update-patch='"${JETSON_FFMPEG_ROOT}/ffmpeg/dev/update_patch.sh"'  # regenerate patches
+alias try-build='"${JETSON_FFMPEG_ROOT}/ffmpeg/dev/try_build.sh"'        # build-validate all versions
+alias hw-test='"${JETSON_FFMPEG_ROOT}/test/hw-test.sh"'          # hardware smoke test
+# 'test' shadows the shell builtin in interactive shells only (aliases are not
+# expanded in scripts), giving a convenient name for the hardware smoke test.
+alias test='"${JETSON_FFMPEG_ROOT}/test/hw-test.sh"'
+
 # History
 HISTSIZE=10000
 HISTFILESIZE=20000
