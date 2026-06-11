@@ -7,7 +7,10 @@ __git_ps1_branch() {
     [[ -n "$branch" ]] && printf ' (%s)' "$branch"
 }
 
-PS1='\[\e[1;32m\]\h\[\e[0m\]:\[\e[1;34m\]\w\[\e[0;33m\]$(__git_ps1_branch)\[\e[0m\]\$ '
+__set_ps1() {
+    PS1='\[\e[1;32m\]\h\[\e[0m\]:\[\e[1;34m\]\w\[\e[0;33m\]$(__git_ps1_branch)\[\e[0m\]\$ '
+}
+PROMPT_COMMAND="__set_ps1${PROMPT_COMMAND:+;$PROMPT_COMMAND}"
 
 # Enable color support
 alias ls='ls --color=auto'
