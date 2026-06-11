@@ -13,14 +13,19 @@ REPO_ROOT="$(cd "${DEV_DIR}/../.." && pwd)"
 PATCH_DIR="${REPO_ROOT}/ffmpeg/patches"
 FFPATCH="${REPO_ROOT}/scripts/ffpatch.sh"
 
-VERSIONS="4.2 4.4 6.0"
+VERSIONS="4.2 4.4 6.0 6.1 7.0 7.1 8.0"
 
 for ver in ${VERSIONS}; do
     src="${DEV_DIR}/ffmpeg${ver}"
     # Shallow-clone only if the tree is not already present.
     if [ ! -d "${src}" ]; then
-        git clone git://source.ffmpeg.org/ffmpeg.git -b "release/${ver}" --depth=1 "${src}"
+        git clone --depth=1 -b "release/${ver}" https://git.ffmpeg.org/ffmpeg.git "${src}"
     fi
+
+    # Reset to pristine first so reused trees produce a clean diff (drops any
+    # previous patch + build artifacts before re-patching).
+    git -C "${src}" reset --hard >/dev/null 2>&1
+    git -C "${src}" clean -fdx   >/dev/null 2>&1
 
     # Apply the runtime patch.
     "${FFPATCH}" "${src}"

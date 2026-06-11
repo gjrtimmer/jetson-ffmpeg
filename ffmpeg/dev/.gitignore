@@ -1,4 +1,3 @@
-/ffmpeg4.2
-/ffmpeg4.4
-/ffmpeg6.0
+# Cloned FFmpeg source trees created by update_patch.sh / try_build.sh
+/ffmpeg[0-9]*
 /*custom.sh

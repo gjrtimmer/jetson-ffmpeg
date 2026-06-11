@@ -1,5 +1,5 @@
 diff --git a/configure b/configure
-index 6db69dd..682b9c9 100755
+index 5a83062..0d8c455 100755
 --- a/configure
 +++ b/configure
 @@ -353,6 +353,7 @@ External library support:
@@ -18,7 +18,7 @@ index 6db69dd..682b9c9 100755
      $HWACCEL_LIBRARY_NONFREE_LIST
      libmfx
      libvpl
-@@ -3181,6 +3183,9 @@ h264_mediacodec_encoder_extralibs="-landroid"
+@@ -3183,6 +3185,9 @@ h264_mediacodec_encoder_extralibs="-landroid"
  h264_mediacodec_encoder_select="h264_metadata"
  h264_mf_encoder_deps="mediafoundation"
  h264_mmal_decoder_deps="mmal"
@@ -28,7 +28,7 @@ index 6db69dd..682b9c9 100755
  h264_nvenc_encoder_deps="nvenc"
  h264_nvenc_encoder_select="atsc_a53"
  h264_omx_encoder_deps="omx"
-@@ -3202,6 +3207,9 @@ hevc_mediacodec_encoder_deps="mediacodec"
+@@ -3204,6 +3209,9 @@ hevc_mediacodec_encoder_deps="mediacodec"
  hevc_mediacodec_encoder_extralibs="-landroid"
  hevc_mediacodec_encoder_select="hevc_metadata"
  hevc_mf_encoder_deps="mediafoundation"
@@ -38,7 +38,7 @@ index 6db69dd..682b9c9 100755
  hevc_nvenc_encoder_deps="nvenc"
  hevc_nvenc_encoder_select="atsc_a53"
  hevc_qsv_decoder_select="hevc_mp4toannexb_bsf qsvdec"
-@@ -3224,6 +3232,7 @@ mpeg1_cuvid_decoder_deps="cuvid"
+@@ -3226,6 +3234,7 @@ mpeg1_cuvid_decoder_deps="cuvid"
  mpeg1_v4l2m2m_decoder_deps="v4l2_m2m mpeg1_v4l2_m2m"
  mpeg2_crystalhd_decoder_select="crystalhd"
  mpeg2_cuvid_decoder_deps="cuvid"
@@ -46,7 +46,7 @@ index 6db69dd..682b9c9 100755
  mpeg2_mmal_decoder_deps="mmal"
  mpeg2_mediacodec_decoder_deps="mediacodec"
  mpeg2_qsv_decoder_select="qsvdec"
-@@ -3232,6 +3241,7 @@ mpeg2_vaapi_encoder_select="cbs_mpeg2 vaapi_encode"
+@@ -3234,6 +3243,7 @@ mpeg2_vaapi_encoder_select="cbs_mpeg2 vaapi_encode"
  mpeg2_v4l2m2m_decoder_deps="v4l2_m2m mpeg2_v4l2_m2m"
  mpeg4_crystalhd_decoder_select="crystalhd"
  mpeg4_cuvid_decoder_deps="cuvid"
@@ -54,7 +54,7 @@ index 6db69dd..682b9c9 100755
  mpeg4_mediacodec_decoder_deps="mediacodec"
  mpeg4_mmal_decoder_deps="mmal"
  mpeg4_omx_encoder_deps="omx"
-@@ -3244,6 +3254,7 @@ vc1_mmal_decoder_deps="mmal"
+@@ -3246,6 +3256,7 @@ vc1_mmal_decoder_deps="mmal"
  vc1_qsv_decoder_select="qsvdec"
  vc1_v4l2m2m_decoder_deps="v4l2_m2m vc1_v4l2_m2m"
  vp8_cuvid_decoder_deps="cuvid"
@@ -62,7 +62,7 @@ index 6db69dd..682b9c9 100755
  vp8_mediacodec_decoder_deps="mediacodec"
  vp8_qsv_decoder_select="qsvdec"
  vp8_rkmpp_decoder_deps="rkmpp"
-@@ -3252,6 +3263,7 @@ vp8_vaapi_encoder_select="vaapi_encode"
+@@ -3254,6 +3265,7 @@ vp8_vaapi_encoder_select="vaapi_encode"
  vp8_v4l2m2m_decoder_deps="v4l2_m2m vp8_v4l2_m2m"
  vp8_v4l2m2m_encoder_deps="v4l2_m2m vp8_v4l2_m2m"
  vp9_cuvid_decoder_deps="cuvid"
@@ -70,7 +70,7 @@ index 6db69dd..682b9c9 100755
  vp9_mediacodec_decoder_deps="mediacodec"
  vp9_qsv_decoder_select="qsvdec"
  vp9_rkmpp_decoder_deps="rkmpp"
-@@ -6740,6 +6752,7 @@ enabled libvpx            && {
+@@ -6749,6 +6761,7 @@ enabled libvpx            && {
  enabled libwebp           && {
      enabled libwebp_encoder      && require_pkg_config libwebp "libwebp >= 0.2.0" webp/encode.h WebPGetEncoderVersion
      enabled libwebp_anim_encoder && check_pkg_config libwebp_anim_encoder "libwebpmux >= 0.4.0" webp/mux.h WebPAnimEncoderOptionsInit; }
@@ -178,10 +178,27 @@ index e593ad1..a667192 100644
  extern const FFCodec ff_vqa_decoder;
 diff --git a/libavcodec/nvmpi_dec.c b/libavcodec/nvmpi_dec.c
 new file mode 100644
-index 0000000..659c28e
+index 0000000..2beb85b
 --- /dev/null
 +++ b/libavcodec/nvmpi_dec.c
-@@ -0,0 +1,258 @@
+@@ -0,0 +1,335 @@
++/*
++ * nvmpi_dec.c — FFmpeg decoder wrapper for libnvmpi (layer 2 of
++ * jetson-ffmpeg, the FFmpeg integration layer).
++ *
++ * This file is NOT built in this repository: it is patched into a vanilla
++ * FFmpeg source tree (libavcodec/) by scripts/ffpatch.sh or the generated
++ * patches in ffmpeg/patches/, and compiled as part of FFmpeg itself. It
++ * implements FFmpeg decoder codecs (h264_nvmpi, hevc_nvmpi, mpeg2_nvmpi,
++ * mpeg4_nvmpi, vp8_nvmpi, vp9_nvmpi) by delegating all real work to the
++ * libnvmpi C API (<nvmpi.h>, implemented in src/nvmpi_dec.cpp).
++ *
++ * One source file supports FFmpeg 4.2 through 8.0+: API differences are
++ * handled with LIBAVCODEC_VERSION_MAJOR preprocessor guards (see
++ * docs/DEVELOPMENT.md "Wrapper code paths by FFmpeg version"). For the
++ * decoder the only breakpoint is the AVCodec -> FFCodec registration
++ * change in libavcodec 60 (FFmpeg 6.0).
++ */
 +#include <stdio.h>
 +#include <stdlib.h>
 +#include <sys/time.h>
@@ -199,23 +216,34 @@ index 0000000..659c28e
 +#include "libavutil/log.h"
 +#include "libavutil/opt.h"
 +
++//libavcodec >= 60 (FFmpeg 6.0+) moved the internal codec description to
++//FFCodec in codec_internal.h; older versions register a plain AVCodec and
++//must not include this private header.
 +#if LIBAVCODEC_VERSION_MAJOR >= 60
 +#include "codec_internal.h"
 +#endif
 +
++//valid range / default for the frame_pool_size AVOption (mirrors the size
++//of libnvmpi's decoded-frame pool, i.e. how many frames may buffer up
++//before the user must call avcodec_receive_frame())
 +#define OPT_frame_pool_size_MIN 1
 +#define OPT_frame_pool_size_MAX 32
 +#define OPT_frame_pool_size_DEFAULT 5
 +
++//Per-instance private context (priv_data of the AVCodecContext).
++//AVClass must stay discoverable for the AVOption system; resize_expr and
++//frame_pool_size are set via AVOptions before init.
 +typedef struct {
-+	char eos_reached;
-+	nvmpictx* ctx;
++	char eos_reached;      //unused at present
++	nvmpictx* ctx;         //libnvmpi decoder handle
 +	AVClass *av_class;
-+	AVFrame *bufFrame;
-+	char *resize_expr;
-+	int frame_pool_size;
++	AVFrame *bufFrame;     //pre-allocated frame the next decode copies into
++	char *resize_expr;     //"-resize WxH" option (hw downscale in libnvmpi)
++	int frame_pool_size;   //"-frame_pool_size N" option
 +} nvmpiDecodeContext;
 +
++//Translate FFmpeg's codec id into libnvmpi's coding type enum.
++//Returns NV_VIDEO_CodingUnused for anything libnvmpi cannot decode.
 +static nvCodingType nvmpi_get_codingtype(AVCodecContext *avctx)
 +{
 +	switch (avctx->codec_id) {
@@ -230,11 +258,15 @@ index 0000000..659c28e
 +};
 +
 +
++//AVCodec/FFCodec .init callback: validate options/pix_fmt, build the
++//nvDecParam from the AVOptions, pre-allocate the first output AVFrame
++//(bufFrame) and create the libnvmpi decoder (which starts its internal
++//capture thread). Returns 0 or an AVERROR code.
 +static int nvmpi_init_decoder(AVCodecContext *avctx)
 +{
 +	nvmpiDecodeContext *nvmpi_context = avctx->priv_data;
 +	nvDecParam param={0};
-+	
++
 +	param.codingType =nvmpi_get_codingtype(avctx);
 +	if (param.codingType == NV_VIDEO_CodingUnused)
 +	{
@@ -277,6 +309,9 @@ index 0000000..659c28e
 +		avctx->height = param.resized.height;
 +	}
 +
++	//Pre-allocate the destination frame via FFmpeg's buffer pool so
++	//nvmpi_decode() can copy decoded planes straight into it. A fresh
++	//bufFrame is re-acquired after each frame is handed to the user.
 +	nvmpi_context->bufFrame = av_frame_alloc();
 +	nvmpi_context->bufFrame->width = avctx->width;
 +	nvmpi_context->bufFrame->height = avctx->height;
@@ -300,6 +335,8 @@ index 0000000..659c28e
 +   return 0;
 +}
 +
++//AVCodec/FFCodec .close callback: drop the buffered output frame and shut
++//down the libnvmpi decoder (joins its capture thread, frees DMA buffers).
 +static int nvmpi_close(AVCodecContext *avctx)
 +{
 +	nvmpiDecodeContext *nvmpi_context = avctx->priv_data;
@@ -311,6 +348,13 @@ index 0000000..659c28e
 +	return nvmpi_decoder_close(nvmpi_context->ctx);
 +}
 +
++//Classic .decode callback (wired up via FF_CODEC_DECODE_CB on >= 60):
++//one call feeds one compressed packet to libnvmpi and, if a decoded frame
++//is already available, returns it via *data/got_frame. Asymmetric latency
++//(decoder pipeline depth) is absorbed by libnvmpi's frame pool.
++//Signature guard: libavcodec 60 changed the decode callback's output
++//argument from void* to a typed AVFrame*; both spellings receive the same
++//pointer, so the body is shared.
 +#if LIBAVCODEC_VERSION_MAJOR >= 60
 +static int nvmpi_decode(AVCodecContext *avctx, AVFrame *data, int *got_frame, AVPacket *avpkt)
 +#else
@@ -325,6 +369,8 @@ index 0000000..659c28e
 +	int res;
 +	int decode_ret = avpkt->size;
 +
++	//Feed the compressed packet (if any — FFmpeg sends empty packets while
++	//draining). libnvmpi memcpy's the payload, so avpkt stays caller-owned.
 +	if(avpkt->size)
 +	{
 +		packet.payload_size=avpkt->size;
@@ -342,6 +388,8 @@ index 0000000..659c28e
 +		}
 +	}
 +
++	//Point the nvFrame at bufFrame's pre-allocated planes; on success
++	//libnvmpi copies the decoded frame directly into FFmpeg-owned memory.
 +	_nvframe.payload[0] = bufFrame->data[0];
 +	_nvframe.payload[1] = bufFrame->data[1];
 +	_nvframe.payload[2] = bufFrame->data[2];
@@ -353,16 +401,19 @@ index 0000000..659c28e
 +
 +	if(res<0)
 +	{
++		//no decoded frame ready yet — not an error, just got_frame == 0
 +		return decode_ret;
 +	}
 +
++	//Hand the filled bufFrame to the caller (zero-copy move of the ref)...
 +	bufFrame->format=AV_PIX_FMT_YUV420P;
 +	bufFrame->pts=_nvframe.timestamp;
 +	bufFrame->pkt_dts = AV_NOPTS_VALUE;
 +	av_frame_move_ref(frame, bufFrame);
-+	
++
 +	*got_frame = 1;
-+	
++
++	//...and immediately acquire a fresh buffer for the next decode call.
 +	bufFrame->width = avctx->width;
 +	bufFrame->height = avctx->height;
 +	if (ff_get_buffer(avctx, bufFrame, 0) < 0)
@@ -371,6 +422,7 @@ index 0000000..659c28e
 +		return AVERROR(ENOMEM);
 +	}
 +	
++	//keep the metadata that belonged to the returned frame, not the new one
 +	frame->metadata = bufFrame->metadata;
 +	bufFrame->metadata = NULL;
 +
@@ -379,6 +431,10 @@ index 0000000..659c28e
 +
 +
 +
++//AVOption table: user-settable private options, resolved into
++//nvmpiDecodeContext fields by FFmpeg's option system before .init runs.
++//OFFSET locates the field inside the priv_data struct; VD restricts the
++//options to video decoding.
 +#define OFFSET(x) offsetof(nvmpiDecodeContext, x)
 +#define VD AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_DECODING_PARAM
 +static const AVOption options[] = {
@@ -387,6 +443,8 @@ index 0000000..659c28e
 +    { NULL }
 +};
 +
++//Per-codec AVClass: binds the shared option table above to each decoder
++//instance (referenced by priv_class in the registration struct below).
 +#define NVMPI_DEC_CLASS(NAME) \
 +	static const AVClass nvmpi_##NAME##_dec_class = { \
 +		.class_name = "nvmpi_" #NAME "_dec", \
@@ -394,7 +452,22 @@ index 0000000..659c28e
 +		.version    = LIBAVUTIL_VERSION_INT, \
 +	};
 +
++//Codec registration struct, stamped out once per codec by NVMPI_DEC().
++//Two variants exist because libavcodec 60 (FFmpeg 6.0) split the codec
++//description into a public AVCodec (now the .p sub-struct) plus private
++//FFCodec fields, and replaced the bare .decode pointer with the
++//FF_CODEC_DECODE_CB() wrapper. The matching extern declaration patched
++//into allcodecs.c differs likewise ("extern AVCodec" vs "extern const
++//FFCodec") — that is why version overlay files exist (docs/DEVELOPMENT.md).
++//Shared semantics of both variants:
++//  - name "<codec>_nvmpi", wrapper_name "nvmpi" (how FFmpeg knows this is
++//    a hw wrapper around an external implementation);
++//  - capabilities: DELAY (frames come out later than packets go in),
++//    AVOID_PROBING, HARDWARE;
++//  - BSFS optionally inserts a bitstream filter — h264/hevc use
++//    *_mp4toannexb so libnvmpi always receives Annex-B NAL units.
 +#if LIBAVCODEC_VERSION_MAJOR >= 60
++	//FFCodec variant for libavcodec >= 60 (FFmpeg 6.0/6.1/7.x/8.x)
 +	#define NVMPI_DEC(NAME, ID, BSFS) \
 +		NVMPI_DEC_CLASS(NAME) \
 +		FFCodec ff_##NAME##_nvmpi_decoder = { \
@@ -413,6 +486,7 @@ index 0000000..659c28e
 +			.p.wrapper_name   = "nvmpi", \
 +		};
 +#else
++	//legacy AVCodec variant for libavcodec < 60 (FFmpeg 4.2/4.4/5.x)
 +	#define NVMPI_DEC(NAME, ID, BSFS) \
 +		NVMPI_DEC_CLASS(NAME) \
 +		AVCodec ff_##NAME##_nvmpi_decoder = { \
@@ -433,6 +507,9 @@ index 0000000..659c28e
 +#endif
 +
 +
++//Instantiate the six nvmpi decoders. Each expansion must have a matching
++//extern in allcodecs.c and a CONFIG_*_NVMPI_DECODER Makefile/configure
++//entry (added by ffpatch.sh / the version overlays).
 +NVMPI_DEC(h264,  AV_CODEC_ID_H264,"h264_mp4toannexb");
 +NVMPI_DEC(hevc,  AV_CODEC_ID_HEVC,"hevc_mp4toannexb");
 +NVMPI_DEC(mpeg2, AV_CODEC_ID_MPEG2VIDEO,NULL);
@@ -442,10 +519,34 @@ index 0000000..659c28e
 +
 diff --git a/libavcodec/nvmpi_enc.c b/libavcodec/nvmpi_enc.c
 new file mode 100644
-index 0000000..deb424b
+index 0000000..1e1651f
 --- /dev/null
 +++ b/libavcodec/nvmpi_enc.c
-@@ -0,0 +1,567 @@
+@@ -0,0 +1,732 @@
++/*
++ * nvmpi_enc.c — FFmpeg encoder wrapper for libnvmpi (layer 2 of
++ * jetson-ffmpeg, the FFmpeg integration layer).
++ *
++ * Like nvmpi_dec.c, this file is patched into a vanilla FFmpeg tree and
++ * compiled inside FFmpeg. It implements the h264_nvmpi and hevc_nvmpi
++ * encoders by delegating to the libnvmpi C API (src/nvmpi_enc.cpp).
++ *
++ * Key responsibility beyond plain forwarding: packet memory pooling.
++ * libnvmpi's encoder never allocates packet memory — this wrapper
++ * pre-allocates nvPackets whose payload is backed by real AVPacket buffers
++ * (so delivering a packet to FFmpeg is a zero-copy move), queues them into
++ * the encoder's empty pool, and recycles them after each
++ * avcodec_receive_packet().
++ *
++ * One source supports FFmpeg 4.2 .. 8.0+ via preprocessor guards:
++ *  - NVMPI_FF_NEW_API   (lavc 58.134+/59+): "new" encode API — the codec
++ *    exposes a single receive_packet callback that pulls input frames
++ *    itself (ff_encode_get_frame) instead of send_frame/receive_packet.
++ *  - LIBAVCODEC_VERSION_MAJOR >= 60: FFCodec registration +
++ *    ff_get_encode_buffer replaces ff_alloc_packet2.
++ *  - lavc >= 62.11 (FFmpeg 8.0): FF_PROFILE_* renamed to AV_PROFILE_*.
++ * See docs/DEVELOPMENT.md "Wrapper code paths by FFmpeg version".
++ */
 +#include <nvmpi.h>
 +#include "avcodec.h"
 +#include "internal.h"
@@ -460,29 +561,57 @@ index 0000000..deb424b
 +
 +#include "version.h"
 +
++//compatibility with ffmpeg 8.0+. FF_PROFILE renamed with AV_PROFILE
++//(libavcodec 62.11 deprecated the FF_PROFILE_* names; mapping the old
++//spellings here lets the rest of the file use FF_PROFILE_* everywhere.
++//The ">= 100" clause is future-proofing in case the minor resets.)
++#if (LIBAVCODEC_VERSION_MAJOR >= 62 && LIBAVCODEC_VERSION_MINOR>= 11) || (LIBAVCODEC_VERSION_MAJOR >= 100)
++#define FF_PROFILE_H264_INTRA AV_PROFILE_H264_INTRA
++#define FF_PROFILE_UNKNOWN AV_PROFILE_UNKNOWN
++#define FF_PROFILE_H264_HIGH AV_PROFILE_H264_HIGH
++#define FF_PROFILE_H264_BASELINE AV_PROFILE_H264_BASELINE
++#define FF_PROFILE_H264_MAIN AV_PROFILE_H264_MAIN
++#endif
++
++//"New" encode API detection: from libavcodec 58.134 (FFmpeg 4.4) /
++//any 59+ release, encoders register a receive_packet callback and pull
++//frames with ff_encode_get_frame() from encode.h. FFmpeg 4.2 (58.54) is
++//the only supported version on the old send_frame/receive_packet pair.
 +#if (LIBAVCODEC_VERSION_MAJOR >= 58 && LIBAVCODEC_VERSION_MINOR>= 134) || (LIBAVCODEC_VERSION_MAJOR >= 59)
 +#define NVMPI_FF_NEW_API
 +#include "encode.h"
 +#endif
++//libavcodec 60+ (FFmpeg 6.0): FFCodec registration lives in this private
++//header; older versions register a plain AVCodec.
 +#if (LIBAVCODEC_VERSION_MAJOR >= 60)
 +#include "codec_internal.h"
 +#endif
 +
++//libnvmpi exchanges timestamps in microseconds; used with av_rescale_q to
++//convert to/from the stream's AVCodecContext time_base.
++static const AVRational NVENC_TIMEBASE = {1, 1000000};
++
++//valid range / default for the packet_pool_size AVOption: how many encoded
++//packets may pile up before the libnvmpi DQ thread starts dropping output.
 +#define OPT_packet_pool_size_MIN 1
 +#define OPT_packet_pool_size_MAX 32
-+#define OPT_packet_pool_size_DEFAULT 5
++#define OPT_packet_pool_size_DEFAULT 10
 +
++//Per-instance private context (priv_data of the AVCodecContext). The int
++//option fields are populated from the AVOption table before .init runs.
 +typedef struct {
-+	const AVClass *class;
-+	nvmpictx* ctx;
-+	int num_capture_buffers;
-+	int packet_pool_size;
-+	int profile;
-+	int level;
-+	int rc;
-+	int preset;
-+	int encoder_flushing;
++	const AVClass *class;       //must be first for the AVOption system
++	nvmpictx* ctx;              //libnvmpi encoder handle
++	int num_capture_buffers;    //V4L2 buffer count option
++	int packet_pool_size;       //packet pool depth option
++	int profile;                //FF_PROFILE_H264_* numeric value or UNKNOWN
++	int level;                  //level option (10*level, 0 = auto)
++	int rc;                     //rate control option: -1 default, 0 CBR, 1 VBR
++	int preset;                 //hw preset option: 1=ultrafast .. 4=slow
++	int encoder_flushing;       //set after EOS was sent to libnvmpi
 +	AVFrame *frame; //tmp frame
++	                //(holds the pulled-but-not-yet-sent input frame in the
++	                // new-API receive_packet path)
 +}nvmpiEncodeContext;
 +
 +nvPacket* nvmpienc_nvPacket_alloc(AVCodecContext *avctx, int bufSize);
@@ -492,6 +621,11 @@ index 0000000..deb424b
 +int nvmpienc_deinitPktPool(AVCodecContext *avctx);
 +
 +//alloc nvPacket and AVPacket buffer;
++//Creates one pool packet: an nvPacket whose payload points into a real
++//AVPacket data buffer (kept in privData). This is what makes the later
++//handoff to FFmpeg zero-copy. Returns NULL on allocation failure.
++//Version guard: libavcodec 60 replaced ff_alloc_packet2() with
++//ff_get_encode_buffer() as the way encoders obtain packet buffers.
 +nvPacket* nvmpienc_nvPacket_alloc(AVCodecContext *avctx, int bufSize)
 +{
 +	AVPacket* pkt = av_packet_alloc();
@@ -513,6 +647,7 @@ index 0000000..deb424b
 +	return nPkt;
 +}
 +
++//Free one pool packet: both the backing AVPacket and the nvPacket shell.
 +void nvmpienc_nvPacket_free(nvPacket* nPkt)
 +{
 +	AVPacket* pkt = nPkt->privData;
@@ -520,6 +655,9 @@ index 0000000..deb424b
 +	free(nPkt);
 +}
 +
++//Re-arm a pool packet after its previous buffer was moved into the user's
++//AVPacket: acquire a fresh encode buffer for the (now empty) AVPacket and
++//clear the nvPacket bookkeeping. Returns 0 or -1 on allocation failure.
 +int nvmpienc_nvPacket_reset(nvPacket* nPkt, AVCodecContext *avctx, int bufSize)
 +{
 +	AVPacket* pkt = nPkt->privData;
@@ -540,6 +678,9 @@ index 0000000..deb424b
 +}
 +
 +//must call after nvmpi_create_encoder() to preallocate buffers
++//Seeds libnvmpi's empty-packet pool with pktNum packets of
++//NVMPI_ENC_CHUNK_SIZE each; the encoder's DQ thread fills them as encoded
++//frames appear.
 +int nvmpienc_initPktPool(AVCodecContext *avctx, int pktNum)
 +{
 +	nvmpiEncodeContext * nvmpi_context = avctx->priv_data;
@@ -553,6 +694,9 @@ index 0000000..deb424b
 +}
 +
 +//must call before nvmpi_encoder_close() too free buffers memory
++//Drains BOTH pool queues (empty and filled) and frees every packet, since
++//libnvmpi itself never deallocates packet memory. Safe only after the
++//encoder has been fully drained (no packet checked out by the DQ thread).
 +int nvmpienc_deinitPktPool(AVCodecContext *avctx)
 +{
 +	nvmpiEncodeContext * nvmpi_context = avctx->priv_data;
@@ -576,6 +720,11 @@ index 0000000..deb424b
 +	return 0;
 +}
 +
++//AVCodec/FFCodec .init callback: translate AVCodecContext settings and
++//AVOptions into an nvEncParam, optionally pre-generate global extradata
++//(SPS/PPS), then create the real libnvmpi encoder and seed its packet
++//pool. The numeric profile/level/rc/preset conventions used here are
++//decoded on the libnvmpi side (src/nvmpi_enc.cpp).
 +static av_cold int nvmpi_encode_init(AVCodecContext *avctx)
 +{
 +	nvmpiEncodeContext * nvmpi_context = avctx->priv_data;
@@ -593,11 +742,14 @@ index 0000000..deb424b
 +	param.peak_bitrate=avctx->rc_max_rate;
 +	param.fps_n=avctx->framerate.num;
 +	param.fps_d=avctx->framerate.den;
++	//strip the INTRA flag bit so only the base profile id is passed down
 +	param.profile=nvmpi_context->profile& ~FF_PROFILE_H264_INTRA;
 +	param.level=nvmpi_context->level;
 +	param.capture_num=nvmpi_context->num_capture_buffers;
 +	//param.packet_pool_size=nvmpi_context->packet_pool_size;
 +	param.hw_preset_type=nvmpi_context->preset;
++	//with GLOBAL_HEADER the SPS/PPS live in extradata (generated below)
++	//instead of being repeated in-band at every IDR
 +	param.insert_spspps_idr=(avctx->flags & AV_CODEC_FLAG_GLOBAL_HEADER)?0:1;
 +	
 +	nvmpi_context->frame = av_frame_alloc();
@@ -626,8 +778,13 @@ index 0000000..deb424b
 +
 +	}
 +
-+	//TODO should replace it
-+	if ((avctx->flags & AV_CODEC_FLAG_GLOBAL_HEADER) && (avctx->codec->id == AV_CODEC_ID_H264))
++	//TODO should replace it. must gen extradata directly without calling for encoder
++	//Extradata generation for GLOBAL_HEADER: spin up a THROWAWAY encoder
++	//instance, encode one blank frame, and scan the resulting bitstream
++	//for the first IDR NAL — everything before it (SPS/PPS, VPS for HEVC)
++	//becomes avctx->extradata. The temporary encoder is then drained and
++	//destroyed; the real encoder is created afterwards.
++	if ((avctx->flags & AV_CODEC_FLAG_GLOBAL_HEADER) && (avctx->codec->id == AV_CODEC_ID_H264 || avctx->codec->id == AV_CODEC_ID_H265))
 +	{
 +		uint8_t *dst[4];
 +		int linesize[4];
@@ -636,7 +793,9 @@ index 0000000..deb424b
 +		nvmpictx *_ctx;
 +		int i;
 +		int ret;
-+		param.codingType = NV_VIDEO_CodingH264;
++		int64_t shiftPts = 1000000/param.fps_n;
++		if(avctx->codec->id == AV_CODEC_ID_H264) param.codingType = NV_VIDEO_CodingH264;
++		else param.codingType = NV_VIDEO_CodingHEVC;
 +		av_image_alloc(dst, linesize,avctx->width,avctx->height,avctx->pix_fmt,1);
 +
 +		nvmpi_context->ctx = nvmpi_create_encoder(&param);
@@ -644,6 +803,7 @@ index 0000000..deb424b
 +		//TODO error handling. if(!_ctx)
 +		nvmpienc_initPktPool(avctx,nvmpi_context->packet_pool_size);
 +		i=0;
++		_nvframe.timestamp=0;
 +
 +		while(true)
 +		{
@@ -653,6 +813,10 @@ index 0000000..deb424b
 +			_nvframe.payload_size[0]=linesize[0]*avctx->height;
 +			_nvframe.payload_size[1]=linesize[1]*avctx->height/2;
 +			_nvframe.payload_size[2]=linesize[2]*avctx->height/2;
++			_nvframe.linesize[0]=linesize[0];
++			_nvframe.linesize[1]=linesize[1];
++			_nvframe.linesize[2]=linesize[2];
++			_nvframe.timestamp+=shiftPts;
 +
 +			nvmpi_encoder_put_frame(_ctx,&_nvframe);
 +
@@ -661,9 +825,25 @@ index 0000000..deb424b
 +			if(ret<0)
 +				continue;
 +
-+			//find idr index 0x0000000165
-+			while((nPkt->payload[i]!=0||nPkt->payload[i+1]!=0||nPkt->payload[i+2]!=0||nPkt->payload[i+3]!=0x01||nPkt->payload[i+4]!=0x65))
++			//find idr index
++			//Walk the Annex-B stream for the start code that begins the
++			//IDR slice; 'i' then marks the end of the header NALs.
++			while(i<nPkt->payload_size)
 +			{
++				//check if nal start code
++				if(nPkt->payload[i] == 0 && nPkt->payload[i+1] == 0 && nPkt->payload[i+2] == 0 && nPkt->payload[i+3] == 0x01)
++				{
++					if(param.codingType == NV_VIDEO_CodingH264)
++					{
++						//h264 idr
++						if(nPkt->payload[i+4] == 0x65) break;
++					}
++					else // NV_VIDEO_CodingHEVC:
++					{
++						//h265 idr
++						if(nPkt->payload[i+4] == 0x26 || nPkt->payload[i+4] == 0x28) break;
++					}
++				}
 +				i++;
 +			}
 +
@@ -684,6 +864,9 @@ index 0000000..deb424b
 +		}
 +		
 +		//drain encoder
++		//(keep pulling until get_packet reports EOS so the temporary
++		// encoder can shut down cleanly; recycled packets keep the pool
++		// populated while draining)
 +		while(true)
 +		{
 +			ret=nvmpi_encoder_get_packet(_ctx,&nPkt);
@@ -697,13 +880,14 @@ index 0000000..deb424b
 +			nPkt = nvmpienc_nvPacket_alloc(avctx, NVMPI_ENC_CHUNK_SIZE);
 +			nvmpi_encoder_qEmptyPacket(nvmpi_context->ctx, nPkt);
 +		}
-+		
++
 +		av_freep(&dst[0]); //free allocated image planes
 +		nvmpienc_deinitPktPool(avctx);
 +		nvmpi_encoder_close(nvmpi_context->ctx);
 +		nvmpi_context->ctx = NULL;
 +	}
 +
++	//create the real encoder used for the rest of the session
 +	if(avctx->codec->id == AV_CODEC_ID_H264)
 +	{
 +		param.codingType = NV_VIDEO_CodingH264;
@@ -725,6 +909,12 @@ index 0000000..deb424b
 +	return 0;
 +}
 +
++//send_frame half of the encode API: wrap the AVFrame's planes in an
++//nvFrame (no copy here — libnvmpi memcpy's into its V4L2 buffer inside
++//put_frame, which may block briefly) and rescale pts to microseconds.
++//frame==NULL initiates flushing (EOS to libnvmpi). On <4.4 this is the
++//codec's .send_frame callback; on newer FFmpeg it is called internally by
++//ff_nvmpi_receive_packet_async().
 +static int ff_nvmpi_send_frame(AVCodecContext *avctx,const AVFrame *frame)
 +{
 +	nvmpiEncodeContext * nvmpi_context = avctx->priv_data;
@@ -748,7 +938,9 @@ index 0000000..deb424b
 +		_nvframe.linesize[1]=frame->linesize[1];
 +		_nvframe.linesize[2]=frame->linesize[2];
 +
-+		_nvframe.timestamp=frame->pts;
++		//_nvframe.timestamp=frame->pts;
++		_nvframe.timestamp=av_rescale_q(frame->pts, avctx->time_base, NVENC_TIMEBASE);
++		//_nvframe.timestamp=frame->pts*avctx->time_base.num*1000*1000/avctx->time_base.den;
 +
 +		res=nvmpi_encoder_put_frame(nvmpi_context->ctx,&_nvframe);
 +
@@ -764,13 +956,19 @@ index 0000000..deb424b
 +	return 0;
 +}
 +
++//receive_packet half of the encode API: pop a filled nvPacket from
++//libnvmpi, rescale the pts back to the codec time_base, shrink the backing
++//AVPacket to the actual payload size and MOVE its buffer into the user's
++//pkt (zero-copy). The pool packet is then re-armed with a fresh buffer and
++//returned to the empty queue. EAGAIN when nothing is ready; AVERROR_EOF
++//once flushing has drained.
 +static int ff_nvmpi_receive_packet(AVCodecContext *avctx, AVPacket *pkt)
 +{
 +	nvmpiEncodeContext * nvmpi_context = avctx->priv_data;
 +	nvPacket *nPkt;
 +	AVPacket *aPkt;
 +	int res;
-+	
++
 +	res = nvmpi_encoder_get_packet(nvmpi_context->ctx,&nPkt);
 +	if(res<0)
 +	{
@@ -780,7 +978,8 @@ index 0000000..deb424b
 +	}
 +	
 +	aPkt = (AVPacket*)(nPkt->privData);
-+	aPkt->dts=aPkt->pts=nPkt->pts;
++	//aPkt->dts=aPkt->pts=nPkt->pts;
++	aPkt->dts = aPkt->pts = av_rescale_q(nPkt->pts, NVENC_TIMEBASE, avctx->time_base);
 +	av_shrink_packet(aPkt, nPkt->payload_size);
 +	if(nPkt->flags& AV_PKT_FLAG_KEY) aPkt->flags = AV_PKT_FLAG_KEY;
 +	av_packet_move_ref(pkt, aPkt);
@@ -819,6 +1018,14 @@ index 0000000..deb424b
 +}
 +*/
 +
++//New-API (lavc 58.134+/59+) single-callback encoder entry point: FFmpeg
++//only calls receive_packet, and the encoder pulls its own input via
++//ff_encode_get_frame(). Flow per call:
++//  1. if no frame is pending, pull one (EAGAIN = nothing to send yet;
++//     EOF = flush by sending NULL);
++//  2. push it to libnvmpi via ff_nvmpi_send_frame() and unref on success
++//     (on failure the frame stays in nvmpi_context->frame for retry);
++//  3. try to return an encoded packet via ff_nvmpi_receive_packet().
 +#ifdef NVMPI_FF_NEW_API
 +static int ff_nvmpi_receive_packet_async(AVCodecContext *avctx, AVPacket *pkt)
 +{
@@ -826,7 +1033,7 @@ index 0000000..deb424b
 +	nvmpiEncodeContext * nvmpi_context = avctx->priv_data;
 +	AVFrame *frame = nvmpi_context->frame;
 +	bool needSendFrame = true;
-+	
++
 +	if (!frame->buf[0])
 +	{
 +		res = ff_encode_get_frame(avctx, frame);
@@ -855,10 +1062,14 @@ index 0000000..deb424b
 +}
 +#endif
 +
++//AVCodec/FFCodec .close callback: make sure EOS was sent, drain remaining
++//packets (recycling pool buffers while doing so), then free the pool and
++//close the libnvmpi encoder. Order matters — the pool must be drained
++//before nvmpi_encoder_close(), which does not free packet memory.
 +static av_cold int nvmpi_encode_close(AVCodecContext *avctx)
 +{
 +	nvmpiEncodeContext *nvmpi_context = avctx->priv_data;
-+	
++
 +	//drain encoder
 +	{
 +		int ret;
@@ -891,6 +1102,10 @@ index 0000000..deb424b
 +	return 0;
 +}
 +
++//Default values for GENERIC AVCodecContext options (not the private
++//AVOptions below): 2M bitrate, GOP 50, no B-frames, qmin/qmax unset, etc.
++//Only the struct's name changed with the FFCodec split in libavcodec 60;
++//the entries are identical.
 +#if LIBAVCODEC_VERSION_MAJOR >= 60
 +static const FFCodecDefault defaults[] = {
 +#else
@@ -909,6 +1124,12 @@ index 0000000..deb424b
 +};
 +
 +
++//AVOption table: private "-x264-style" options resolved into
++//nvmpiEncodeContext fields before .init. AV_OPT_TYPE_CONST entries are
++//named aliases for values of the preceding INT option (grouped by the
++//trailing unit string, e.g. "profile"). The numeric values intentionally
++//match what src/nvmpi_enc.cpp's switch statements expect: FFmpeg profile
++//ids, level_idc*10, rc 0/1 = CBR/VBR, preset 1..4.
 +#define OFFSET(x) offsetof(nvmpiEncodeContext, x)
 +#define VE AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_ENCODING_PARAM
 +
@@ -955,6 +1176,8 @@ index 0000000..deb424b
 +};
 +
 +
++//Per-codec AVClass binding the option table above to each encoder
++//instance (referenced via priv_class in the registration struct).
 +#define NVMPI_ENC_CLASS(NAME) \
 +	static const AVClass nvmpi_ ## NAME ## _enc_class = { \
 +		.class_name = #NAME "_nvmpi_encoder", \
@@ -964,6 +1187,19 @@ index 0000000..deb424b
 +	};
 +
 +
++//Codec registration, stamped out per codec by NVMPI_ENC(). Three encoder
++//API eras are covered (paths A/B/C-D in docs/DEVELOPMENT.md):
++//  - lavc >= 60 (FFmpeg 6.0+): FFCodec struct; public fields moved into
++//    the .p sub-struct and the callback is wired through
++//    FF_CODEC_RECEIVE_PACKET_CB(). Matching allcodecs.c extern is
++//    "extern const FFCodec".
++//  - lavc < 60 with NVMPI_FF_NEW_API (FFmpeg 4.4/5.x): plain AVCodec with
++//    only .receive_packet set (the new pull-based encode API).
++//  - lavc < 60 without NVMPI_FF_NEW_API (FFmpeg 4.2): plain AVCodec with
++//    the old .send_frame/.receive_packet callback pair.
++//Common traits: name "<codec>_nvmpi", wrapper_name "nvmpi", YUV420P input
++//only, capabilities HARDWARE | DELAY (output lags input by the encoder
++//pipeline depth), plus the shared 'defaults' table.
 +#if LIBAVCODEC_VERSION_MAJOR >= 60
 +	#define NVMPI_ENC(NAME, LONGNAME, CODEC) \
 +		NVMPI_ENC_CLASS(NAME) \
@@ -983,15 +1219,18 @@ index 0000000..deb424b
 +			.p.wrapper_name   = "nvmpi", \
 +		};
 +#else
++	//pre-FFCodec builds: select which callback set the AVCodec exposes
 +	#ifdef NVMPI_FF_NEW_API
++		//FFmpeg 4.4/5.x: pull-based encode API, single callback
 +		#define NVMPI_ENC_API_CALLS \
 +				.receive_packet = ff_nvmpi_receive_packet_async
 +	#else
++		//FFmpeg 4.2: legacy push/pull callback pair
 +		#define NVMPI_ENC_API_CALLS \
 +				.send_frame     = ff_nvmpi_send_frame, \
 +				.receive_packet = ff_nvmpi_receive_packet
 +	#endif
-+	
++
 +	#define NVMPI_ENC(NAME, LONGNAME, CODEC) \
 +		NVMPI_ENC_CLASS(NAME) \
 +		AVCodec ff_ ## NAME ## _nvmpi_encoder = { \
@@ -1011,5 +1250,8 @@ index 0000000..deb424b
 +		};
 +#endif
 +
++//Instantiate the two nvmpi encoders. Each expansion must have a matching
++//extern in allcodecs.c and CONFIG_*_NVMPI_ENCODER Makefile/configure
++//entries (added by ffpatch.sh / the version overlays).
 +NVMPI_ENC(h264, "H.264", AV_CODEC_ID_H264);
 +NVMPI_ENC(hevc, "HEVC", AV_CODEC_ID_HEVC);
