@@ -1,0 +1,70 @@
+name: GitHub Runner Token Request
+description: Request a registration token to contribute a self-hosted Jetson runner to GitHub Actions
+title: "[Runner] GitHub Actions runner request"
+labels: ["runner-request"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for offering to contribute a self-hosted Jetson runner to the GitHub Actions pipeline.
+
+  - type: input
+    id: jetson-model
+    attributes:
+      label: Jetson model
+      placeholder: e.g. Orin NX, AGX Orin, Orin Nano, Xavier NX
+    validations:
+      required: true
+
+  - type: input
+    id: variant-label
+    attributes:
+      label: Proposed variant label
+      description: Used alongside the "jetson" label for runner selection
+      placeholder: e.g. orin-nx, agx, nano
+    validations:
+      required: true
+
+  - type: input
+    id: jetpack-version
+    attributes:
+      label: JetPack / L4T version
+      placeholder: e.g. JetPack 6.1 / L4T r36.4.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: runner-environment
+    attributes:
+      label: Runner environment
+      options:
+        - Kubernetes (k3s / k8s)
+        - Bare-metal (directly on Jetson OS)
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Prerequisites
+      options:
+        - label: NVIDIA Container Runtime / Docker with nvidia runtime is installed
+          required: true
+        - label: I have verified GPU access (`nvidia-smi` or `tegrastats` works)
+          required: true
+        - label: I have read the runner setup guide ([Kubernetes](docs/GITHUB_RUNNER_K8S.md) or [Manual](docs/GITHUB_RUNNER_MANUAL.md))
+          required: true
+
+  - type: input
+    id: github-username
+    attributes:
+      label: GitHub username
+      description: So the maintainer can grant runner access
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional context
+      description: Any relevant details (network constraints, availability schedule, etc.)
