@@ -29,7 +29,7 @@ This means:
 
 ### Step 1: Request runner access
 
-Open an issue using the **Runner Token Request** template. A maintainer will add your GitHub account to the repository's runner group.
+Open an issue using the **GitHub Runner Token Request** template. A maintainer will add your GitHub account to the repository's runner group.
 
 ### Step 2: Set up the runner
 

@@ -171,7 +171,7 @@ kubectl exec -it -n actions-runner-system <runner-pod> -- \
 
 Self-hosted runners for private repositories must be added by a maintainer:
 
-1. Open an issue using the **Runner Token Request** template
+1. Open an issue using the **GitHub Runner Token Request** template
 2. A maintainer will add your account to the repository's runner group
 3. Once approved, follow this guide from [step 4](#4-install-actions-runner-controller-arc)
 

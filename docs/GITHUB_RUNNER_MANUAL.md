@@ -119,7 +119,7 @@ ls /usr/lib/aarch64-linux-gnu/tegra/libnvv4l2.so && echo "Tegra libs OK"
 
 Self-hosted runners for private repositories must be added by a maintainer:
 
-1. Open an issue using the **Runner Token Request** template
+1. Open an issue using the **GitHub Runner Token Request** template
 2. A maintainer will provide the registration token or add your account to the runner group
 3. Once approved, follow this guide from [step 3](#3-download-and-configure-the-runner)
 
