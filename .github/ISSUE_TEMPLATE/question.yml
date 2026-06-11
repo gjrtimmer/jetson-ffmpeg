@@ -1,0 +1,46 @@
+name: Question
+description: Ask a question about usage, compatibility, or configuration
+title: "[Question] "
+labels: ["question"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ask a question about jetson-ffmpeg usage, compatibility, or configuration.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What would you like to know?
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: What have you tried?
+      description: Any steps, documentation, or solutions you have already looked at
+
+  - type: input
+    id: jetson-model
+    attributes:
+      label: Jetson model
+      placeholder: "e.g. Orin NX 16GB, AGX Orin 64GB, Orin Nano 8GB"
+
+  - type: input
+    id: jetpack-version
+    attributes:
+      label: JetPack / L4T version
+      placeholder: "e.g. JetPack 6.1 / L4T r36.4.0"
+
+  - type: input
+    id: ffmpeg-version
+    attributes:
+      label: FFmpeg version
+      placeholder: "e.g. ffmpeg version 7.1"
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context

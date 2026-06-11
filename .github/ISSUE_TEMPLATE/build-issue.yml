@@ -1,0 +1,98 @@
+name: Build Issue
+description: Report a compilation or build failure
+title: "[Build] "
+labels: ["build"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Report issues with building the nvmpi library or patching/compiling ffmpeg.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What are you trying to build and what fails?
+    validations:
+      required: true
+
+  - type: textarea
+    id: build-commands
+    attributes:
+      label: Build commands
+      description: The exact commands you ran
+      render: bash
+    validations:
+      required: true
+
+  - type: textarea
+    id: error-output
+    attributes:
+      label: Error output
+      description: Full build error output (compiler errors, cmake errors, configure errors)
+      render: text
+    validations:
+      required: true
+
+  - type: input
+    id: jetson-model
+    attributes:
+      label: Jetson model
+      placeholder: "e.g. Orin NX 16GB, AGX Orin 64GB, Orin Nano 8GB"
+    validations:
+      required: true
+
+  - type: input
+    id: jetpack-version
+    attributes:
+      label: JetPack / L4T version
+      placeholder: "e.g. JetPack 6.1 / L4T r36.4.0"
+    validations:
+      required: true
+
+  - type: input
+    id: ffmpeg-version
+    attributes:
+      label: FFmpeg version / branch
+      placeholder: "e.g. release/7.1, release/6.0, n7.1"
+    validations:
+      required: true
+
+  - type: input
+    id: nvmpi-version
+    attributes:
+      label: jetson-ffmpeg commit or version
+      placeholder: "e.g. 64df5aa or v1.0.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: build-target
+    attributes:
+      label: Build target
+      options:
+        - nvmpi library (CMake)
+        - ffpatch.sh (patching)
+        - ffmpeg configure
+        - ffmpeg compilation
+        - ffmpeg linking
+    validations:
+      required: true
+
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Build environment
+      options:
+        - Native on Jetson
+        - Docker container (l4t-jetpack)
+        - Docker container (other)
+        - Cross-compilation
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: CMake flags used, environment details, patches applied, etc.

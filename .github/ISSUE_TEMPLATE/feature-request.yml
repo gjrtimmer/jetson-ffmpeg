@@ -1,0 +1,49 @@
+name: Feature Request
+description: Request a new feature or improvement
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Suggest a new feature, codec support, or improvement to jetson-ffmpeg.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: What feature or improvement would you like?
+    validations:
+      required: true
+
+  - type: textarea
+    id: use-case
+    attributes:
+      label: Use case
+      description: Why do you need this? What problem does it solve?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed-solution
+    attributes:
+      label: Proposed solution
+      description: If you have an idea for how to implement this, describe it here
+
+  - type: input
+    id: jetson-model
+    attributes:
+      label: Jetson model (if relevant)
+      placeholder: "e.g. Orin NX 16GB, AGX Orin 64GB"
+
+  - type: input
+    id: jetpack-version
+    attributes:
+      label: JetPack / L4T version (if relevant)
+      placeholder: "e.g. JetPack 6.1 / L4T r36.4.0"
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Related issues, links to NVIDIA documentation, example code, etc.
