@@ -1,0 +1,146 @@
+# yaml-language-server: $schema=https://gitlab.com/gitlab-org/gitlab/-/raw/master/app/assets/javascripts/editor/schema/ci.json
+#
+# CI pipeline for jetson-ffmpeg (nvmpi library + ffmpeg patches).
+#
+# Stages:
+#   build   - compile nvmpi library (stubs) on any Jetson runner
+#   patch   - apply ffpatch.sh to each supported ffmpeg version, then build ffmpeg
+#   test    - HW encode/decode smoke test on each Jetson hardware variant
+#
+# Runner tag convention:
+#   Build and patch stages have NO tags — they run on any available runner.
+#   "jetson" + "<variant>" — hardware-specific (e.g. orin-nx, agx, nano)
+#                           HW test jobs target specific variants.
+#
+# To add a new hardware variant:
+#   1. Register a project runner with tags: jetson, <variant>
+#   2. Add an entry to test:hw-encode.parallel.matrix with JETSON_VARIANT: "<variant>"
+
+stages:
+  - build
+  - patch
+  - test
+
+variables:
+  L4T_TAG: "r36.4.0"
+  NVMPI_PREFIX: "${CI_PROJECT_DIR}/_nvmpi"
+  FFMPEG_PREFIX: "${CI_PROJECT_DIR}/_ffmpeg"
+
+default:
+  image:
+    name: nvcr.io/nvidia/l4t-jetpack:${L4T_TAG}
+    pull_policy: if-not-present
+  before_script:
+    - apt-get update -qq
+    - >-
+      apt-get install -y -qq --no-install-recommends
+      git build-essential cmake pkg-config yasm nasm wget ca-certificates
+      libv4l-dev libx264-dev libx265-dev libnuma-dev libvpx-dev libopus-dev
+      libmp3lame-dev libvorbis-dev libdav1d-dev libass-dev libfreetype6-dev
+      libgnutls28-dev
+    - |
+      if [ ! -d /usr/src/jetson_multimedia_api ]; then
+        apt-get install -y -qq --no-install-recommends nvidia-l4t-jetson-multimedia-api
+      fi
+
+# ---------------------------------------------------------------------------
+# Stage: build — compile nvmpi with stubs (any runner)
+# ---------------------------------------------------------------------------
+build:nvmpi:
+  stage: build
+  script:
+    - mkdir -p build && cd build
+    - cmake -DCMAKE_INSTALL_PREFIX="${NVMPI_PREFIX}" -DCMAKE_BUILD_TYPE=Release -DWITH_STUBS=ON ..
+    - make -j"$(nproc)"
+    - make install
+  artifacts:
+    paths:
+      - _nvmpi/
+      - build/
+    expire_in: 1 hour
+
+# ---------------------------------------------------------------------------
+# Stage: patch — clone each ffmpeg version, patch, configure, and build
+# ---------------------------------------------------------------------------
+.patch-and-build: &patch-and-build
+  stage: patch
+  needs: ["build:nvmpi"]
+  script:
+    - echo "=== ffmpeg ${FFMPEG_BRANCH} ==="
+    - git clone --depth=1 -b "${FFMPEG_BRANCH}" https://git.ffmpeg.org/ffmpeg.git /tmp/ffmpeg
+    - bash ./ffpatch.sh /tmp/ffmpeg
+    - cd /tmp/ffmpeg
+    - export PKG_CONFIG_PATH="${NVMPI_PREFIX}/lib/pkgconfig:${NVMPI_PREFIX}/share/pkgconfig"
+    - >-
+      ./configure
+      --prefix="${FFMPEG_PREFIX}"
+      --enable-shared --disable-static --disable-doc
+      --enable-gpl --enable-nvmpi
+      --extra-cflags="-I${CI_PROJECT_DIR}/include"
+      --extra-ldflags="-L${CI_PROJECT_DIR}/build -L${CI_PROJECT_DIR}/stubs -Wl,-rpath-link,${CI_PROJECT_DIR}/stubs"
+      --enable-libx264 --enable-libx265 --enable-libvpx --enable-libopus
+      --enable-libmp3lame --enable-libvorbis --enable-libdav1d
+      --enable-libass --enable-libfreetype --enable-gnutls
+    - make -j"$(nproc)"
+    - make install
+  artifacts:
+    paths:
+      - _ffmpeg/
+    expire_in: 1 hour
+
+patch:ffmpeg-4.2:
+  <<: *patch-and-build
+  variables:
+    FFMPEG_BRANCH: "release/4.2"
+
+patch:ffmpeg-4.4:
+  <<: *patch-and-build
+  variables:
+    FFMPEG_BRANCH: "release/4.4"
+
+patch:ffmpeg-6.0:
+  <<: *patch-and-build
+  variables:
+    FFMPEG_BRANCH: "release/6.0"
+
+patch:ffmpeg-6.1:
+  <<: *patch-and-build
+  variables:
+    FFMPEG_BRANCH: "release/6.1"
+
+patch:ffmpeg-7.0:
+  <<: *patch-and-build
+  variables:
+    FFMPEG_BRANCH: "release/7.0"
+
+patch:ffmpeg-7.1:
+  <<: *patch-and-build
+  variables:
+    FFMPEG_BRANCH: "release/7.1"
+
+# ---------------------------------------------------------------------------
+# Stage: test — HW encode/decode on each Jetson hardware variant
+# Uses the ffmpeg 7.1 build artifacts from the patch stage.
+#
+# To add a new hardware variant, add it to the matrix below and register
+# a runner with tags: jetson, <variant>
+# ---------------------------------------------------------------------------
+test:hw-encode:
+  stage: test
+  needs: ["patch:ffmpeg-7.1"]
+  tags: [jetson, "${JETSON_VARIANT}"]
+  parallel:
+    matrix:
+      - JETSON_VARIANT: orin-nx
+      # - JETSON_VARIANT: agx
+      # - JETSON_VARIANT: nano
+  variables:
+    NVIDIA_VISIBLE_DEVICES: "all"
+    NVIDIA_DRIVER_CAPABILITIES: "all"
+  before_script: []
+  script:
+    - echo "=== HW test on ${JETSON_VARIANT} ==="
+    - export PATH="${FFMPEG_PREFIX}/bin:${PATH}"
+    - export LD_LIBRARY_PATH="${FFMPEG_PREFIX}/lib:/usr/lib/aarch64-linux-gnu/tegra:${LD_LIBRARY_PATH:-}"
+    - ldconfig || true
+    - bash test/hw-test.sh
