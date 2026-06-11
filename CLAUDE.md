@@ -102,5 +102,6 @@ Examples: `feat(scripts): add build.sh for libnvmpi`, `fix(nvmpi): guard against
 
 - `docs/BUILD.md` — full build/install, CMake options, verification.
 - `docs/SCRIPTS.md` — every script, command, and dev-container alias.
+- `docs/RELEASE.md` — tag-driven release process (GitLab + GitHub releases, per-version archives).
 - `docs/DEVELOPMENT.md` — architecture deep-dive, patch system, adding FFmpeg versions, codec registration reference, troubleshooting.
 - `docs/DEVCONTAINER.md` — VS Code dev container on Jetson hardware (`.devcontainer/` mounts the host's tegra libs, multimedia API, and CUDA read-only).

@@ -21,6 +21,8 @@ need to `cd` anywhere first.
 | _(dev only)_ | `ffmpeg/dev/copy_files.sh` | Copy overlays into cloned FFmpeg trees |
 | _(test)_ | `test/clone-ffmpeg.sh` | Clone the supported FFmpeg release branches |
 | _(test)_ | `test/smoke-all.sh` | Full build + hw-test across **all** versions |
+| _(release)_ | `scripts/package.sh` | Stage a build prefix into a versioned archive + `install.sh` |
+| _(release/CI)_ | `scripts/release.sh` | Changelog + GitLab Release + GitHub mirror (see [RELEASE.md](RELEASE.md)) |
 
 The aliases are defined in [`.devcontainer/bashrc`](../.devcontainer/bashrc),
 which `postCreateCommand` concatenates into `~/.bashrc`, so they are present in

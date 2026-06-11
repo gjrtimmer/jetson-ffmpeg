@@ -2,29 +2,51 @@
 #
 # CI pipeline for jetson-ffmpeg (nvmpi library + ffmpeg patches).
 #
-# Stages:
-#   build   - compile nvmpi library (stubs) on any Jetson runner
-#   patch   - apply ffpatch.sh to each supported ffmpeg version, then build ffmpeg
-#   test    - HW encode/decode smoke test on each Jetson hardware variant
+# Two kinds of pipeline:
+#
+#   Branch / MR pipelines (NOT a tag):
+#     build   - compile nvmpi library (stubs) on any runner
+#     patch   - apply ffpatch.sh to each supported ffmpeg version, build ffmpeg
+#     test    - HW encode/decode smoke test on each Jetson variant
+#
+#   Tag pipelines (v<X.Y.Z>):  -> see docs/RELEASE.md
+#     package - build REAL libnvmpi + ffmpeg per version on Jetson and tar each
+#               (the stub builds above are NOT runnable, so releases rebuild)
+#     release - changelog (git-cliff) -> GitLab Release with package assets,
+#               and mirror to GitHub (if GITHUB_REPO/GITHUB_TOKEN are set)
 #
 # Runner tag convention:
-#   Build and patch stages have NO tags — they run on any available runner.
-#   "jetson" + "<variant>" — hardware-specific (e.g. orin-nx, agx, nano)
-#                           HW test jobs target specific variants.
+#   build/patch have NO tags (any runner); test + package need real hardware
+#   ("jetson" + "<variant>"). release runs in the release-tools image (any runner).
 #
 # To add a new hardware variant:
 #   1. Register a project runner with tags: jetson, <variant>
-#   2. Add an entry to test:hw-encode.parallel.matrix with JETSON_VARIANT: "<variant>"
+#   2. Add an entry to the shared .hw-test parallel matrix with JETSON_VARIANT
 
 stages:
   - build
   - patch
   - test
+  - package
+  - release
 
 variables:
   L4T_TAG: "r36.4.0"
   NVMPI_PREFIX: "${CI_PROJECT_DIR}/_nvmpi"
   FFMPEG_PREFIX: "${CI_PROJECT_DIR}/_ffmpeg"
+  RELEASE_IMAGE: "${CI_REGISTRY_IMAGE}/release-tools:latest"
+
+# Reusable pipeline rules:
+#   .not-on-tag — branch/MR work; skipped on tag pipelines
+#   .only-tag   — release work; runs only on v<X.Y.Z> tags
+.not-on-tag: &not-on-tag
+  rules:
+    - if: '$CI_COMMIT_TAG'
+      when: never
+    - when: on_success
+.only-tag: &only-tag
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+$/'
 
 default:
   image:
@@ -48,6 +70,7 @@ default:
 # ---------------------------------------------------------------------------
 build:nvmpi:
   stage: build
+  <<: *not-on-tag
   script:
     - mkdir -p build && cd build
     - cmake -DCMAKE_INSTALL_PREFIX="${NVMPI_PREFIX}" -DCMAKE_BUILD_TYPE=Release -DWITH_STUBS=ON ..
@@ -65,6 +88,7 @@ build:nvmpi:
 .patch-and-build: &patch-and-build
   stage: patch
   needs: ["build:nvmpi"]
+  <<: *not-on-tag
   script:
     - echo "=== ffmpeg ${FFMPEG_BRANCH} ==="
     - git clone --depth=1 -b "${FFMPEG_BRANCH}" https://git.ffmpeg.org/ffmpeg.git /tmp/ffmpeg
@@ -146,6 +170,7 @@ patch:ffmpeg-8.0:
 # ---------------------------------------------------------------------------
 .hw-test: &hw-test
   stage: test
+  <<: *not-on-tag
   tags: [jetson, "${JETSON_VARIANT}"]
   parallel:
     matrix:
@@ -190,3 +215,94 @@ test:hw-ffmpeg-7.1:           # path C
 test:hw-ffmpeg-8.0:           # path D
   <<: *hw-test
   needs: ["patch:ffmpeg-8.0"]
+
+# ---------------------------------------------------------------------------
+# Stage: package — build REAL libnvmpi + ffmpeg on a Jetson and tar each
+# version (tag pipelines only). The build/patch stages above link stubs and are
+# NOT runnable; releases must rebuild against the real Multimedia API.
+# Produces dist/jetson-ffmpeg_<ver>_ffmpeg<ff>_l4t<tag>_aarch64.tar.gz.
+# ---------------------------------------------------------------------------
+# NOTE: package jobs use `extends:` (not the YAML `<<` merge) so that each job's
+# `variables: {FFVER}` DEEP-merges with the NVIDIA_* vars below (a `<<` merge
+# would replace the whole variables map and drop them). The NVIDIA_* vars expose
+# the tegra libraries so build.sh links REAL libnvmpi (not stubs).
+.package:
+  stage: package
+  <<: *only-tag
+  tags: [jetson]
+  variables:
+    NVIDIA_VISIBLE_DEVICES: "all"
+    NVIDIA_DRIVER_CAPABILITIES: "all"
+  script:
+    - export VERSION="${CI_COMMIT_TAG#v}"
+    - PFX="${CI_PROJECT_DIR}/_pkg"
+    - >-
+      bash ./scripts/build.sh --ffmpeg "${FFVER}" --install
+      --prefix "${PFX}" --ffmpeg-prefix "${PFX}" -j"$(nproc)"
+      --ffmpeg-args "--enable-shared --disable-static --enable-libx265 --enable-libvpx
+      --enable-libopus --enable-libmp3lame --enable-libvorbis --enable-libdav1d
+      --enable-libass --enable-libfreetype --enable-gnutls"
+    - LD_LIBRARY_PATH="${PFX}/lib:/usr/lib/aarch64-linux-gnu/tegra" "${PFX}/bin/ffmpeg" -hide_banner -encoders 2>/dev/null | grep -E 'h264_nvmpi|hevc_nvmpi'
+    - >-
+      bash ./scripts/package.sh --prefix "${PFX}" --version "${VERSION}"
+      --ffmpeg-version "${FFVER}" --l4t "${L4T_TAG}" --outdir "${CI_PROJECT_DIR}/dist"
+  artifacts:
+    paths:
+      - dist/
+    expire_in: 1 week
+
+package:ffmpeg-4.2: { extends: .package, variables: { FFVER: "4.2" } }
+package:ffmpeg-4.4: { extends: .package, variables: { FFVER: "4.4" } }
+package:ffmpeg-6.0: { extends: .package, variables: { FFVER: "6.0" } }
+package:ffmpeg-6.1: { extends: .package, variables: { FFVER: "6.1" } }
+package:ffmpeg-7.0: { extends: .package, variables: { FFVER: "7.0" } }
+package:ffmpeg-7.1: { extends: .package, variables: { FFVER: "7.1" } }
+package:ffmpeg-8.0: { extends: .package, variables: { FFVER: "8.0" } }
+
+# ---------------------------------------------------------------------------
+# Stage: release — changelog + GitLab Release (+ generic package assets), then
+# mirror to GitHub. Runs in the pinned release-tools image (build it once via
+# the manual build:release-image job below). Tag pipelines only.
+# ---------------------------------------------------------------------------
+release:
+  stage: release
+  <<: *only-tag
+  image: "${RELEASE_IMAGE}"
+  needs:
+    - "package:ffmpeg-4.2"
+    - "package:ffmpeg-4.4"
+    - "package:ffmpeg-6.0"
+    - "package:ffmpeg-6.1"
+    - "package:ffmpeg-7.0"
+    - "package:ffmpeg-7.1"
+    - "package:ffmpeg-8.0"
+  variables:
+    GIT_DEPTH: "0"   # full history + tags for git-cliff
+  before_script: []
+  script:
+    - git fetch --tags --force || true
+    - bash ./scripts/release.sh
+
+# ---------------------------------------------------------------------------
+# Bootstrap: build + push the release-tools image to the project registry.
+# Run this once (manually) before the first release, and again whenever
+# ci/release-tools.Dockerfile changes. Uses kaniko (no Docker daemon needed).
+# ---------------------------------------------------------------------------
+build:release-image:
+  stage: build
+  image:
+    name: gcr.io/kaniko-project/executor:debug
+    entrypoint: [""]
+  before_script: []
+  rules:
+    - if: '$CI_COMMIT_TAG'
+      when: never
+    - when: manual
+      allow_failure: true
+  script:
+    - mkdir -p /kaniko/.docker
+    - echo "{\"auths\":{\"${CI_REGISTRY}\":{\"username\":\"${CI_REGISTRY_USER}\",\"password\":\"${CI_REGISTRY_PASSWORD}\"}}}" > /kaniko/.docker/config.json
+    - >-
+      /kaniko/executor --context "${CI_PROJECT_DIR}"
+      --dockerfile "${CI_PROJECT_DIR}/ci/release-tools.Dockerfile"
+      --destination "${RELEASE_IMAGE}"
