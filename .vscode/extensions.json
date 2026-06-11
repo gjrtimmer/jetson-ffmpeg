@@ -17,7 +17,9 @@
         "redhat.vscode-yaml",
         "mhutchie.git-graph",
         "waderyan.gitblame",
-        "streetsidesoftware.code-spell-checker"
+        "streetsidesoftware.code-spell-checker",
+        "Anthropic.claude-code",
+        "ms-vscode.cpptools-extension-pack"
     ],
     "unwantedRecommendations": [
         "hashicorp.terraform",
