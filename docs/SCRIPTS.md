@@ -17,8 +17,10 @@ need to `cd` anywhere first.
 | `ffpatch` | `scripts/ffpatch.sh` | Patch a vanilla FFmpeg source tree |
 | `update-patch` | `ffmpeg/dev/update_patch.sh` | Regenerate the committed FFmpeg patches |
 | `try-build` | `ffmpeg/dev/try_build.sh` | Build-validate every supported FFmpeg version |
-| `hw-test` / `test` | `test/hw-test.sh` | Hardware encode/decode smoke test |
+| `hw-test` / `test` | `test/hw-test.sh` | Hardware encode/decode smoke test (one ffmpeg) |
 | _(dev only)_ | `ffmpeg/dev/copy_files.sh` | Copy overlays into cloned FFmpeg trees |
+| _(test)_ | `test/clone-ffmpeg.sh` | Clone the supported FFmpeg release branches |
+| _(test)_ | `test/smoke-all.sh` | Full build + hw-test across **all** versions |
 
 The aliases are defined in [`.devcontainer/bashrc`](../.devcontainer/bashrc),
 which `postCreateCommand` concatenates into `~/.bashrc`, so they are present in
@@ -138,3 +140,38 @@ JETSON_VARIANT=orin-nano test/hw-test.sh   # alias: hw-test (or test)
 
 `JETSON_VARIANT` is informational (used in CI to label the runner) and defaults
 to `unknown`.
+
+---
+
+## `test/clone-ffmpeg.sh` — fetch FFmpeg sources
+
+Shallow-clones the supported FFmpeg release branches into a scratch directory
+(idempotent — existing trees are skipped). Used by `smoke-all.sh`, but can be
+run standalone.
+
+```bash
+test/clone-ffmpeg.sh [-d DIR] [-u URL] [VERSION ...]
+```
+
+Defaults: `DIR=$FFMPEG_SRC_DIR` (else `$HOME/ffmpeg-smoke`),
+`URL=https://git.ffmpeg.org/ffmpeg.git`, and the full supported version set
+when no versions are given.
+
+---
+
+## `test/smoke-all.sh` — full cross-version smoke test
+
+The heaviest test in the repo. For **every** supported FFmpeg version it:
+builds + installs libnvmpi → ensures a clone (`clone-ffmpeg.sh`) → resets it to
+pristine → patches it (`scripts/ffpatch.sh`) → `./configure --enable-nvmpi
+--enable-gpl --enable-libx264` → builds → runs the real `hw-test.sh`. Prints a
+pass/fail matrix and exits non-zero on any failure.
+
+```bash
+test/smoke-all.sh [-d DIR] [-j N] [-v "4.2 6.0 8.0"] [--no-nvmpi]
+```
+
+Requires a real Jetson (the hw-test stages have no software fallback) and the
+FFmpeg build dependencies incl. `libx264` (the dev container and CI install
+these). Because it builds libnvmpi and a full FFmpeg per version, expect it to
+run for many minutes.
