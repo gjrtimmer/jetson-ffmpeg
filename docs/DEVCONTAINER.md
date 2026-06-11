@@ -139,7 +139,15 @@ First build pulls the L4T JetPack image (~2-5 GB depending on version) and insta
 
 ### 5. Build the Project
 
-Once inside the container, CMake auto-configures on first open. To build:
+Once inside the container, CMake auto-configures on first open. To build, use the
+`build` alias (provided automatically — see [Command Aliases](#command-aliases)):
+
+```bash
+build              # build libnvmpi (auto-detects real Jetson libs vs stubs)
+build --install    # build, then install + ldconfig
+```
+
+Equivalent raw commands:
 
 ```bash
 cd /workspace
@@ -148,6 +156,25 @@ cmake --build build -j$(nproc)
 ```
 
 Or use the CMake sidebar in VS Code (provided by the CMake Tools extension).
+
+### Command Aliases
+
+The container's `~/.bashrc` is assembled from `.devcontainer/bashrc` by the
+`postCreateCommand`, so these shortcuts are available in every new container.
+Each delegates to a path-independent script, so it works from any directory.
+
+| Alias | Runs | Purpose |
+|-------|------|---------|
+| `build` | `scripts/build.sh` | Build/install libnvmpi |
+| `ffpatch` | `scripts/ffpatch.sh` | Patch a vanilla FFmpeg tree |
+| `update-patch` | `ffmpeg/dev/update_patch.sh` | Regenerate the committed patches |
+| `try-build` | `ffmpeg/dev/try_build.sh` | Build-validate every FFmpeg version |
+| `hw-test` / `test` | `test/hw-test.sh` | Hardware encode/decode smoke test |
+
+> `test` shadows the shell `test` builtin in interactive shells only; scripts
+> are unaffected because aliases are not expanded in non-interactive shells.
+
+See `docs/SCRIPTS.md` for full options of each underlying script.
 
 ## Configuration
 
