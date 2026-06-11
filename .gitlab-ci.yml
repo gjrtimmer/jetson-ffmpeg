@@ -174,6 +174,9 @@ patch:ffmpeg-8.0:
   stage: test
   <<: *not-on-tag
   tags: [jetson, "${JETSON_VARIANT}"]
+  # Serialize all Jetson work (one job at a time) so per-version builds/tests
+  # don't thrash a single device — see also .package.
+  resource_group: jetson
   parallel:
     matrix:
       - JETSON_VARIANT: orin-nx
@@ -232,6 +235,9 @@ test:hw-ffmpeg-8.0:           # path D
   stage: package
   <<: *only-tag
   tags: [jetson]
+  # One build at a time on the Jetson (each build already uses -j$(nproc)).
+  # Shared group with .hw-test so nothing else hammers the device concurrently.
+  resource_group: jetson
   variables:
     NVIDIA_VISIBLE_DEVICES: "all"
     NVIDIA_DRIVER_CAPABILITIES: "all"
