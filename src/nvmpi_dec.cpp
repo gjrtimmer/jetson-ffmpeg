@@ -859,6 +859,7 @@ int copyNvBufToFrame(nvmpictx* ctx, NVMPI_frameBuf *nvmpiBuf, nvFrame* frame)
 //to the caller, so there is no lifetime to manage.
 int nvmpi_decoder_get_frame(nvmpictx* ctx,nvFrame* frame,bool wait)
 {
+	(void)wait; //blocking mode not implemented yet — see TODO.md
 	int ret;
 	NVMPI_frameBuf* fb = ctx->framePool->dqFilledBuf();
 	if(!fb) return -1;

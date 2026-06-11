@@ -63,10 +63,7 @@ set(NVMPI_INCLUDE_DIRS
 	${CUDA_INCLUDE_DIR}
 	${JETSON_MULTIMEDIA_API_INCLUDE_DIR})
 
-set(NVMPI_SRC
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_dec.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_enc.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/NVMPI_frameBuf.cpp
+set(JETSON_MULTIMEDIA_API_SRC
     ${JETSON_MULTIMEDIA_API_SRC_DIR}/NvBuffer.cpp
     ${JETSON_MULTIMEDIA_API_SRC_DIR}/NvElement.cpp
     ${JETSON_MULTIMEDIA_API_SRC_DIR}/NvElementProfiler.cpp
@@ -75,6 +72,11 @@ set(NVMPI_SRC
     ${JETSON_MULTIMEDIA_API_SRC_DIR}/NvV4l2ElementPlane.cpp
     ${JETSON_MULTIMEDIA_API_SRC_DIR}/NvVideoDecoder.cpp
     ${JETSON_MULTIMEDIA_API_SRC_DIR}/NvVideoEncoder.cpp)
+
+set(NVMPI_SRC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_dec.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_enc.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/NVMPI_frameBuf.cpp)
     
 set(NVMPI_DEP_LIBS ${CMAKE_THREAD_LIBS_INIT} ${LIB_V4L2} ${LIB_NVJPEG})
 
@@ -83,7 +85,7 @@ if(EXISTS "${JETSON_MULTIMEDIA_API_INCLUDE_DIR}/nvbufsurface.h")
 	add_definitions(-DWITH_NVUTILS)
 	find_library(LIB_NVBUFSURFACE nvbufsurface PATHS "${JETSON_MULTIMEDIA_LIB_DIR}")
 	find_library(LIB_NVBUFSURFTRANSFORM nvbufsurftransform PATHS "${JETSON_MULTIMEDIA_LIB_DIR}")
-	set(NVMPI_SRC ${NVMPI_SRC}
+	set(JETSON_MULTIMEDIA_API_SRC ${JETSON_MULTIMEDIA_API_SRC}
 		${JETSON_MULTIMEDIA_API_SRC_DIR}/NvBufSurface.cpp)
 	set(NVMPI_DEP_LIBS ${NVMPI_DEP_LIBS} ${LIB_NVBUFSURFACE} ${LIB_NVBUFSURFTRANSFORM})
 	message(STATUS "Using NvUtils API.")
@@ -92,6 +94,14 @@ else ()
 	set(NVMPI_DEP_LIBS ${NVMPI_DEP_LIBS} ${LIB_NVBUF})
 	message(STATUS "Using NvBufUtils API.")
 endif()
+
+set(NVMPI_SRC ${NVMPI_SRC} ${JETSON_MULTIMEDIA_API_SRC})
+
+#NVIDIA's sample classes are external (host-provided) and not -Wextra clean:
+#they trigger benign -Wmissing-field-initializers/-Wunused-parameter noise.
+#Suppress those two warnings for these files only; src/ keeps full -Wall -Wextra.
+set_source_files_properties(${JETSON_MULTIMEDIA_API_SRC} PROPERTIES
+	COMPILE_OPTIONS "-Wno-missing-field-initializers;-Wno-unused-parameter")
 
 add_library(nvmpi SHARED ${NVMPI_SRC})
 add_library(nvmpi_static STATIC ${NVMPI_SRC})
