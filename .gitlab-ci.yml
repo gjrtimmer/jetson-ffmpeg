@@ -68,7 +68,7 @@ build:nvmpi:
   script:
     - echo "=== ffmpeg ${FFMPEG_BRANCH} ==="
     - git clone --depth=1 -b "${FFMPEG_BRANCH}" https://git.ffmpeg.org/ffmpeg.git /tmp/ffmpeg
-    - bash ./ffpatch.sh /tmp/ffmpeg
+    - bash ./scripts/ffpatch.sh /tmp/ffmpeg
     - cd /tmp/ffmpeg
     - export PKG_CONFIG_PATH="${NVMPI_PREFIX}/lib/pkgconfig:${NVMPI_PREFIX}/share/pkgconfig"
     - >-

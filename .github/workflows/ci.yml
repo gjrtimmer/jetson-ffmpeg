@@ -108,7 +108,7 @@ jobs:
         run: |
           echo "=== ffmpeg ${{ matrix.ffmpeg }} ==="
           git clone --depth=1 -b "${{ matrix.ffmpeg }}" https://git.ffmpeg.org/ffmpeg.git /tmp/ffmpeg
-          bash ./ffpatch.sh /tmp/ffmpeg
+          bash ./scripts/ffpatch.sh /tmp/ffmpeg
           cd /tmp/ffmpeg
           export PKG_CONFIG_PATH="${{ github.workspace }}/_nvmpi/lib/pkgconfig:${{ github.workspace }}/_nvmpi/share/pkgconfig"
           ./configure \
