@@ -22,8 +22,14 @@ This means:
 | Stage | Job(s) | What it does | GPU required |
 | ----- | ------ | ------------ | :----------: |
 | **build** | `build:nvmpi` | Compile the nvmpi library with stubs (`WITH_STUBS=ON`) | No |
-| **patch** | `patch:ffmpeg-{4.2,4.4,6.0,6.1,7.0,7.1}` | Clone ffmpeg, apply `scripts/ffpatch.sh`, configure and build ffmpeg with nvmpi | No |
-| **test** | `test:hw-encode: [<variant>]` | Hardware encode/decode smoke test per Jetson variant | **Yes** |
+| **patch** | `patch:ffmpeg-{4.2,4.4,6.0,6.1,7.0,7.1,8.0}` | Clone ffmpeg, apply `scripts/ffpatch.sh`, configure and build ffmpeg with nvmpi | No |
+| **test** | `test:hw-ffmpeg-{4.2,4.4,6.0,6.1,7.0,7.1,8.0}` | Hardware encode/decode smoke test — one job per FFmpeg version × Jetson variant | **Yes** |
+
+Each `test:hw-ffmpeg-<ver>` job reuses its version's `patch` artifact (installed
+ffmpeg + libnvmpi), so the Jetson runner does not rebuild. Why one job per
+version (and why 6.0–7.1 compile identical wrapper code) is explained in the
+"Wrapper code paths by FFmpeg version" table in
+[DEVELOPMENT.md](DEVELOPMENT.md#wrapper-code-paths-by-ffmpeg-version).
 
 ## Adding a New Hardware Variant
 
@@ -42,10 +48,12 @@ Follow the guide matching your environment:
 
 ### Step 3: Add the variant to the CI matrix
 
-In `.gitlab-ci.yml`, add your variant to the `test:hw-encode` parallel matrix:
+In `.gitlab-ci.yml`, add your variant to the shared `.hw-test` parallel matrix
+(the `test:hw-ffmpeg-*` jobs all inherit it via the `&hw-test` anchor, so one
+edit covers every version):
 
 ```yaml
-test:hw-encode:
+.hw-test: &hw-test
   parallel:
     matrix:
       - JETSON_VARIANT: orin-nx
@@ -53,7 +61,7 @@ test:hw-encode:
       # - JETSON_VARIANT: nano
 ```
 
-Submit a merge request with this change. Once merged, the HW test job runs on your hardware alongside existing variants. If no runner with matching tags is available, that matrix entry stays pending until one comes online.
+Submit a merge request with this change. Once merged, every per-version HW test job runs on your hardware alongside existing variants. If no runner with matching tags is available, that matrix entry stays pending until one comes online.
 
 ## L4T Version
 

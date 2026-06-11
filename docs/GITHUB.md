@@ -19,10 +19,17 @@ This means:
 
 ## Pipeline Overview
 
+> **Status: manual-only.** This workflow is set to `workflow_dispatch`
+> (run it from the **Actions** tab) and does **not** trigger on push/PR. It
+> needs self-hosted Jetson runners plus arm64 `l4t-jetpack` containers that
+> GitHub-hosted runners cannot provide, so on push it only errored. **GitLab CI
+> (`.gitlab-ci.yml`) is the active pipeline.** To re-enable push/PR triggers,
+> restore the commented-out `push:`/`pull_request:` block in `ci.yml`.
+
 | Job | What it does | Runner |
 | --- | ------------ | ------ |
 | **build** | Compile nvmpi library with stubs (`WITH_STUBS=ON`) | `ubuntu-latest` |
-| **patch** | Clone ffmpeg (matrix: 4.2, 4.4, 6.0, 6.1, 7.0, 7.1), apply `scripts/ffpatch.sh`, build | `ubuntu-latest` |
+| **patch** | Clone ffmpeg (matrix: 4.2, 4.4, 6.0, 6.1, 7.0, 7.1, 8.0), apply `scripts/ffpatch.sh`, build | `ubuntu-latest` |
 | **hw-test** | Hardware encode/decode smoke test per Jetson variant | `self-hosted, jetson, <variant>` |
 
 ## Adding a New Hardware Variant
@@ -58,11 +65,14 @@ Submit a pull request with this change. Once merged, the HW test job runs on you
 
 ## L4T Version
 
-The pipeline uses `L4T_TAG: "r36.4.0"` by default. If your Jetson runs a different JetPack/L4T version and the container image differs, update the `env` block in `.github/workflows/ci.yml`:
+The build/patch jobs run in the `nvcr.io/nvidia/l4t-jetpack:r36.4.0` container. The
+tag is hardcoded on the `container.image:` lines in `.github/workflows/ci.yml`
+(GitHub Actions does not allow the `env` context in `jobs.<id>.container.image`).
+If your Jetson runs a different JetPack/L4T version, edit those two lines:
 
 ```yaml
-env:
-  L4T_TAG: "r36.3.0"
+    container:
+      image: nvcr.io/nvidia/l4t-jetpack:r36.3.0
 ```
 
 Check your installed version:
