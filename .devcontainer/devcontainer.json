@@ -31,13 +31,6 @@
                 "cmake.configureOnOpen": true,
                 "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
                 "C_Cpp.default.compileCommands": "${workspaceFolder}/build/compile_commands.json",
-                "terminal.integrated.defaultProfile.linux": "bash",
-                "terminal.integrated.profiles.linux": {
-                    "bash": {
-                        "path": "/bin/bash",
-                        "args": ["-l"]
-                    }
-                },
                 "workbench.editorAssociations": {
                     "*.md": "bierner.markdown-preview-github-styles"
                 }
