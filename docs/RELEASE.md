@@ -11,7 +11,7 @@ Release** with an auto-generated changelog, and mirror it to **GitHub**.
 
 The version is the **libnvmpi version** in `CMakeLists.txt`
 (`project(nvmpi VERSION X.Y.Z ...)`). The release tag must match it: tag
-`v1.1.0` for `VERSION 1.1.0`. Follow [SemVer](https://semver.org/) and
+`v2.0.0` for `VERSION 2.0.0`. Follow [SemVer](https://semver.org/) and
 [Conventional Commits](https://www.conventionalcommits.org/) (enforced repo-wide
 — see `CLAUDE.md`), which is what the changelog generator keys on.
 
