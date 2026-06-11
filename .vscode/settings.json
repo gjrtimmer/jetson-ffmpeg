@@ -4,5 +4,9 @@
     },
     "remote.SSH.remotePlatform": {
         "jetson": "linux"
-    }
+    },
+    "cSpell.words": [
+        "jiangwei",
+        "Timmer"
+    ]
 }
