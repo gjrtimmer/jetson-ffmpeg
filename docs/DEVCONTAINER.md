@@ -93,15 +93,29 @@ sudo systemctl restart docker
 ### 1. SSH into Jetson from VS Code
 
 1. Open VS Code on your local machine
-2. Press `Ctrl+Shift+P` → **Remote-SSH: Connect to Host...**
-3. Enter your Jetson's SSH address (e.g., `user@jetson-hostname`)
-4. VS Code installs its server component on the Jetson
+1. Press `Ctrl+Shift+P` → **Remote-SSH: Connect to Host...**
+1. Enter your Jetson's SSH address (e.g., `user@jetson-hostname`)
+1. VS Code installs its server component on the Jetson
 
-### 2. Open Project
+### 2. Clone the Repository on the Jetson
 
-1. **File → Open Folder** → navigate to the cloned `jetson-ffmpeg` directory
-2. VS Code detects `.devcontainer/` and prompts: **"Reopen in Container"**
-3. Click **Reopen in Container** (or `Ctrl+Shift+P` → **Dev Containers: Reopen in Container**)
+When connecting to a Jetson via Remote SSH for the first time, there is no workspace on the device. Clone the repository directly on the Jetson before opening the dev container:
+
+1. After connecting via SSH, open a terminal in VS Code (`Ctrl+``)
+1. Clone the repository:
+
+   ```bash
+   git clone https://github.com/Keylost/jetson-ffmpeg.git ~/jetson-ffmpeg
+   ```
+
+1. **File → Open Folder** → select `~/jetson-ffmpeg`
+
+> **Note:** The repository must be cloned on the Jetson itself, not on your local machine. The dev container mounts the workspace from the Jetson's filesystem, so a local clone cannot be used.
+
+### 3. Open Dev Container
+
+1. VS Code detects `.devcontainer/` and prompts: **"Reopen in Container"**
+1. Click **Reopen in Container** (or `Ctrl+Shift+P` → **Dev Containers: Reopen in Container**)
 
 First build pulls the L4T JetPack image (~2-5 GB depending on version) and installs dev tools. Subsequent opens use the cached image.
 
@@ -177,5 +191,5 @@ The container runs as `vscode` (UID 1000). If your host user has a different UID
 ### No GPU access inside container
 
 1. Verify `--runtime=nvidia` is in `devcontainer.json` `runArgs`
-2. Verify NVIDIA runtime works on host: `docker run --rm --runtime=nvidia nvcr.io/nvidia/l4t-base:r36.4.0 ls /dev/nv*`
-3. If using default runtime, remove `--runtime=nvidia` from `runArgs`
+1. Verify NVIDIA runtime works on host: `docker run --rm --runtime=nvidia nvcr.io/nvidia/l4t-base:r36.4.0 ls /dev/nv*`
+1. If using default runtime, remove `--runtime=nvidia` from `runArgs`

@@ -1,5 +1,8 @@
 {
     "workbench.editorAssociations": {
         "*.md": "bierner.markdown-preview-github-styles"
+    },
+    "remote.SSH.remotePlatform": {
+        "jetson": "linux"
     }
 }
