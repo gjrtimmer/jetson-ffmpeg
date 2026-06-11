@@ -158,7 +158,7 @@ export LD_LIBRARY_PATH="${PREFIX}/lib:/usr/lib/aarch64-linux-gnu/tegra:${LD_LIBR
 
 FF_CONF=(--enable-nvmpi --disable-doc)
 [ "${WITH_X264}" -eq 1 ] && FF_CONF+=(--enable-gpl --enable-libx264)
-[ -n "${FFMPEG_PREFIX}" ] && FF_CONF+=(--prefix "${FFMPEG_PREFIX}")
+[ -n "${FFMPEG_PREFIX}" ] && FF_CONF+=("--prefix=${FFMPEG_PREFIX}")
 # shellcheck disable=SC2206
 [ -n "${FFMPEG_ARGS}" ] && FF_CONF+=(${FFMPEG_ARGS})
 
