@@ -22,7 +22,7 @@ This means:
 | Job | What it does | Runner |
 | --- | ------------ | ------ |
 | **build** | Compile nvmpi library with stubs (`WITH_STUBS=ON`) | `ubuntu-latest` |
-| **patch** | Clone ffmpeg (matrix: 4.2, 4.4, 6.0, 6.1, 7.0, 7.1), apply `ffpatch.sh`, build | `ubuntu-latest` |
+| **patch** | Clone ffmpeg (matrix: 4.2, 4.4, 6.0, 6.1, 7.0, 7.1), apply `scripts/ffpatch.sh`, build | `ubuntu-latest` |
 | **hw-test** | Hardware encode/decode smoke test per Jetson variant | `self-hosted, jetson, <variant>` |
 
 ## Adding a New Hardware Variant
@@ -97,8 +97,9 @@ The `l4t-jetpack` container image should include it. The workflow installs it as
 | ---- | ------- |
 | `.github/workflows/ci.yml` | GitHub Actions workflow with hardware variant matrix |
 | `test/hw-test.sh` | Hardware encode/decode smoke test (runs per variant) |
-| `ffpatch.sh` | Patches ffmpeg source with nvmpi codec support |
-| `ffmpeg_patches/` | Static patch files for older ffmpeg versions |
+| `scripts/build.sh` | Build/install libnvmpi (auto-detects stubs vs Jetson) |
+| `scripts/ffpatch.sh` | Patches ffmpeg source with nvmpi codec support |
+| `ffmpeg/patches/` | Static patch files for older ffmpeg versions |
 | `docs/GITHUB_RUNNER_K8S.md` | Runner setup guide for Kubernetes |
 | `docs/GITHUB_RUNNER_MANUAL.md` | Runner setup guide for bare-metal Jetson |
 | `.github/ISSUE_TEMPLATE/runner-token-request.yml` | Issue template for requesting runner access |

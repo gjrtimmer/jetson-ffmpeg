@@ -40,7 +40,9 @@ See [DEVCONTAINER.md](DEVCONTAINER.md) for setup instructions covering host prer
 jetson-ffmpeg/
 ├── CMakeLists.txt              # Build system for libnvmpi (shared + static)
 ├── nvmpi.pc.in                 # pkg-config template
-├── ffpatch.sh                  # Patches a vanilla FFmpeg source tree with nvmpi support
+├── scripts/                    # Operator scripts (run from any directory)
+│   ├── build.sh                # Build/install libnvmpi (auto-detects stubs vs Jetson)
+│   └── ffpatch.sh              # Patches a vanilla FFmpeg source tree with nvmpi support
 ├── include/
 │   ├── nvmpi.h                 # Public C API (encoder/decoder create/put/get/close)
 │   ├── NVMPI_bufPool.hpp       # Thread-safe buffer pool (template)
@@ -51,25 +53,26 @@ jetson-ffmpeg/
 │   ├── nvmpi_enc.cpp           # Encoder: frame → V4L2 → packet pool → user
 │   └── NVMPI_frameBuf.cpp      # DMA buffer alloc/destroy
 ├── stubs/                      # Stub .so files for cross-compilation (aarch64)
-├── ffmpeg_dev/                 # Patch development environment
-│   ├── common/                 # FFmpeg codec source files (shared across versions)
-│   │   └── libavcodec/
-│   │       ├── nvmpi_dec.c     # FFmpeg decoder codec (AVCodec/FFCodec wrapper)
-│   │       └── nvmpi_enc.c     # FFmpeg encoder codec (AVCodec/FFCodec wrapper)
-│   ├── 4.2/                    # Version-specific FFmpeg overlay files
-│   │   ├── configure           # Patched configure (adds --enable-nvmpi)
-│   │   ├── libavcodec/Makefile # Patched Makefile (adds nvmpi_dec.o / nvmpi_enc.o)
-│   │   └── libavcodec/allcodecs.c  # Patched codec registration
-│   ├── 4.4/                    # Same structure as 4.2
-│   ├── 6.0/                    # Same structure as 4.2
-│   ├── .gitignore              # Ignores cloned ffmpeg dirs (ffmpeg4.2/, etc.)
-│   ├── copy_files.sh           # Copies overlay files into cloned FFmpeg trees
-│   ├── update_patch.sh         # Clones FFmpeg, patches, generates .patch files
-│   └── try_build.sh            # Runs update_patch.sh then builds all versions
-├── ffmpeg_patches/             # Generated patch files (applied by users)
-│   ├── ffmpeg4.2_nvmpi.patch
-│   ├── ffmpeg4.4_nvmpi.patch
-│   └── ffmpeg6.0_nvmpi.patch
+├── ffmpeg/                     # FFmpeg integration layer
+│   ├── dev/                    # Patch development environment
+│   │   ├── common/             # FFmpeg codec source files (shared across versions)
+│   │   │   └── libavcodec/
+│   │   │       ├── nvmpi_dec.c # FFmpeg decoder codec (AVCodec/FFCodec wrapper)
+│   │   │       └── nvmpi_enc.c # FFmpeg encoder codec (AVCodec/FFCodec wrapper)
+│   │   ├── 4.2/                # Version-specific FFmpeg overlay files
+│   │   │   ├── configure       # Patched configure (adds --enable-nvmpi)
+│   │   │   ├── libavcodec/Makefile     # Patched Makefile (adds nvmpi_dec.o / nvmpi_enc.o)
+│   │   │   └── libavcodec/allcodecs.c  # Patched codec registration
+│   │   ├── 4.4/                # Same structure as 4.2
+│   │   ├── 6.0/                # Same structure as 4.2
+│   │   ├── .gitignore          # Ignores cloned ffmpeg dirs (ffmpeg4.2/, etc.)
+│   │   ├── copy_files.sh       # Copies overlay files into cloned FFmpeg trees
+│   │   ├── update_patch.sh     # Clones FFmpeg, patches, generates .patch files
+│   │   └── try_build.sh        # Runs update_patch.sh then builds all versions
+│   └── patches/                # Generated patch files (applied by users)
+│       ├── ffmpeg4.2_nvmpi.patch
+│       ├── ffmpeg4.4_nvmpi.patch
+│       └── ffmpeg6.0_nvmpi.patch
 ├── test/
 │   └── hw-test.sh              # CI smoke test for hardware encode/decode
 └── docs/                       # Documentation
@@ -107,7 +110,7 @@ The project has two distinct layers:
 
 **Layer 1 — libnvmpi** (`src/`, `include/`, `CMakeLists.txt`): A standalone shared library that wraps NVIDIA's V4L2-based multimedia API into a simple C interface. This is what gets installed on the system (`libnvmpi.so`).
 
-**Layer 2 — FFmpeg integration** (`ffmpeg_dev/common/`, patches): Source files that implement FFmpeg's codec interface (`AVCodec`/`FFCodec`) by calling libnvmpi. These get patched into FFmpeg source trees and compiled as part of FFmpeg.
+**Layer 2 — FFmpeg integration** (`ffmpeg/dev/common/`, patches): Source files that implement FFmpeg's codec interface (`AVCodec`/`FFCodec`) by calling libnvmpi. These get patched into FFmpeg source trees and compiled as part of FFmpeg.
 
 ---
 
@@ -162,6 +165,14 @@ CMakeLists.txt auto-detects this: if `nvbufsurface.h` exists in the Jetson Multi
 
 **On a Jetson device (native build):**
 
+The quickest path is the helper script (auto-detects real Jetson libs vs stubs):
+
+```bash
+./scripts/build.sh --install     # alias in the dev container: build --install
+```
+
+Equivalent raw CMake build:
+
 ```bash
 mkdir build && cd build
 cmake ..
@@ -208,7 +219,7 @@ FFmpeg's build system needs three modifications to recognize nvmpi as a hardware
 
 ### FFmpeg codec source files
 
-Located in `ffmpeg_dev/common/libavcodec/`:
+Located in `ffmpeg/dev/common/libavcodec/`:
 
 - **`nvmpi_enc.c`** (602 lines): Implements FFmpeg encoder codecs for H.264 and HEVC. Handles profile/level mapping, rate control, packet pool management. Contains version-aware macros for FFmpeg API changes across versions.
 
@@ -230,12 +241,12 @@ Both files use preprocessor version checks to handle FFmpeg API evolution:
 
 ### Version-specific overlay files
 
-Each supported FFmpeg version has its own directory under `ffmpeg_dev/`:
+Each supported FFmpeg version has its own directory under `ffmpeg/dev/`:
 
 ```
-ffmpeg_dev/4.2/    → configure, libavcodec/Makefile, libavcodec/allcodecs.c
-ffmpeg_dev/4.4/    → same files, adjusted for FFmpeg 4.4 differences
-ffmpeg_dev/6.0/    → same files, adjusted for FFmpeg 6.0 differences
+ffmpeg/dev/4.2/    → configure, libavcodec/Makefile, libavcodec/allcodecs.c
+ffmpeg/dev/4.4/    → same files, adjusted for FFmpeg 4.4 differences
+ffmpeg/dev/6.0/    → same files, adjusted for FFmpeg 6.0 differences
 ```
 
 These differ because:
@@ -253,7 +264,7 @@ The patch system converts the overlay files + common codec sources into standard
 
 ### How it works
 
-**`ffpatch.sh`** (root directory): The runtime patching script. Takes a path to an FFmpeg source directory and:
+**`scripts/ffpatch.sh`**: The runtime patching script. Takes a path to an FFmpeg source directory and:
 
 1. Detects `libavcodec` version from headers (`version.h` or `version_major.h`)
 2. Creates backup copies of `configure`, `Makefile`, `allcodecs.c`
@@ -266,21 +277,21 @@ The patch system converts the overlay files + common codec sources into standard
 4. Copies `nvmpi_dec.c` and `nvmpi_enc.c` into `libavcodec/`
 5. Each insertion is idempotent (checks `grep` before `sed`)
 
-**`ffmpeg_dev/update_patch.sh`**: The patch generation script:
+**`ffmpeg/dev/update_patch.sh`**: The patch generation script:
 
 1. Shallow-clones FFmpeg release branches (4.2, 4.4, 6.0)
-2. Runs `ffpatch.sh` on each clone
-3. Copies overlay files from `ffmpeg_dev/{version}/` and `ffmpeg_dev/common/`
+2. Runs `scripts/ffpatch.sh` on each clone
+3. Copies overlay files from `ffmpeg/dev/{version}/` and `ffmpeg/dev/common/`
 4. Generates patches via `git add -A && git diff --cached`
-5. Writes patches to `ffmpeg_patches/`
+5. Writes patches to `ffmpeg/patches/`
 
-**`ffmpeg_dev/copy_files.sh`**: Copies overlay + common files into cloned trees (used during development iteration).
+**`ffmpeg/dev/copy_files.sh`**: Copies overlay + common files into cloned trees (used during development iteration).
 
-**`ffmpeg_dev/try_build.sh`**: Runs `update_patch.sh` then attempts `./configure --enable-nvmpi && make` for each version. Build validation.
+**`ffmpeg/dev/try_build.sh`**: Runs `update_patch.sh` then attempts `./configure --enable-nvmpi && make` for each version. Build validation.
 
 ### Patch file content
 
-Each patch in `ffmpeg_patches/` is a complete `git diff` that modifies:
+Each patch in `ffmpeg/patches/` is a complete `git diff` that modifies:
 - `configure` (nvmpi registration)
 - `libavcodec/Makefile` (build rules)
 - `libavcodec/allcodecs.c` (codec symbol registration)
@@ -300,35 +311,35 @@ When you need to modify the FFmpeg codec implementation or fix a bug in the inte
 For changes common to all FFmpeg versions:
 ```bash
 # Edit the shared codec files
-vim ffmpeg_dev/common/libavcodec/nvmpi_enc.c
-vim ffmpeg_dev/common/libavcodec/nvmpi_dec.c
+vim ffmpeg/dev/common/libavcodec/nvmpi_enc.c
+vim ffmpeg/dev/common/libavcodec/nvmpi_dec.c
 ```
 
 For version-specific changes (configure, Makefile, allcodecs.c):
 ```bash
-vim ffmpeg_dev/4.2/configure
-vim ffmpeg_dev/4.4/configure
-vim ffmpeg_dev/6.0/configure
+vim ffmpeg/dev/4.2/configure
+vim ffmpeg/dev/4.4/configure
+vim ffmpeg/dev/6.0/configure
 # (same for Makefile and allcodecs.c)
 ```
 
 **2. Regenerate patches:**
 
 ```bash
-cd ffmpeg_dev
+cd ffmpeg/dev
 ./update_patch.sh
 ```
 
 This will:
 - Clone fresh FFmpeg source trees (shallow, into gitignored dirs)
-- Apply `ffpatch.sh` to each
+- Apply `scripts/ffpatch.sh` to each
 - Copy your edited overlay/common files
-- Generate new patch files in `ffmpeg_patches/`
+- Generate new patch files in `ffmpeg/patches/`
 
 **3. Verify the patches build:**
 
 ```bash
-cd ffmpeg_dev
+cd ffmpeg/dev
 ./try_build.sh
 ```
 
@@ -341,7 +352,7 @@ Example: adding FFmpeg 7.0 support.
 **Step 1 — Clone and inspect the new version:**
 
 ```bash
-cd ffmpeg_dev
+cd ffmpeg/dev
 git clone git://source.ffmpeg.org/ffmpeg.git -b release/7.0 --depth=1 ffmpeg7.0
 ```
 
@@ -385,7 +396,7 @@ Key things to check:
 
 **Step 6 — Check if common codec files need updates:**
 
-Look at `ffmpeg_dev/common/libavcodec/nvmpi_enc.c` and `nvmpi_dec.c` for version checks. If FFmpeg 7.0 introduces API changes (renamed functions, new required fields), add appropriate `#if` guards:
+Look at `ffmpeg/dev/common/libavcodec/nvmpi_enc.c` and `nvmpi_dec.c` for version checks. If FFmpeg 7.0 introduces API changes (renamed functions, new required fields), add appropriate `#if` guards:
 
 ```c
 #if LIBAVCODEC_VERSION_MAJOR >= XX
@@ -395,9 +406,9 @@ Look at `ffmpeg_dev/common/libavcodec/nvmpi_enc.c` and `nvmpi_dec.c` for version
 #endif
 ```
 
-**Step 7 — Update `ffpatch.sh`:**
+**Step 7 — Update `scripts/ffpatch.sh`:**
 
-The runtime patching script (`ffpatch.sh`) uses `sed` with anchors based on existing FFmpeg text. If FFmpeg 7.0 changed the text around insertion points (e.g., the line `--disable-videotoolbox` that anchors `--enable-nvmpi`), update the corresponding `sed` command.
+The runtime patching script (`scripts/ffpatch.sh`) uses `sed` with anchors based on existing FFmpeg text. If FFmpeg 7.0 changed the text around insertion points (e.g., the line `--disable-videotoolbox` that anchors `--enable-nvmpi`), update the corresponding `sed` command.
 
 Check each `sed` anchor still exists in the new version:
 ```bash
@@ -406,36 +417,29 @@ grep -n 'h264_nvenc_encoder_deps' ffmpeg7.0/configure
 grep -n 'CONFIG_H264_CUVID_DECODER' ffmpeg7.0/libavcodec/Makefile
 ```
 
-**Step 8 — Update `update_patch.sh`:**
+**Step 8 — Register the new version with the dev scripts:**
 
-Add the new version to the clone and patch generation steps:
+`update_patch.sh`, `copy_files.sh`, and `try_build.sh` each iterate over a
+single `VERSIONS` list. Add the new version there:
 
 ```bash
-# Add to clone section:
-git clone git://source.ffmpeg.org/ffmpeg.git -b release/7.0 --depth=1 ffmpeg7.0
-
-# Add to ffpatch section:
-./ffpatch.sh ./ffmpeg_dev/ffmpeg7.0
-
-# Add to copy_files section (in copy_files.sh):
-cp -r ./7.0/* ffmpeg7.0/
-cp -r ./common/* ./ffmpeg7.0/
-
-# Add patch generation:
-cd ./ffmpeg7.0
-git add -A .
-git diff --cached > ../../ffmpeg_patches/ffmpeg7.0_nvmpi.patch
-cd ..
+# In ffmpeg/dev/update_patch.sh, copy_files.sh, and try_build.sh:
+VERSIONS="4.2 4.4 6.0 7.0"
 ```
 
-**Step 9 — Update `try_build.sh`:**
+The scripts handle cloning, patching (via `scripts/ffpatch.sh`), copying
+overlays, and writing `ffmpeg/patches/ffmpeg7.0_nvmpi.patch` automatically —
+no per-version code to add.
 
-Add the build test for the new version.
+**Step 9 — (covered by Step 8)**
+
+`try_build.sh` builds every version in the same `VERSIONS` list, so no extra
+change is needed.
 
 **Step 10 — Test the full pipeline:**
 
 ```bash
-cd ffmpeg_dev
+cd ffmpeg/dev
 ./update_patch.sh   # generates patches
 ./try_build.sh      # builds all versions
 ```
@@ -450,7 +454,7 @@ git clone git://source.ffmpeg.org/ffmpeg.git -b release/6.0 --depth=1 ffmpeg-tes
 cd ffmpeg-test
 
 # Apply patch
-git apply /path/to/jetson-ffmpeg/ffmpeg_patches/ffmpeg6.0_nvmpi.patch
+git apply /path/to/jetson-ffmpeg/ffmpeg/patches/ffmpeg6.0_nvmpi.patch
 
 # Build (on Jetson)
 ./configure --enable-nvmpi
@@ -554,7 +558,7 @@ extern const FFCodec ff_h264_nvmpi_encoder;
 When FFmpeg deprecates or renames an API:
 
 1. Check the new version's `libavcodec/version.h` or `version_major.h` for the major/minor version
-2. Add a preprocessor guard in the common codec files (`ffmpeg_dev/common/libavcodec/`)
+2. Add a preprocessor guard in the common codec files (`ffmpeg/dev/common/libavcodec/`)
 3. Test with both old and new versions to ensure the guards work
 4. Regenerate patches
 
@@ -562,9 +566,9 @@ When FFmpeg deprecates or renames an API:
 
 ## Troubleshooting
 
-### `ffpatch.sh` fails with "Patching ... failed!"
+### `scripts/ffpatch.sh` fails with "Patching ... failed!"
 
-The `sed` commands in `ffpatch.sh` use anchor strings from FFmpeg source files. If FFmpeg reorganized the file, the anchor may no longer exist. Check which function failed (configure, Makefile, or allcodecs.c) and find the new location of the anchor text in the new FFmpeg version.
+The `sed` commands in `scripts/ffpatch.sh` use anchor strings from FFmpeg source files. If FFmpeg reorganized the file, the anchor may no longer exist. Check which function failed (configure, Makefile, or allcodecs.c) and find the new location of the anchor text in the new FFmpeg version.
 
 ### Build fails with undefined reference to `nvmpi_*`
 

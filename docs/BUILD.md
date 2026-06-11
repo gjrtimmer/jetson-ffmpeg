@@ -42,6 +42,13 @@ sudo make install
 sudo ldconfig
 ```
 
+Or use the helper script, which auto-detects real Jetson libraries vs `stubs/`
+and accepts `--install`, `--clean`, `--stubs`, `-j`, etc. (see `docs/SCRIPTS.md`):
+
+```bash
+./scripts/build.sh --install
+```
+
 This installs:
 - `libnvmpi.so` (shared library) to `/usr/local/lib/`
 - `libnvmpi.a` (static library) to `/usr/local/lib/`
@@ -58,11 +65,11 @@ Clone any supported FFmpeg version (4.2 through 8.0+):
 git clone git://source.ffmpeg.org/ffmpeg.git -b release/7.1 --depth=1
 ```
 
-Patch FFmpeg with nvmpi support using the `ffpatch.sh` script:
+Patch FFmpeg with nvmpi support using the `scripts/ffpatch.sh` script:
 
 ```bash
 cd jetson-ffmpeg
-./ffpatch.sh ../ffmpeg
+./scripts/ffpatch.sh ../ffmpeg
 ```
 
 Build FFmpeg with nvmpi enabled:
@@ -74,7 +81,7 @@ make
 sudo make install
 ```
 
-> **Note:** The `ffpatch.sh` script auto-detects the FFmpeg version from its headers and applies the correct modifications. It works with any FFmpeg version from 4.2 onwards. Add your own `./configure` flags as needed (e.g., `--enable-gpl --enable-libx264`).
+> **Note:** The `scripts/ffpatch.sh` script auto-detects the FFmpeg version from its headers and applies the correct modifications. It works with any FFmpeg version from 4.2 onwards. Add your own `./configure` flags as needed (e.g., `--enable-gpl --enable-libx264`).
 
 ---
 

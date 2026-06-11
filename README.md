@@ -59,16 +59,12 @@ This library provides the ability to use hardware acceleration for video encodin
 # 1. Build and install libnvmpi
 git clone https://github.com/Keylost/jetson-ffmpeg.git
 cd jetson-ffmpeg
-mkdir build && cd build
-cmake ..
-make
-sudo make install
-sudo ldconfig
+./scripts/build.sh --install        # or: mkdir build && cd build && cmake .. && make && sudo make install && sudo ldconfig
 
 # 2. Patch and build FFmpeg
 git clone git://source.ffmpeg.org/ffmpeg.git -b release/7.1 --depth=1
 cd jetson-ffmpeg
-./ffpatch.sh ../ffmpeg
+./scripts/ffpatch.sh ../ffmpeg
 cd ../ffmpeg
 ./configure --enable-nvmpi
 make

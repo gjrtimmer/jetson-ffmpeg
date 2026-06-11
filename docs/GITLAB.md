@@ -22,7 +22,7 @@ This means:
 | Stage | Job(s) | What it does | GPU required |
 | ----- | ------ | ------------ | :----------: |
 | **build** | `build:nvmpi` | Compile the nvmpi library with stubs (`WITH_STUBS=ON`) | No |
-| **patch** | `patch:ffmpeg-{4.2,4.4,6.0,6.1,7.0,7.1}` | Clone ffmpeg, apply `ffpatch.sh`, configure and build ffmpeg with nvmpi | No |
+| **patch** | `patch:ffmpeg-{4.2,4.4,6.0,6.1,7.0,7.1}` | Clone ffmpeg, apply `scripts/ffpatch.sh`, configure and build ffmpeg with nvmpi | No |
 | **test** | `test:hw-encode: [<variant>]` | Hardware encode/decode smoke test per Jetson variant | **Yes** |
 
 ## Adding a New Hardware Variant
@@ -108,8 +108,9 @@ The CI `before_script` already handles this fallback.
 | ---- | ------- |
 | `.gitlab-ci.yml` | Pipeline definition with hardware variant matrix |
 | `test/hw-test.sh` | Hardware encode/decode smoke test (runs per variant) |
-| `ffpatch.sh` | Patches ffmpeg source with nvmpi codec support |
-| `ffmpeg_patches/` | Static patch files for older ffmpeg versions |
+| `scripts/build.sh` | Build/install libnvmpi (auto-detects stubs vs Jetson) |
+| `scripts/ffpatch.sh` | Patches ffmpeg source with nvmpi codec support |
+| `ffmpeg/patches/` | Static patch files for older ffmpeg versions |
 | `docs/GITLAB_RUNNER_K8S.md` | Runner setup guide for Kubernetes |
 | `docs/GITLAB_RUNNER_MANUAL.md` | Runner setup guide for bare-metal Jetson |
 | `.gitlab/issue_templates/GitLab Runner Token Request.md` | Issue template for requesting a runner token |
