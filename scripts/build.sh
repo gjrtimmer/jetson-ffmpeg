@@ -32,7 +32,7 @@ BUILD_TYPE="Release"
 JOBS="$(nproc)"
 DO_INSTALL=0
 DO_CLEAN=0
-PREFIX=""
+PREFIX="/usr/local"   # CMake's default install prefix; override with --prefix
 WITH_STUBS=""   # "", "ON" or "OFF"; "" means auto-detect
 JETSON_API_DIR="${JETSON_MULTIMEDIA_API_DIR:-/usr/src/jetson_multimedia_api}"
 JETSON_LIB_DIR="${JETSON_MULTIMEDIA_LIB_DIR:-/usr/lib/aarch64-linux-gnu/tegra}"
@@ -77,8 +77,10 @@ mkdir -p "${BUILD_DIR}"
 CMAKE_ARGS=(
     "-DCMAKE_BUILD_TYPE=${BUILD_TYPE}"
     "-DWITH_STUBS=${WITH_STUBS}"
+    # Always pass the prefix explicitly so a stale value cached in an existing
+    # build dir from a previous --prefix run can never silently win.
+    "-DCMAKE_INSTALL_PREFIX=${PREFIX}"
 )
-[ -n "${PREFIX}" ] && CMAKE_ARGS+=("-DCMAKE_INSTALL_PREFIX=${PREFIX}")
 
 echo "[i] Configuring: cmake ${CMAKE_ARGS[*]}"
 cmake -S "${REPO_ROOT}" -B "${BUILD_DIR}" "${CMAKE_ARGS[@]}"
