@@ -178,10 +178,10 @@ index aa0fc47..ced5aa2 100644
  extern const FFCodec ff_vqa_decoder;
 diff --git a/libavcodec/nvmpi_dec.c b/libavcodec/nvmpi_dec.c
 new file mode 100644
-index 0000000..2beb85b
+index 0000000..8cf75a3
 --- /dev/null
 +++ b/libavcodec/nvmpi_dec.c
-@@ -0,0 +1,335 @@
+@@ -0,0 +1,372 @@
 +/*
 + * nvmpi_dec.c — FFmpeg decoder wrapper for libnvmpi (layer 2 of
 + * jetson-ffmpeg, the FFmpeg integration layer).
@@ -331,7 +331,44 @@ index 0000000..2beb85b
 +		av_log(avctx, AV_LOG_ERROR, "Failed to nvmpi_create_decoder (code = %d).\n", AVERROR_EXTERNAL);
 +		return AVERROR_EXTERNAL;
 +	}
-+	
++
++	//Prime the decoder with out-of-band parameter sets (SPS/PPS), if any.
++	//RTSP/RTP streams commonly carry them only in the SDP
++	//(sprop-parameter-sets): FFmpeg stores those in avctx->extradata and
++	//never injects them into the packet stream (the *_mp4toannexb BSFs are
++	//pass-through for Annex-B input). The hardware decoder configures its
++	//capture plane only after parsing an in-band SPS, so without priming
++	//such streams decode zero frames (upstream Keylost/jetson-ffmpeg#14).
++	//Only Annex-B extradata (00 00 01 / 00 00 00 01 start code, plus at
++	//least one NAL byte) may be fed: avcC/hvcC extradata (MP4/MKV) is not
++	//parseable by the hardware and not needed — for those inputs the
++	//mp4toannexb BSF inserts the parameter sets in-band at every IDR.
++	//mpeg2/mpeg4 sequence/VOS headers are start-code-prefixed too and
++	//intentionally primed (same out-of-band failure class). Other
++	//CodecPrivate shapes (e.g. Matroska VP9 feature triples, VFW
++	//BITMAPINFOHEADER) never start with a start code and must not reach
++	//the parser. An empty payload must never be sent here: libnvmpi
++	//treats it as the EOS marker. The size cap protects libnvmpi's
++	//fixed-size bitstream buffers (4 MB) from hostile extradata — real
++	//parameter sets are tens of bytes.
++	if(avctx->extradata && avctx->extradata_size >= 4 &&
++	   avctx->extradata_size < (1 << 20) &&
++	   avctx->extradata[0] == 0 && avctx->extradata[1] == 0 &&
++	   (avctx->extradata[2] == 1 ||
++	    (avctx->extradata_size >= 5 && avctx->extradata[2] == 0 && avctx->extradata[3] == 1)))
++	{
++		nvPacket packet = {0};
++		packet.payload_size=avctx->extradata_size;
++		packet.payload=avctx->extradata;
++		packet.pts=0;
++
++		if(nvmpi_decoder_put_packet(nvmpi_context->ctx, &packet) < 0)
++		{
++			//not fatal: the stream may still carry in-band parameter sets
++			av_log(avctx, AV_LOG_WARNING, "Failed to prime decoder with extradata.\n");
++		}
++	}
++
 +   return 0;
 +}
 +
