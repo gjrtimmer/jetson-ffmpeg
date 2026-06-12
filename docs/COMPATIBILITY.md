@@ -29,41 +29,49 @@ jetson-ffmpeg is compatible with all FFmpeg versions from **4.2 up to 8.0+**.
 
 | Symbol | Meaning                                          |
 | :----: | ------------------------------------------------ |
-|   ✅   | Fully supported — tested on real hardware        |
+|   ✅   | Tested on real hardware (CI)                     |
 |   🔵   | Untested — expected to work                      |
 |   ➖   | No JetPack release available for this platform   |
 
-The matrix is split by JetPack generation; platforms without a JetPack
-release in a generation are omitted from that table.
+Hardware testing in CI currently covers a single device: **Orin NX on
+JetPack 6 (L4T r36.4)**. All other platform/JetPack combinations are
+untested in this project, even where the underlying code paths are the
+same. The matrix is split by JetPack generation; platforms without a
+JetPack release in a generation are omitted from that table.
 
 ### JetPack 5.x – 6.x
 
 | JetPack | AGX Xavier | Xavier NX | AGX Orin | Orin NX | Orin Nano |
 | ------- | :--------: | :-------: | :------: | :-----: | :-------: |
-| 6.2.x   |     ➖     |    ➖     |    ✅    |   ✅    |    ✅     |
-| 6.1.x   |     ➖     |    ➖     |    ✅    |   ✅    |    ✅     |
-| 6.0.x   |     ➖     |    ➖     |    ✅    |   ✅    |    ✅     |
-| 5.1.x   |     ✅     |    ✅     |    ✅    |   ✅    |    ✅     |
-| 5.0.x   |     ✅     |    ✅     |    ✅    |   ➖    |    ➖     |
+| 6.2.x   |     ➖     |    ➖     |    🔵    |   🔵    |    🔵     |
+| 6.1.x   |     ➖     |    ➖     |    🔵    |   ✅    |    🔵     |
+| 6.0.x   |     ➖     |    ➖     |    🔵    |   🔵    |    🔵     |
+| 5.1.x   |     🔵     |    🔵     |    🔵    |   🔵    |    🔵     |
+| 5.0.x   |     🔵     |    🔵     |    🔵    |   ➖    |    ➖     |
 
 ### JetPack 4.x
 
+JetPack 4.x uses the legacy `nvbuf_utils` buffer API (instead of
+`NvBufSurface` on JetPack 5+). The code supports it, but this build path
+is not currently exercised by CI.
+
 | JetPack | TX1 | TX2 | TX2i | Nano | AGX Xavier | Xavier NX |
 | ------- | :-: | :-: | :--: | :--: | :--------: | :-------: |
-| 4.6.x   | 🔵  | 🔵  |  🔵  |  ✅  |     ✅     |    ✅     |
-| 4.5.x   | 🔵  | 🔵  |  🔵  |  ✅  |     ✅     |    ✅     |
+| 4.6.x   | 🔵  | 🔵  |  🔵  |  🔵  |     🔵     |    🔵     |
+| 4.5.x   | 🔵  | 🔵  |  🔵  |  🔵  |     🔵     |    🔵     |
 | 4.4.x   | 🔵  | 🔵  |  🔵  |  🔵  |     🔵     |    🔵     |
 | 4.3.x   | 🔵  | 🔵  |  🔵  |  🔵  |     🔵     |    ➖     |
 | 4.2.x   | 🔵  | 🔵  |  🔵  |  🔵  |     🔵     |    ➖     |
 | 4.1.x   | ➖  | ➖  |  ➖  |  ➖  |     🔵     |    ➖     |
 
-### JetPack 1.x – 3.x (legacy)
+### JetPack 3.2 – 3.3 (legacy)
 
-| JetPack       | TK1 | TX1 | TX2 | TX2i |
-| ------------- | :-: | :-: | :-: | :--: |
-| 3.3.x         | ➖  | 🔵  | 🔵  |  🔵  |
-| 3.2.x         | ➖  | 🔵  | 🔵  |  🔵  |
-| 3.1.x         | 🔵  | 🔵  | 🔵  |  ➖  |
-| 3.0.x         | 🔵  | 🔵  | 🔵  |  ➖  |
-| 2.0.x – 2.3.x | 🔵  | 🔵  | ➖  |  ➖  |
-| 1.0.x – 1.2.x | 🔵  | ➖  | ➖  |  ➖  |
+The Jetson Multimedia API that libnvmpi is built on (V4L2 codecs +
+`nvbuf_utils`, shipped as `tegra_multimedia_api`) first appeared around
+L4T r28 / JetPack 3.2. Earlier JetPack releases (1.x – 3.1, and the TK1
+platform entirely) do not provide this API and **cannot** be supported.
+
+| JetPack | TX1 | TX2 | TX2i |
+| ------- | :-: | :-: | :--: |
+| 3.3.x   | 🔵  | 🔵  |  🔵  |
+| 3.2.x   | 🔵  | 🔵  |  🔵  |

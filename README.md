@@ -22,8 +22,10 @@ ffmpeg -c:v h264_nvmpi -i input.mp4 -c:v hevc_nvmpi -b:v 4M output.mp4
 
 ## Compatibility
 
-jetson-ffmpeg runs on Jetson platforms from the original Nano through the
-Orin family (JetPack 4.x – 6.x) and supports FFmpeg **4.2 up to 8.0+**.
+jetson-ffmpeg targets Jetson platforms from the original Nano (JetPack 4.x)
+through the Orin family (JetPack 5.x/6.x) and supports FFmpeg **4.2 up to
+8.0+**. Hardware testing currently covers Orin NX on JetPack 6; other
+platforms are expected to work but are untested.
 
 See **[docs/COMPATIBILITY.md](docs/COMPATIBILITY.md)** for the supported
 codecs, the full Jetson/JetPack support matrix, and the list of tested
