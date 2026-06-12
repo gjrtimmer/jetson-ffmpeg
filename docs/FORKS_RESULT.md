@@ -41,7 +41,7 @@ groups related fixes to identify the best source for each.
 **Sources:** cgutman (original author) → cybernhl (inherits). No other fork has these.
 **Best source:** cybernhl/jetson-ffmpeg `moonlight_fixes` branch — all 4 in sequence.
 **Cross-refs:** jocover#10, #104 (thread lifecycle); Moonlight game streaming use case.
-**Status in our repo:** NONE ported. All 4 are CRITICAL.
+**Status in our repo:** FIXED — all four commits are ancestors of `main`; they entered the lineage via jocover's merges of cgutman's PR#22/#23/#28. Verified 2026-06-12 (gjrtimmer#2, closed).
 
 ### FC-2: Missing Return Statement UB (2 locations)
 
@@ -54,7 +54,7 @@ groups related fixes to identify the best source for each.
 
 **Sources:** Extend-Robotics only fork with explicit fix.
 **Cross-refs:** jocover#127 (decoder segfault reports), jocover#98.
-**Status in our repo:** NEEDS VERIFICATION — may already be addressed differently in Keylost lineage.
+**Status in our repo:** FIXED — `184a67a` ("add missing return statements") is an ancestor of `main`, and the lineage refactor removed the UB class entirely (`void` capture fcn via `std::thread`, `bool` DQ callback). Verified 2026-06-12 (gjrtimmer#3, closed).
 
 ### FC-3: Key Frame Flag Bug (encoder)
 
@@ -66,7 +66,7 @@ groups related fixes to identify the best source for each.
 
 **Sources:** spotai only. Filed as Keylost#26 (UNFIXED upstream).
 **Cross-refs:** Keylost#26.
-**Status in our repo:** NOT FIXED. CRITICAL — silent corruption of every encoded stream.
+**Status in our repo:** FIXED — spotai's `1324d7d` is an ancestor of `main` (flag from V4L2 `KeyFrame` metadata, conditional in wrapper). Upstream Keylost#26 remains unfixed. Verified 2026-06-12 (gjrtimmer#4, closed).
 
 ### FC-4: H.265 Encoder Header / IDR Scan
 
@@ -77,7 +77,7 @@ groups related fixes to identify the best source for each.
 | Extended to H.265 + bounded scan | `2b715e81` | spotai |
 
 **Sources:** spotai only.
-**Status in our repo:** NOT FIXED. CRITICAL — buffer overread potential.
+**Status in our repo:** FIXED — spotai's `2b715e8` is an ancestor of `main` (H.265 included, scan bounded by `payload_size`); a defensive tail-read bound on the start-code probe landed with gjrtimmer#5.
 
 ### FC-5: glibc 2.34+ pthread Segfaults
 
@@ -101,7 +101,7 @@ groups related fixes to identify the best source for each.
 | CHUNK_SIZE 4→10MB + bounds check + configurable `chunk_size` | cuda_buffers branch | GlassBil |
 
 **Sources:** GlassBil only.
-**Status in our repo:** NOT FIXED. HIGH — affects 4K encoding.
+**Status in our repo:** FIXED (gjrtimmer#7) — decoder input default raised to 10 MB with a `chunk_size` AVOption and an entry bounds check; encoder packet buffers raised to 10 MiB with an overflow guard in the DQ callback.
 
 ### FC-7: RTSP / Out-of-Band SPS/PPS Decoder Hang
 
@@ -214,7 +214,7 @@ Multiple forks approach GPU-resident decode/encode from different angles:
 | `chunk_size` option | GlassBil | Configurable input buffer for 4K+ |
 
 **Cross-refs:** Keylost#38 (EAGAIN workaround: `-packet_pool_size:v 32`).
-**These should be ported together** as they address the same "hardcoded limits" problem.
+**Status in our repo:** DONE — `frame_pool_size`/`packet_pool_size` AVOptions already in the lineage (spotai `cf0560b` is an ancestor of `main`); `chunk_size` added via gjrtimmer#7. Tracked as gjrtimmer#11 (closed).
 
 ### FT-6: Codec Flush / Lifecycle
 
