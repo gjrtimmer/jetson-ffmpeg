@@ -20,7 +20,9 @@
         "NVIDIA_VISIBLE_DEVICES": "all",
         "NVIDIA_DRIVER_CAPABILITIES": "all",
         "LD_LIBRARY_PATH": "/usr/lib/aarch64-linux-gnu/tegra:${containerEnv:LD_LIBRARY_PATH}",
-        "GITHUB_TOKEN": "${localEnv:GITHUB_TOKEN}"
+        "ANTHROPIC_MODEL": "${localEnv:ANTHROPIC_MODEL}",
+        "GITHUB_TOKEN": "${localEnv:GITHUB_TOKEN}",
+        "GH_TOKEN": "${localEnv:GH_TOKEN}"
     },
     "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=cached",
     "workspaceFolder": "/workspace",
