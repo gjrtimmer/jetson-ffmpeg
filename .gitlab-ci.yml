@@ -7,7 +7,7 @@
 #   Branch / MR pipelines (NOT a tag):
 #     build   - compile nvmpi library (stubs) on any runner
 #     patch   - apply ffpatch.sh to each supported ffmpeg version, build ffmpeg
-#     test    - HW encode/decode smoke test on each Jetson variant
+#     test    - all HW test suites (test/hw-all.sh) on each Jetson variant
 #
 #   Tag pipelines (v<X.Y.Z>):  -> see docs/RELEASE.md
 #     package - build REAL libnvmpi + ffmpeg per version in a plain container
@@ -198,7 +198,7 @@ patch:ffmpeg-8.0:
     - export PATH="${FFMPEG_PREFIX}/bin:${PATH}"
     - export LD_LIBRARY_PATH="${FFMPEG_PREFIX}/lib:/usr/lib/aarch64-linux-gnu/tegra:${LD_LIBRARY_PATH:-}"
     - ldconfig || true
-    - bash test/hw-test.sh
+    - bash test/hw-all.sh
 
 test:hw-ffmpeg-4.2:           # path A
   <<: *hw-test
