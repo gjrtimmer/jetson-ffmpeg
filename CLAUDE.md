@@ -116,6 +116,16 @@ and wait for them to confirm before continuing.
 validates against the live GitLab instance (resolves YAML anchors, `extends`,
 `rules`, etc.), which a plain YAML parse cannot.
 
+## Attribution policy
+
+Do not include AI attribution in any output. This includes:
+
+- `Co-Authored-By` lines in commit messages
+- "Generated with …" lines in MR/PR descriptions, issues, or comments
+- Any "AI-generated", "auto-generated", or similar markers in code or documentation
+
+No exceptions.
+
 ## Further docs
 
 - `docs/BUILD.md` — full build/install, CMake options, verification.
