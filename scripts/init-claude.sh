@@ -14,132 +14,160 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
 BOLD='\033[1m'
+DIM='\033[2m'
 NC='\033[0m'
 
-info()  { printf '%b[OK]%b %s\n' "$GREEN" "$NC" "$1"; }
-warn()  { printf '%b[!!]%b %s\n' "$YELLOW" "$NC" "$1"; }
-fail()  { printf '%b[ERR]%b %s\n' "$RED" "$NC" "$1"; }
-header(){ printf '\n%b=== %s ===%b\n' "$BOLD" "$1" "$NC"; }
+STEPS=8
+CURRENT=0
+PASS=0
+FAIL=0
+
+step() {
+    CURRENT=$((CURRENT + 1))
+    printf '\n%b[%d/%d]%b %b%s%b\n' "$BOLD" "$CURRENT" "$STEPS" "$NC" "$BOLD" "$1" "$NC"
+}
+
+progress() { printf '  %b→ %s%b\n' "$DIM" "$1" "$NC"; }
+ok()       { PASS=$((PASS + 1)); printf '  %b✓ %s%b\n' "$GREEN" "$1" "$NC"; }
+skip()     { printf '  %b⊘ %s%b\n' "$YELLOW" "$1" "$NC"; }
+err()      { FAIL=$((FAIL + 1)); printf '  %b✗ %s%b\n' "$RED" "$1" "$NC"; }
 
 # ---------------------------------------------------------------------------
 # Prerequisites
 # ---------------------------------------------------------------------------
+printf '%b=== Claude Code Init ===%b\n' "$BOLD" "$NC"
+printf 'Checking prerequisites...\n'
+
 missing=0
-for cmd in node npx gh; do
-    if ! command -v "$cmd" &>/dev/null; then
-        fail "$cmd not found in PATH"
+for cmd in node npx gh claude; do
+    if command -v "$cmd" &>/dev/null; then
+        ok "$cmd found"
+    else
+        err "$cmd not found in PATH"
         missing=1
     fi
 done
-(( missing )) && exit 1
 
 if [[ ! -d "${HOME}/.claude" ]]; then
-    fail "$HOME/.claude not found — run 'claude' once to login first"
+    err "$HOME/.claude not found — run 'claude' once to login first"
     exit 1
 fi
+ok "$HOME/.claude exists"
+
+(( missing )) && exit 1
 
 # ---------------------------------------------------------------------------
-# Caveman — token-efficient communication mode
+# 1. Caveman — token-efficient communication mode
 # https://github.com/JuliusBrussee/caveman
 # ---------------------------------------------------------------------------
-header "Caveman"
+step "Caveman — token-efficient communication"
+progress "Downloading installer..."
 if curl -fsSL https://raw.githubusercontent.com/JuliusBrussee/caveman/main/install.sh | bash; then
-    info "Caveman installed"
+    ok "Caveman installed"
 else
-    warn "Caveman install failed (non-fatal)"
+    err "Caveman install failed (non-fatal)"
 fi
 
 # ---------------------------------------------------------------------------
-# Ruflo — AI agent orchestration (global npm install only, MCP in .mcp.json)
+# 2. Ruflo — AI agent orchestration
 # https://github.com/ruvnet/claude-flow
 # ---------------------------------------------------------------------------
-header "Ruflo"
-if npm install -g ruflo@latest 2>/dev/null; then
-    info "Ruflo installed globally"
+step "Ruflo — agent orchestration"
+progress "npm install -g ruflo@latest"
+if npm install -g ruflo@latest; then
+    ok "Ruflo installed globally"
 else
-    warn "Ruflo install failed (non-fatal)"
+    err "Ruflo install failed (non-fatal)"
 fi
 
 # ---------------------------------------------------------------------------
-# Semble — fast code search for agents
+# 3. Semble — fast code search for agents
 # https://github.com/MinishLab/semble
 # ---------------------------------------------------------------------------
-header "Semble"
+step "Semble — fast code search"
 if command -v uv &>/dev/null; then
-    if uv tool install semble 2>/dev/null; then
-        info "Semble installed"
+    progress "uv tool install semble"
+    if uv tool install semble; then
+        ok "Semble installed"
     else
-        warn "Semble install failed (non-fatal)"
+        err "Semble install failed (non-fatal)"
     fi
 else
-    warn "uv not found — skipping Semble (install uv first)"
+    skip "uv not found — skipping Semble"
 fi
 
 # ---------------------------------------------------------------------------
-# GH Issues Auto-Fixer — automated issue-to-PR skill
+# 4. GH Issues Auto-Fixer — automated issue-to-PR skill
 # https://github.com/openclaw/openclaw (skills/gh-issues)
 # ---------------------------------------------------------------------------
-header "GH Issues Auto-Fixer"
-if gh skill install openclaw/openclaw gh-issues 2>/dev/null; then
-    info "gh-issues skill installed"
+step "GH Issues Auto-Fixer — issue-to-PR automation"
+progress "gh skill install openclaw/openclaw gh-issues"
+if gh skill install openclaw/openclaw gh-issues; then
+    ok "gh-issues skill installed"
 else
-    warn "gh skill install failed — try: npx skills add https://github.com/openclaw/openclaw --skill gh-issues"
+    err "gh skill install failed"
+    progress "Fallback: npx skills add https://github.com/openclaw/openclaw --skill gh-issues"
 fi
 
 # ---------------------------------------------------------------------------
-# SuperPowers — agentic skills framework
+# 5. SuperPowers — agentic skills framework
 # https://github.com/obra/superpowers
 # ---------------------------------------------------------------------------
-header "SuperPowers plugin"
-if claude plugin install superpowers@claude-plugins-official 2>/dev/null; then
-    info "SuperPowers installed"
+step "SuperPowers — agentic skills framework"
+progress "claude plugin install superpowers@claude-plugins-official"
+if claude plugin install superpowers@claude-plugins-official; then
+    ok "SuperPowers installed"
 else
-    warn "SuperPowers install failed (non-fatal)"
+    err "SuperPowers install failed (non-fatal)"
 fi
 
 # ---------------------------------------------------------------------------
-# Context Mode — context window optimization (98% reduction)
+# 6. Context Mode — context window optimization
 # https://github.com/mksglu/context-mode
 # ---------------------------------------------------------------------------
-header "Context Mode plugin"
-claude plugin marketplace add mksglu/context-mode 2>/dev/null || true
+step "Context Mode — context window optimization"
+progress "Adding marketplace mksglu/context-mode..."
+claude plugin marketplace add mksglu/context-mode || true
+progress "claude plugin install context-mode@context-mode"
 if claude plugin install context-mode@context-mode 2>/dev/null; then
-    info "Context Mode installed"
+    ok "Context Mode installed"
 else
-    warn "Context Mode install failed (non-fatal)"
+    err "Context Mode install failed (non-fatal)"
 fi
 
 # ---------------------------------------------------------------------------
-# Fullstack Dev Skills — 66 specialized dev skills
+# 7. Fullstack Dev Skills — 66 specialized dev skills
 # https://github.com/Jeffallan/claude-skills
 # ---------------------------------------------------------------------------
-header "Fullstack Dev Skills plugin"
+step "Fullstack Dev Skills — 66 specialized skills"
+progress "Adding marketplace jeffallan/claude-skills..."
 claude plugin marketplace add jeffallan/claude-skills 2>/dev/null || true
+progress "claude plugin install fullstack-dev-skills@jeffallan"
 if claude plugin install fullstack-dev-skills@jeffallan 2>/dev/null; then
-    info "Fullstack Dev Skills installed"
+    ok "Fullstack Dev Skills installed"
 else
-    warn "Fullstack Dev Skills install failed (non-fatal)"
+    err "Fullstack Dev Skills install failed (non-fatal)"
+fi
+
+# ---------------------------------------------------------------------------
+# 8. Environment check
+# ---------------------------------------------------------------------------
+step "Environment check"
+if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+    ok "GITHUB_TOKEN set — GitHub MCP server ready"
+else
+    skip "GITHUB_TOKEN not set — GitHub MCP server will not authenticate"
+    progress "Set on host: export GITHUB_TOKEN=ghp_..."
+    progress "Devcontainer passes it through via \${localEnv:GITHUB_TOKEN}"
 fi
 
 # ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
-header "Setup Complete"
-echo ""
-echo "Installed:"
-echo "  - Caveman        (skills)"
-echo "  - Ruflo           (global npm, MCP via .mcp.json)"
-echo "  - Semble          (uv tool, MCP via .mcp.json)"
-echo "  - gh-issues       (gh skill)"
-echo "  - SuperPowers     (plugin)"
-echo "  - Context Mode    (plugin)"
-echo "  - Dev Skills      (plugin)"
+printf '\n%b========================================%b\n' "$BOLD" "$NC"
+printf '%b  Done: %b%d passed%b, %b%d failed%b, of %d steps%b\n' \
+    "$BOLD" "$GREEN" "$PASS" "$NC" "$RED" "$FAIL" "$NC" "$STEPS" "$NC"
+printf '%b========================================%b\n' "$BOLD" "$NC"
 echo ""
 echo "Restart Claude Code to activate all plugins."
-echo ""
-if [[ -z "${GITHUB_TOKEN:-}" ]]; then
-    warn "GITHUB_TOKEN not set — GitHub MCP server will not authenticate"
-    echo "  Set it on your host: export GITHUB_TOKEN=ghp_..."
-    echo "  The devcontainer passes it through via \${localEnv:GITHUB_TOKEN}"
-fi
 echo ""
