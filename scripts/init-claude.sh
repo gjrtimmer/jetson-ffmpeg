@@ -17,7 +17,7 @@ BOLD='\033[1m'
 DIM='\033[2m'
 NC='\033[0m'
 
-STEPS=8
+STEPS=9
 CURRENT=0
 PASS=0
 FAIL=0
@@ -57,7 +57,24 @@ ok "$HOME/.claude exists"
 (( missing )) && exit 1
 
 # ---------------------------------------------------------------------------
-# 1. Caveman — token-efficient communication mode
+# 1. uv / uvx — Python package manager (user-level install)
+# https://docs.astral.sh/uv/
+# ---------------------------------------------------------------------------
+step "uv / uvx — Python package manager"
+if command -v uv &>/dev/null; then
+    skip "uv already installed ($(uv --version))"
+else
+    progress "curl -LsSf https://astral.sh/uv/install.sh | sh"
+    if curl -LsSf https://astral.sh/uv/install.sh | sh; then
+        export PATH="${HOME}/.local/bin:${PATH}"
+        ok "uv installed ($(uv --version))"
+    else
+        err "uv install failed (non-fatal)"
+    fi
+fi
+
+# ---------------------------------------------------------------------------
+# 2. Caveman — token-efficient communication mode
 # https://github.com/JuliusBrussee/caveman
 # ---------------------------------------------------------------------------
 step "Caveman — token-efficient communication"
@@ -69,7 +86,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 2. Ruflo — AI agent orchestration
+# 3. Ruflo — AI agent orchestration
 # https://github.com/ruvnet/claude-flow
 # ---------------------------------------------------------------------------
 step "Ruflo — agent orchestration"
@@ -81,7 +98,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 3. Semble — fast code search for agents
+# 4. Semble — fast code search for agents
 # https://github.com/MinishLab/semble
 # ---------------------------------------------------------------------------
 step "Semble — fast code search"
@@ -97,7 +114,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 4. GH Issues Auto-Fixer — automated issue-to-PR skill
+# 5. GH Issues Auto-Fixer — automated issue-to-PR skill
 # https://github.com/openclaw/openclaw (skills/gh-issues)
 # ---------------------------------------------------------------------------
 step "GH Issues Auto-Fixer — issue-to-PR automation"
@@ -110,7 +127,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 5. SuperPowers — agentic skills framework
+# 6. SuperPowers — agentic skills framework
 # https://github.com/obra/superpowers
 # ---------------------------------------------------------------------------
 step "SuperPowers — agentic skills framework"
@@ -122,7 +139,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 6. Context Mode — context window optimization
+# 7. Context Mode — context window optimization
 # https://github.com/mksglu/context-mode
 # ---------------------------------------------------------------------------
 step "Context Mode — context window optimization"
@@ -136,7 +153,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 7. Fullstack Dev Skills — 66 specialized dev skills
+# 8. Fullstack Dev Skills — 66 specialized dev skills
 # https://github.com/Jeffallan/claude-skills
 # ---------------------------------------------------------------------------
 step "Fullstack Dev Skills — 66 specialized skills"
@@ -150,7 +167,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 8. Environment check
+# 9. Environment check
 # ---------------------------------------------------------------------------
 step "Environment check"
 if [[ -n "${GITHUB_TOKEN:-}" ]]; then

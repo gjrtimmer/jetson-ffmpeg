@@ -58,10 +58,6 @@ COPY bashrc /etc/bashrc-custom
 RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.5/install.sh | bash \
     && . "${HOME}/.nvm/nvm.sh" \
     && nvm install --lts
-
-# uv / uvx
-RUN curl -LsSf https://astral.sh/uv/install.sh | sh
-
 USER ${USERNAME}
 
 RUN NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
