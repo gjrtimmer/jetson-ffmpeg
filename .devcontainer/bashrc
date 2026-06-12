@@ -38,6 +38,16 @@ shopt -s histappend
 # Homebrew
 eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv 2>/dev/null)"
 
+# nvm
+export NVM_DIR="${HOME}/.nvm"
+# shellcheck source=/dev/null
+[ -s "${NVM_DIR}/nvm.sh" ] && . "${NVM_DIR}/nvm.sh"
+# shellcheck source=/dev/null
+[ -s "${NVM_DIR}/bash_completion" ] && . "${NVM_DIR}/bash_completion"
+
+# uv / uvx
+export PATH="${HOME}/.local/bin:${PATH}"
+
 # Bash completion
 if [ -f /usr/share/bash-completion/bash_completion ]; then
     . /usr/share/bash-completion/bash_completion

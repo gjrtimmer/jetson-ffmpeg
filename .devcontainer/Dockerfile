@@ -61,4 +61,12 @@ ENV PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:${PATH}
 
 RUN brew install gh glab claude-code
 
+# nvm + Node.js LTS
+RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.5/install.sh | bash \
+    && . "${HOME}/.nvm/nvm.sh" \
+    && nvm install --lts
+
+# uv / uvx
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+
 WORKDIR /workspace
