@@ -112,6 +112,10 @@ GitLab also disappears from GitHub.
 message asking the user to authenticate** (`glab auth login` / `gh auth login`)
 and wait for them to confirm before continuing.
 
+**Lint `.gitlab-ci.yml` with `glab ci lint`** after every edit to it — this
+validates against the live GitLab instance (resolves YAML anchors, `extends`,
+`rules`, etc.), which a plain YAML parse cannot.
+
 ## Further docs
 
 - `docs/BUILD.md` — full build/install, CMake options, verification.
