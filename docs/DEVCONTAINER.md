@@ -67,8 +67,8 @@ sudo systemctl restart docker
 docker info | grep -i runtime
 
 # NVIDIA runtime available
-docker run --rm --runtime=nvidia nvcr.io/nvidia/l4t-base:r36.4.0 nvidia-smi || \
-docker run --rm --runtime=nvidia nvcr.io/nvidia/l4t-base:r36.4.0 cat /proc/device-tree/model
+docker run --rm --runtime=nvidia harbor.local/jetson/l4t-jetpack:r36.4.0 nvidia-smi || \
+docker run --rm --runtime=nvidia harbor.local/jetson/l4t-jetpack:r36.4.0 cat /proc/device-tree/model
 ```
 
 > **Note:** `nvidia-smi` is not available on all Jetson models. Reading `/proc/device-tree/model` confirms GPU access.
@@ -239,5 +239,5 @@ If your libraries are at a different path, update the `mounts` array in `.devcon
 ### No GPU access inside container
 
 1. Verify `--runtime=nvidia` is in `devcontainer.json` `runArgs`
-1. Verify NVIDIA runtime works on host: `docker run --rm --runtime=nvidia nvcr.io/nvidia/l4t-base:r36.4.0 ls /dev/nv*`
+1. Verify NVIDIA runtime works on host: `docker run --rm --runtime=nvidia harbor.local/jetson/l4t-jetpack:r36.4.0 ls /dev/nv*`
 1. If using default runtime, remove `--runtime=nvidia` from `runArgs`
