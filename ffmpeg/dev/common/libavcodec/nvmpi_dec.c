@@ -46,6 +46,14 @@
 #define OPT_frame_pool_size_MAX 32
 #define OPT_frame_pool_size_DEFAULT 5
 
+//valid range for the chunk_size AVOption (bytes per compressed-input
+//buffer inside libnvmpi). 0 = auto (libnvmpi default, 10 MiB). One input
+//packet (access unit) must fit in one chunk; 4K high-bitrate I-frames
+//can exceed the old 4 MB limit.
+#define OPT_chunk_size_MIN 65536
+#define OPT_chunk_size_MAX (64*1024*1024)
+#define OPT_chunk_size_AUTO 0
+
 //Per-instance private context (priv_data of the AVCodecContext).
 //AVClass must stay discoverable for the AVOption system; resize_expr and
 //frame_pool_size are set via AVOptions before init.
@@ -56,6 +64,7 @@ typedef struct {
 	AVFrame *bufFrame;     //pre-allocated frame the next decode copies into
 	char *resize_expr;     //"-resize WxH" option (hw downscale in libnvmpi)
 	int frame_pool_size;   //"-frame_pool_size N" option
+	int chunk_size;        //"-chunk_size N" option (bytes; 0 = auto)
 } nvmpiDecodeContext;
 
 //Translate FFmpeg's codec id into libnvmpi's coding type enum.
@@ -95,6 +104,13 @@ static int nvmpi_init_decoder(AVCodecContext *avctx)
 	{
 		av_log(avctx, AV_LOG_WARNING, "Incorrect frame_pool_size specified: %d. Default (%d) will be used.\n", param.frame_pool_size, OPT_frame_pool_size_DEFAULT);
 		param.frame_pool_size = OPT_frame_pool_size_DEFAULT;
+	}
+
+	param.chunk_size = nvmpi_context->chunk_size;
+	if(param.chunk_size != OPT_chunk_size_AUTO && (param.chunk_size < OPT_chunk_size_MIN || param.chunk_size > OPT_chunk_size_MAX))
+	{
+		av_log(avctx, AV_LOG_WARNING, "Incorrect chunk_size specified: %d. Auto (libnvmpi default) will be used.\n", nvmpi_context->chunk_size);
+		param.chunk_size = OPT_chunk_size_AUTO;
 	}
 
 	//Workaround for default pix_fmt not being set, so check if it isnt set and set it,
@@ -233,11 +249,16 @@ static int nvmpi_decode(AVCodecContext *avctx, void *data, int *got_frame, AVPac
 		res=nvmpi_decoder_put_packet(nvmpi_context->ctx,&packet);
 		if(res < 0)
 		{
-			if(res == -1)
-			{
-				decode_ret = AVERROR(EAGAIN); //TODO log
-			}
-			//TODO error handling
+			//A decode callback must never return AVERROR(EAGAIN) for a
+			//consumed packet — libavcodec >= 6.1 asserts on it
+			//(decode.c: "Assertion consumed != AVERROR(EAGAIN)").
+			//-3 = packet exceeds chunk_size: invalid input data, the
+			//decoder stays usable. Anything else is a V4L2 queue/dequeue
+			//failure.
+			av_log(avctx, AV_LOG_ERROR,
+			       "nvmpi_decoder_put_packet failed (code=%d, packet=%d bytes).\n",
+			       res, avpkt->size);
+			return (res == -3) ? AVERROR_INVALIDDATA : AVERROR_EXTERNAL;
 		}
 	}
 
@@ -293,6 +314,7 @@ static int nvmpi_decode(AVCodecContext *avctx, void *data, int *got_frame, AVPac
 static const AVOption options[] = {
     { "resize",   "Resize (width)x(height)", OFFSET(resize_expr), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, VD, "resize" },
     { "frame_pool_size", "Number of frames that could be buffered in the decoder before user must read it with avcodec_receive_frame()", OFFSET(frame_pool_size), AV_OPT_TYPE_INT, {.i64 = OPT_frame_pool_size_DEFAULT }, OPT_frame_pool_size_MIN, OPT_frame_pool_size_MAX, VD, "frame_pool_size" },
+    { "chunk_size", "Bytes per compressed-input buffer; one input packet must fit in one chunk (0 = auto, 10 MiB)", OFFSET(chunk_size), AV_OPT_TYPE_INT, {.i64 = OPT_chunk_size_AUTO }, 0, OPT_chunk_size_MAX, VD, "chunk_size" },
     { NULL }
 };
 

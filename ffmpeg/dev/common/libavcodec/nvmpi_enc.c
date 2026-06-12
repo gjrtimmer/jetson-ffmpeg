@@ -305,8 +305,9 @@ static av_cold int nvmpi_encode_init(AVCodecContext *avctx)
 			//IDR slice; 'i' then marks the end of the header NALs.
 			while(i<nPkt->payload_size)
 			{
-				//check if nal start code
-				if(nPkt->payload[i] == 0 && nPkt->payload[i+1] == 0 && nPkt->payload[i+2] == 0 && nPkt->payload[i+3] == 0x01)
+				//check if nal start code (the start-code probe reads
+				//payload[i+1..i+4], so stay 5 bytes inside the payload)
+				if(i + 4 < nPkt->payload_size && nPkt->payload[i] == 0 && nPkt->payload[i+1] == 0 && nPkt->payload[i+2] == 0 && nPkt->payload[i+3] == 0x01)
 				{
 					if(param.codingType == NV_VIDEO_CodingH264)
 					{

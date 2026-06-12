@@ -22,7 +22,9 @@
 //Maximum size of the encoded buffers on the capture plane in bytes
 //Also used by the FFmpeg wrapper as the allocation size of each pooled
 //packet buffer, so a single encoded frame must never exceed this.
-#define NVMPI_ENC_CHUNK_SIZE 2*1024*1024
+//10 MiB leaves headroom for 4K high-bitrate I-frames; frames larger than
+//this are dropped with an error instead of overflowing the packet buffer.
+#define NVMPI_ENC_CHUNK_SIZE 10*1024*1024
 
 //Opaque context handle. Note: the decoder and encoder each define their own
 //(different) struct nvmpictx internally; a handle must only be passed back
@@ -88,6 +90,8 @@ typedef struct _NVDECPARAM{
 	nvCodingType codingType; //input bitstream codec
 	nvPixFormat pixFormat;   //requested output pixel layout
 	nvSize resized;          //optional hw scaling target; {0,0} keeps stream resolution
+	unsigned int chunk_size; //bytes per compressed-input V4L2 buffer; 0 = default (10 MiB).
+	                         //One input packet (access unit) must fit in one chunk.
 } nvDecParam;
 
 //Compressed packet exchanged across the API boundary.
@@ -132,7 +136,9 @@ extern "C" {
 	//Feed one compressed packet (Annex-B for H.264/HEVC). May block waiting
 	//for a free V4L2 OUTPUT-plane buffer once all buffers are in flight.
 	//A packet with payload_size==0 signals end-of-stream (starts flushing).
-	//Returns 0 on success, negative on queue/dequeue failure.
+	//Returns 0 on success, -1 on dequeue failure, -2 on queue failure,
+	//-3 when the packet exceeds chunk_size (invalid input — the packet is
+	//dropped; smaller packets continue to be accepted).
 	int nvmpi_decoder_put_packet(nvmpictx* ctx, nvPacket* packet);
 
 	//Retrieve one decoded frame by copying it into the caller-provided
