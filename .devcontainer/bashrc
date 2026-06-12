@@ -28,6 +28,7 @@ alias hw-test='"${JETSON_FFMPEG_ROOT}/test/hw-test.sh"'          # hardware smok
 # 'test' shadows the shell builtin in interactive shells only (aliases are not
 # expanded in scripts), giving a convenient name for the hardware smoke test.
 alias test='"${JETSON_FFMPEG_ROOT}/test/hw-test.sh"'
+alias init-claude='"${JETSON_FFMPEG_ROOT}/scripts/init-claude.sh"'
 
 # History
 HISTSIZE=10000

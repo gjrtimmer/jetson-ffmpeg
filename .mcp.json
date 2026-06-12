@@ -1,0 +1,21 @@
+{
+  "mcpServers": {
+    "github": {
+      "type": "http",
+      "url": "https://api.githubcopilot.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${GITHUB_TOKEN}"
+      }
+    },
+    "semble": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["--from", "semble[mcp]", "semble"]
+    },
+    "ruflo": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["ruflo@latest", "mcp", "start"]
+    }
+  }
+}
