@@ -113,6 +113,19 @@ GitHub issues for this project live at **`gjrtimmer/jetson-ffmpeg`**. Use
 `gh issue create -R gjrtimmer/jetson-ffmpeg` (and `gh issue list -R …`, etc.)
 for all issue operations — do not search for the remote or guess the repo slug.
 
+**Issue closing rules:**
+
+- Issues fixed by code are closed **only through commits** — `Closes #N` /
+  `Fixes #N` footers in the commit that lands on `main` — never by closing
+  the issue by hand.
+- Every closing issue also gets a **comment with details** before or at
+  close: what was done, where (commits, files), and how it was validated
+  (test suite, smoke matrix). A bare close or a naked commit link is not
+  enough.
+- Issues resolved without code (verified already-fixed, duplicates) may be
+  closed directly, but require the same evidence-comment standard
+  (verification method, commits/ancestry, code locations).
+
 ## Interacting with GitLab and GitHub
 
 Use the official CLIs — **`glab`** for GitLab (`gitlab.timmertech.nl`) and **`gh`**
