@@ -38,6 +38,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxcb1-dev \
     libxcb-shm0-dev \
     libxcb-xfixes0-dev \
+    shellcheck \
     texinfo \
     zlib1g-dev \
     && rm -rf /var/lib/apt/lists/*
