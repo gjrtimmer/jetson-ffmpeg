@@ -17,7 +17,7 @@ BOLD='\033[1m'
 DIM='\033[2m'
 NC='\033[0m'
 
-STEPS=9
+STEPS=10
 CURRENT=0
 PASS=0
 FAIL=0
@@ -178,6 +178,41 @@ else
     skip "GITHUB_TOKEN not set — GitHub MCP server will not authenticate"
     progress "Set on host: export GITHUB_TOKEN=ghp_..."
     progress "Devcontainer passes it through via \${localEnv:GITHUB_TOKEN}"
+fi
+
+# ---------------------------------------------------------------------------
+# 10. Fix caveman-shrink MCP — add semble as upstream
+# caveman's installer registers caveman-shrink without an upstream command.
+# Without an upstream, caveman-shrink exits immediately with "missing upstream
+# command". This patches ~/.claude.json to wrap semble as the upstream MCP.
+# ---------------------------------------------------------------------------
+step "Fix caveman-shrink — wire semble as upstream MCP"
+CLAUDE_JSON="${HOME}/.claude.json"
+if [[ -f "$CLAUDE_JSON" ]] && command -v python3 &>/dev/null; then
+    result=$(python3 - "$CLAUDE_JSON" <<'PYEOF'
+import json, sys
+path = sys.argv[1]
+d = json.load(open(path))
+patched = False
+for proj in d.get("projects", {}).values():
+    cs = proj.get("mcpServers", {}).get("caveman-shrink")
+    if cs and cs.get("args") == ["-y", "caveman-shrink"]:
+        cs["args"] = ["-y", "caveman-shrink", "uvx", "--from", "semble[mcp]", "semble"]
+        patched = True
+if patched:
+    json.dump(d, open(path, "w"), indent=2)
+    print("patched")
+else:
+    print("no-op")
+PYEOF
+    )
+    case "$result" in
+        patched) ok "caveman-shrink upstream set to semble" ;;
+        no-op)   skip "caveman-shrink already configured or not present" ;;
+        *)       err "caveman-shrink patch failed (non-fatal)" ;;
+    esac
+else
+    skip "~/.claude.json not found — skipping (re-run after first 'claude' login)"
 fi
 
 # ---------------------------------------------------------------------------
