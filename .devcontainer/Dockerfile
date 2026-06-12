@@ -53,14 +53,6 @@ RUN groupadd --gid ${USER_GID} ${USERNAME} 2>/dev/null || true \
 
 COPY bashrc /etc/bashrc-custom
 
-USER ${USERNAME}
-
-RUN NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
-
-ENV PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:${PATH}"
-
-RUN brew install gh glab claude-code
-
 # nvm + Node.js LTS
 RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.5/install.sh | bash \
     && . "${HOME}/.nvm/nvm.sh" \
@@ -68,5 +60,13 @@ RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.5/install.sh | b
 
 # uv / uvx
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+
+USER ${USERNAME}
+
+RUN NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+
+ENV PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:${PATH}"
+
+RUN brew install gh glab claude-code
 
 WORKDIR /workspace
