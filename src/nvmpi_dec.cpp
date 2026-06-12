@@ -43,8 +43,10 @@
 #include <mutex>
 #include <condition_variable>
 
-//max size (bytes) of one compressed input chunk on the OUTPUT plane
-#define CHUNK_SIZE 4000000
+//default max size (bytes) of one compressed input chunk on the OUTPUT
+//plane; 4 MB proved too small for 4K high-bitrate I-frames. Overridable
+//per-context via nvDecParam.chunk_size.
+#define CHUNK_SIZE_DEFAULT 10000000
 //upper bound for CAPTURE-plane DMA buffers (sizes the fd/surface arrays)
 #define MAX_BUFFERS 32
 
@@ -96,6 +98,7 @@ struct nvmpictx
 	std::thread dec_capture_loop;       //runs dec_capture_loop_fcn()
 
 	int frame_pool_size{12};            //number of NVMPI_frameBuf's to allocate
+	uint32_t chunk_size{CHUNK_SIZE_DEFAULT}; //bytes per compressed-input OUTPUT-plane buffer
 	//producer/consumer pool: capture thread fills, user thread consumes
 	NVMPI_bufPool<NVMPI_frameBuf*>* framePool;
 
@@ -677,6 +680,14 @@ nvmpictx* nvmpi_create_decoder(nvDecParam* param)
 	
 	ctx->frame_pool_size = param->frame_pool_size;
 
+	//0 keeps the default; out-of-range values (including garbage from
+	//callers built against an older nvDecParam layout) fall back too.
+	if(param->chunk_size >= 65536 && param->chunk_size <= 64u*1024*1024)
+		ctx->chunk_size = param->chunk_size;
+	else if(param->chunk_size != 0)
+		std::cerr << "[libnvmpi][W]: chunk_size " << param->chunk_size
+		          << " out of range [65536, 67108864]; using default " << ctx->chunk_size << std::endl;
+
 	//map the API codec enum to the V4L2 compressed pixel format fourcc
 	switch(param->codingType)
 	{
@@ -703,8 +714,8 @@ nvmpictx* nvmpi_create_decoder(nvDecParam* param)
 			break;
 	}
 
-	//OUTPUT plane: compressed input, buffers sized CHUNK_SIZE
-	ret=ctx->dec->setOutputPlaneFormat(ctx->decoder_pixfmt, CHUNK_SIZE);
+	//OUTPUT plane: compressed input, buffers sized ctx->chunk_size
+	ret=ctx->dec->setOutputPlaneFormat(ctx->decoder_pixfmt, ctx->chunk_size);
 
 	TEST_ERROR(ret < 0, "Could not set output plane format", ret);
 
@@ -751,6 +762,16 @@ int nvmpi_decoder_put_packet(nvmpictx* ctx,nvPacket* packet)
 	struct v4l2_buffer v4l2_buf;
 	struct v4l2_plane planes[MAX_PLANES];
 	NvBuffer *nvBuffer;
+
+	//reject packets larger than the V4L2 input buffers before dequeuing
+	//anything — copying would overflow the plane buffer
+	if (packet->payload_size > ctx->chunk_size)
+	{
+		std::cerr << "[libnvmpi][E]: input packet (" << packet->payload_size
+		          << " bytes) exceeds chunk_size (" << ctx->chunk_size
+		          << "); dropping. Increase the chunk_size option." << std::endl;
+		return -1;
+	}
 
 	memset(&v4l2_buf, 0, sizeof(v4l2_buf));
 	memset(planes, 0, sizeof(planes));

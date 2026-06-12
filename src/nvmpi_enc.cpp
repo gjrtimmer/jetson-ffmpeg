@@ -138,6 +138,14 @@ static bool encoder_capture_plane_dq_callback(struct v4l2_buffer *v4l2_buf, NvBu
 		//TODO pass warning to avlog
 		fprintf(stderr, "[libnvmpi][W]: EAGAIN. User must read output. nvmpi encoder packet memory pool is empty! Packet will be dropped. There may be artifacts in the output video.\n");
 	}
+	else if (buffer->planes[0].bytesused > NVMPI_ENC_CHUNK_SIZE)
+	{
+		//pool packet buffers are NVMPI_ENC_CHUNK_SIZE bytes; copying a
+		//larger encoded frame would overflow them
+		fprintf(stderr, "[libnvmpi][E]: encoded frame (%u bytes) exceeds packet buffer (%u); frame dropped. There will be artifacts in the output video.\n",
+			buffer->planes[0].bytesused, (unsigned)(NVMPI_ENC_CHUNK_SIZE));
+		ctx->pktPool->qEmptyBuf(pkt);
+	}
 	else
 	{
 		pkt->pts = (v4l2_buf->timestamp.tv_usec % 1000000) + (v4l2_buf->timestamp.tv_sec * 1000000UL);
@@ -145,7 +153,7 @@ static bool encoder_capture_plane_dq_callback(struct v4l2_buffer *v4l2_buf, NvBu
 		pkt->flags = enc_metadata.KeyFrame;
 		pkt->payload_size = buffer->planes[0].bytesused;
 		memcpy(pkt->payload, buffer->planes[0].data, pkt->payload_size);
-		
+
 		ctx->pktPool->qFilledBuf(pkt);
 	}
 	
