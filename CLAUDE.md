@@ -98,6 +98,12 @@ All commits MUST follow [Conventional Commits](https://www.conventionalcommits.o
 
 Examples: `feat(scripts): add build.sh for libnvmpi`, `fix(nvmpi): guard against null frame buffer`, `docs: document dev-container aliases`.
 
+## GitHub issue tracker
+
+GitHub issues for this project live at **`gjrtimmer/jetson-ffmpeg`**. Use
+`gh issue create -R gjrtimmer/jetson-ffmpeg` (and `gh issue list -R …`, etc.)
+for all issue operations — do not search for the remote or guess the repo slug.
+
 ## Interacting with GitLab and GitHub
 
 Use the official CLIs — **`glab`** for GitLab (`gitlab.timmertech.nl`) and **`gh`**
