@@ -42,14 +42,20 @@
         "jetson": "linux"
     },
     "cSpell.words": [
+        "FFVER",
         "glab",
         "jetpack",
         "jetson",
         "Jetson",
         "jiangwei",
+        "ldconfig",
         "libass",
         "libfreetype",
         "libgnutls",
+        "libnvbufsurface",
+        "libnvbufsurftransform",
+        "libnvjpeg",
+        "libnvv",
         "libsdl",
         "libv",
         "libvorbis",
@@ -60,8 +66,11 @@
         "NONINTERACTIVE",
         "NOPASSWD",
         "nvcr",
+        "tegra",
+        "Tegra",
         "texinfo",
         "Timmer",
+        "userspace",
         "xfixes",
         "yasm"
     ]
