@@ -97,16 +97,3 @@ waiting for the frame belonging to the packet just submitted.
   seven FFmpeg versions exercise it.
 - Specifically test stream-end: decode a short file and confirm the process
   exits (no hang) when EOS arrives while `wait=true`.
-
----
-
-## Hardware-accelerated JPEG/MJPEG (`mjpeg_nvmpi`)
-
-**Status (2026-06-12):** Full analysis moved to `docs/FORKS_RESULT.md` section 5.
-Fork sweep confirmed: no fork in entire 237-fork network has working JPEG.
-bradcagle has incomplete C API prototype only.
-
-**Next step:** File tracking issue on `gjrtimmer/jetson-ffmpeg` modeled on
-issue #1. Pending user decision on scope (decoder-only v1 recommended).
-
-**Design + implementation plan:** See `docs/FORKS_RESULT.md` section 5.
