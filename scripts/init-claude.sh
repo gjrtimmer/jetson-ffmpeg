@@ -159,8 +159,10 @@ fi
 step "Fullstack Dev Skills — 66 specialized skills"
 progress "Adding marketplace jeffallan/claude-skills..."
 claude plugin marketplace add jeffallan/claude-skills || true
-progress "claude plugin install fullstack-dev-skills@jeffallan"
-if claude plugin install fullstack-dev-skills@jeffallan; then
+progress "Updating marketplace fullstack-dev-skills..."
+claude plugin marketplace update fullstack-dev-skills || true
+progress "claude plugin install fullstack-dev-skills@fullstack-dev-skills"
+if claude plugin install fullstack-dev-skills@fullstack-dev-skills; then
     ok "Fullstack Dev Skills installed"
 else
     err "Fullstack Dev Skills install failed (non-fatal)"
