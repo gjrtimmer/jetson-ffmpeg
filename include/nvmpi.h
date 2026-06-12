@@ -136,7 +136,9 @@ extern "C" {
 	//Feed one compressed packet (Annex-B for H.264/HEVC). May block waiting
 	//for a free V4L2 OUTPUT-plane buffer once all buffers are in flight.
 	//A packet with payload_size==0 signals end-of-stream (starts flushing).
-	//Returns 0 on success, negative on queue/dequeue failure.
+	//Returns 0 on success, -1 on dequeue failure, -2 on queue failure,
+	//-3 when the packet exceeds chunk_size (invalid input — the packet is
+	//dropped; smaller packets continue to be accepted).
 	int nvmpi_decoder_put_packet(nvmpictx* ctx, nvPacket* packet);
 
 	//Retrieve one decoded frame by copying it into the caller-provided

@@ -249,11 +249,16 @@ static int nvmpi_decode(AVCodecContext *avctx, void *data, int *got_frame, AVPac
 		res=nvmpi_decoder_put_packet(nvmpi_context->ctx,&packet);
 		if(res < 0)
 		{
-			if(res == -1)
-			{
-				decode_ret = AVERROR(EAGAIN); //TODO log
-			}
-			//TODO error handling
+			//A decode callback must never return AVERROR(EAGAIN) for a
+			//consumed packet — libavcodec >= 6.1 asserts on it
+			//(decode.c: "Assertion consumed != AVERROR(EAGAIN)").
+			//-3 = packet exceeds chunk_size: invalid input data, the
+			//decoder stays usable. Anything else is a V4L2 queue/dequeue
+			//failure.
+			av_log(avctx, AV_LOG_ERROR,
+			       "nvmpi_decoder_put_packet failed (code=%d, packet=%d bytes).\n",
+			       res, avpkt->size);
+			return (res == -3) ? AVERROR_INVALIDDATA : AVERROR_EXTERNAL;
 		}
 	}
 

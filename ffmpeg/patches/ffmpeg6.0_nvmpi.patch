@@ -178,10 +178,10 @@ index e593ad1..a667192 100644
  extern const FFCodec ff_vqa_decoder;
 diff --git a/libavcodec/nvmpi_dec.c b/libavcodec/nvmpi_dec.c
 new file mode 100644
-index 0000000..dc1d779
+index 0000000..23d3bb9
 --- /dev/null
 +++ b/libavcodec/nvmpi_dec.c
-@@ -0,0 +1,389 @@
+@@ -0,0 +1,394 @@
 +/*
 + * nvmpi_dec.c — FFmpeg decoder wrapper for libnvmpi (layer 2 of
 + * jetson-ffmpeg, the FFmpeg integration layer).
@@ -433,11 +433,16 @@ index 0000000..dc1d779
 +		res=nvmpi_decoder_put_packet(nvmpi_context->ctx,&packet);
 +		if(res < 0)
 +		{
-+			if(res == -1)
-+			{
-+				decode_ret = AVERROR(EAGAIN); //TODO log
-+			}
-+			//TODO error handling
++			//A decode callback must never return AVERROR(EAGAIN) for a
++			//consumed packet — libavcodec >= 6.1 asserts on it
++			//(decode.c: "Assertion consumed != AVERROR(EAGAIN)").
++			//-3 = packet exceeds chunk_size: invalid input data, the
++			//decoder stays usable. Anything else is a V4L2 queue/dequeue
++			//failure.
++			av_log(avctx, AV_LOG_ERROR,
++			       "nvmpi_decoder_put_packet failed (code=%d, packet=%d bytes).\n",
++			       res, avpkt->size);
++			return (res == -3) ? AVERROR_INVALIDDATA : AVERROR_EXTERNAL;
 +		}
 +	}
 +

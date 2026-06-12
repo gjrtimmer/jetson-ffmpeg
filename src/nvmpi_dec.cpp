@@ -755,7 +755,8 @@ nvmpictx* nvmpi_create_decoder(nvDecParam* param)
 //releases one. The packet payload is memcpy'd, so the caller keeps
 //ownership of it. pts (microseconds) is carried in the V4L2 timestamp.
 //A zero-sized payload is the EOS marker and flips ctx->eos.
-//Returns 0 on success, -1 on dequeue failure, -2 on queue failure.
+//Returns 0 on success, -1 on dequeue failure, -2 on queue failure,
+//-3 when the packet exceeds chunk_size (packet dropped, decoder usable).
 int nvmpi_decoder_put_packet(nvmpictx* ctx,nvPacket* packet)
 {
 	int ret;
@@ -764,13 +765,15 @@ int nvmpi_decoder_put_packet(nvmpictx* ctx,nvPacket* packet)
 	NvBuffer *nvBuffer;
 
 	//reject packets larger than the V4L2 input buffers before dequeuing
-	//anything — copying would overflow the plane buffer
+	//anything — copying would overflow the plane buffer. Distinct return
+	//code: callers must treat this as invalid input data, not as a
+	//transient/hardware failure (the FFmpeg wrapper maps it accordingly).
 	if (packet->payload_size > ctx->chunk_size)
 	{
 		std::cerr << "[libnvmpi][E]: input packet (" << packet->payload_size
 		          << " bytes) exceeds chunk_size (" << ctx->chunk_size
 		          << "); dropping. Increase the chunk_size option." << std::endl;
-		return -1;
+		return -3;
 	}
 
 	memset(&v4l2_buf, 0, sizeof(v4l2_buf));
