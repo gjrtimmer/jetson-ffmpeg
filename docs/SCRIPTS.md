@@ -17,10 +17,11 @@ need to `cd` anywhere first.
 | `ffpatch` | `scripts/ffpatch.sh` | Patch a vanilla FFmpeg source tree |
 | `update-patch` | `ffmpeg/dev/update_patch.sh` | Regenerate the committed FFmpeg patches |
 | `try-build` | `ffmpeg/dev/try_build.sh` | Build-validate every supported FFmpeg version |
-| `hw-test` / `test` | `test/hw-test.sh` | Hardware encode/decode smoke test (one ffmpeg) |
+| `hw-all` | `test/hw-all.sh` | Run **all** hardware test suites (one ffmpeg) |
+| _(suite)_ | `test/hw-*.sh` | Per-feature hardware suites — see [test/README.md](../test/README.md) |
 | _(dev only)_ | `ffmpeg/dev/copy_files.sh` | Copy overlays into cloned FFmpeg trees |
-| _(test)_ | `test/clone-ffmpeg.sh` | Clone the supported FFmpeg release branches |
-| _(test)_ | `test/smoke-all.sh` | Full build + hw-test across **all** versions |
+| _(util)_ | `scripts/clone-ffmpeg.sh` | Clone the supported FFmpeg release branches |
+| _(test)_ | `test/smoke-all.sh` | Full build + hw-all across **all** versions |
 | _(release)_ | `scripts/package.sh` | Stage a build prefix into a versioned archive + `install.sh` |
 | _(release/CI)_ | `scripts/release.sh` | Changelog + GitLab Release + GitHub mirror (see [RELEASE.md](RELEASE.md)) |
 
@@ -153,27 +154,27 @@ ffmpeg/dev/copy_files.sh
 
 ---
 
-## `test/hw-test.sh` — hardware smoke test
+## `test/hw-all.sh` — run all hardware test suites
 
-Verifies that the nvmpi encoders/decoders are present and that a real hardware
-transcode (h264_nvmpi decode → hevc_nvmpi / h264_nvmpi encode) succeeds.
-Requires a real Jetson — there is no software fallback for nvmpi codecs.
+Auto-discovers and runs every per-feature suite (`test/hw-*.sh`), `hw-smoke`
+first. Requires a real Jetson — there is no software fallback for nvmpi
+codecs. Each suite gets a collapsible log section on GitLab CI, and the final
+`suite matrix:` line names every suite PASS/FAIL.
 
-It also runs three RTP-over-loopback decode cases (publisher + receiver ffmpeg
-processes wired through an SDP file — same demuxer code path as RTSP, no
-server needed):
+Current suites (full descriptions, conventions, and how to add one:
+[test/README.md](../test/README.md)):
 
-| Case | Parameter sets | Purpose |
-|------|----------------|---------|
-| `inband_h264` | in-band at every IDR | control — proves the RTP harness itself works |
-| `oob_h264` | SDP `sprop-parameter-sets` only | regression test for upstream Keylost/jetson-ffmpeg#14: streams with out-of-band-only SPS/PPS decoded zero frames before the decoder wrapper primed the hardware with Annex-B extradata |
-| `oob_hevc` | SDP only (VPS/SPS/PPS) | same fix path for hevc_nvmpi; also exercises concurrent HW encode |
-
-Each case must decode 25 frames within a 60 s timeout; a decoder that never
-produces frames fails the case.
+| Suite | Checks |
+|-------|--------|
+| `hw-smoke.sh` | codec registration + h264→hevc / h264→h264 HW transcodes |
+| `hw-rtp-sdp.sh` | out-of-band SPS/PPS over RTP/SDP (upstream Keylost#14 regression) |
+| `hw-decoder-chunk.sh` | `chunk_size` option + oversized-packet rejection |
+| `hw-encoder-header.sh` | `+global_header` extradata for h264 and hevc |
+| `hw-encoder-gop.sh` | keyframe flag only at GOP cadence (Keylost#26 guard) |
 
 ```bash
-JETSON_VARIANT=orin-nano test/hw-test.sh   # alias: hw-test (or test)
+JETSON_VARIANT=orin-nano test/hw-all.sh            # alias: hw-all
+HW_SUITES="decoder-chunk encoder-gop" test/hw-all.sh   # subset
 ```
 
 `JETSON_VARIANT` is informational (used in CI to label the runner) and defaults
@@ -181,14 +182,14 @@ to `unknown`.
 
 ---
 
-## `test/clone-ffmpeg.sh` — fetch FFmpeg sources
+## `scripts/clone-ffmpeg.sh` — fetch FFmpeg sources
 
 Shallow-clones the supported FFmpeg release branches into a scratch directory
-(idempotent — existing trees are skipped). Used by `smoke-all.sh`, but can be
-run standalone.
+(idempotent — existing trees are skipped). Used by `smoke-all.sh` and
+`build.sh --ffmpeg`, but can be run standalone.
 
 ```bash
-test/clone-ffmpeg.sh [-d DIR] [-u URL] [VERSION ...]
+scripts/clone-ffmpeg.sh [-d DIR] [-u URL] [VERSION ...]
 ```
 
 Defaults: `DIR=$FFMPEG_SRC_DIR` (else `$HOME/ffmpeg-smoke`),
@@ -200,10 +201,11 @@ when no versions are given.
 ## `test/smoke-all.sh` — full cross-version smoke test
 
 The heaviest test in the repo. For **every** supported FFmpeg version it:
-builds + installs libnvmpi → ensures a clone (`clone-ffmpeg.sh`) → resets it to
-pristine → patches it (`scripts/ffpatch.sh`) → `./configure --enable-nvmpi
---enable-gpl --enable-libx264` → builds → runs the real `hw-test.sh`. Prints a
-pass/fail matrix and exits non-zero on any failure.
+builds + installs libnvmpi → ensures a clone (`scripts/clone-ffmpeg.sh`) →
+resets it to pristine → patches it (`scripts/ffpatch.sh`) → `./configure
+--enable-nvmpi --enable-gpl --enable-libx264` → builds → runs every hardware
+suite via `test/hw-all.sh`. Prints a pass/fail matrix and exits non-zero on
+any failure.
 
 ```bash
 test/smoke-all.sh [-d DIR] [-j N] [-v "4.2 6.0 8.0"] [--no-nvmpi]

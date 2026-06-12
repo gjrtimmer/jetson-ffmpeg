@@ -17,7 +17,7 @@ FFmpeg does not depend on this repo at runtime beyond `libnvmpi.so`; the integra
 - `ffmpeg/dev/` — FFmpeg patch *development* tree: shared codec sources (`common/`), per-version overlays (`4.2/`, `4.4/`, `6.0/`), and the patch-generation scripts (`update_patch.sh`, `copy_files.sh`, `try_build.sh`).
 - `ffmpeg/patches/` — generated `ffmpeg<ver>_nvmpi.patch` files (artifacts; never hand-edit).
 - `scripts/` — operator scripts: `build.sh` (build libnvmpi) and `ffpatch.sh` (runtime FFmpeg patcher). All scripts resolve the repo root from their own location, so they run from any working directory.
-- `test/` — `hw-test.sh` (single-build hardware encode/decode smoke test), `clone-ffmpeg.sh` (fetch the supported FFmpeg releases), and `smoke-all.sh` (full cross-version build + hw-test).
+- `test/` — per-feature hardware suites (`hw-*.sh`) run by `hw-all.sh` (auto-discovery; see `test/README.md`), `gen-samples.sh` (shared sample generators), and `smoke-all.sh` (full cross-version build + hw-all). FFmpeg sources are fetched by `scripts/clone-ffmpeg.sh`.
 - `docs/SCRIPTS.md` — reference for every script, command, and dev-container alias.
 
 Supported FFmpeg versions: 4.2, 4.4, 6.0, 6.1, 7.0, 7.1, 8.0 (libavcodec 58→62).
@@ -25,7 +25,8 @@ Supported FFmpeg versions: 4.2, 4.4, 6.0, 6.1, 7.0, 7.1, 8.0 (libavcodec 58→62
 ## Build & test commands
 
 In the dev container these are also exposed as aliases (`build`, `ffpatch`,
-`update-patch`, `try-build`, `hw-test`/`test`) — see `docs/SCRIPTS.md`.
+`update-patch`, `try-build`, `hw-all`) — see `docs/SCRIPTS.md`. There is
+deliberately no `test` alias (it would shadow the shell builtin).
 
 ```bash
 # Build libnvmpi (auto-detects real Jetson libs vs stubs/; --install to install)
@@ -46,15 +47,16 @@ cd /path/to/ffmpeg && ./configure --enable-nvmpi && make
 # Build-validate every supported FFmpeg version
 ./ffmpeg/dev/try_build.sh
 
-# Hardware smoke test against an installed ffmpeg (requires real Jetson; no software fallback)
-JETSON_VARIANT=orin-nano ./test/hw-test.sh
+# All hardware test suites against an installed ffmpeg (requires real Jetson; no software fallback)
+JETSON_VARIANT=orin-nano ./test/hw-all.sh
+HW_SUITES="decoder-chunk encoder-gop" ./test/hw-all.sh   # subset of suites
 
 # Full cross-version smoke test: build libnvmpi, then patch+build+hw-test EVERY version
 ./test/smoke-all.sh                          # all 7 versions
 ./test/smoke-all.sh -v "4.2 6.0 8.0"         # subset
 ```
 
-There is no unit-test suite. Verification is layered: the per-version hardware transcode smoke test (`test/hw-test.sh`), the full cross-version harness (`test/smoke-all.sh`), and CI. CI compiles libnvmpi + patches/builds all seven FFmpeg versions against `stubs/` on non-Jetson runners, and hw-tests each version on self-hosted Jetson runners. **GitLab** (`.gitlab-ci.yml`) is the active pipeline; **GitHub Actions** (`.github/workflows/ci.yml`) is manual-only (`workflow_dispatch`) because it needs self-hosted Jetson runners + arm64 containers.
+There is no unit-test suite. Verification is layered: per-feature hardware suites (`test/hw-*.sh`, run by `test/hw-all.sh`; documented in `test/README.md`), the full cross-version harness (`test/smoke-all.sh`), and CI. New features/fixes ship together with the suite that guards them. CI compiles libnvmpi + patches/builds all seven FFmpeg versions against `stubs/` on non-Jetson runners, and hw-tests each version on self-hosted Jetson runners. **GitLab** (`.gitlab-ci.yml`) is the active pipeline; **GitHub Actions** (`.github/workflows/ci.yml`) is manual-only (`workflow_dispatch`) because it needs self-hosted Jetson runners + arm64 containers.
 
 ## Critical workflow rule: never hand-edit `ffmpeg/patches/`
 

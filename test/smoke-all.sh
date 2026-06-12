@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # Full smoke test across every supported FFmpeg version.
 #
-# For each version it: ensures a clone (test/clone-ffmpeg.sh) -> resets it to
+# For each version it: ensures a clone (scripts/clone-ffmpeg.sh) -> resets it to
 # pristine -> patches it (scripts/ffpatch.sh) -> configures with nvmpi -> builds
-# -> runs the real hardware smoke test (test/hw-test.sh). A pass/fail matrix is
+# -> runs every hardware suite via test/hw-all.sh. A pass/fail matrix is
 # printed at the end; the script exits non-zero if any version fails.
 #
 # This is the heaviest test in the repo: it builds libnvmpi and a full FFmpeg
-# for each version, and the hw-test stages REQUIRE a real Jetson (the nvmpi
+# for each version, and the hw stages REQUIRE a real Jetson (the nvmpi
 # codecs have no software fallback).
 #
 # Prerequisites:
-#   - A real Jetson with the Multimedia API (for the hw-test stages).
+#   - A real Jetson with the Multimedia API (for the hw stages).
 #   - Build deps for FFmpeg incl. libx264 (the dev container installs these;
-#     in CI they are apt-installed). libx264 is needed because hw-test.sh
+#     in CI they are apt-installed). libx264 is needed because the hw suites
 #     generates its H.264 input with libx264.
 #
 # Usage:
@@ -60,7 +60,7 @@ export LD_LIBRARY_PATH="/usr/local/lib:/usr/lib/aarch64-linux-gnu/tegra:${LD_LIB
 
 # Ensure all required FFmpeg trees are cloned.
 # shellcheck disable=SC2086
-"${SCRIPT_DIR}/clone-ffmpeg.sh" -d "$DEST" $VERSIONS
+"${REPO_ROOT}/scripts/clone-ffmpeg.sh" -d "$DEST" $VERSIONS
 
 SUMMARY=""
 fail=0
@@ -86,12 +86,12 @@ for v in $VERSIONS; do
     fi
 
     if [ "$build_r" = OK ]; then
-        if PATH="$d:$PATH" JETSON_VARIANT="smoke-$v" bash "${SCRIPT_DIR}/hw-test.sh"; then
+        if PATH="$d:$PATH" JETSON_VARIANT="smoke-$v" bash "${SCRIPT_DIR}/hw-all.sh"; then
             hw_r=PASS
         else hw_r=FAIL; fi
     fi
 
-    line="ffmpeg $v : patch=$patch_r configure=$conf_r build=$build_r hw-test=$hw_r"
+    line="ffmpeg $v : patch=$patch_r configure=$conf_r build=$build_r hw-all=$hw_r"
     SUMMARY="${SUMMARY}${line}"$'\n'
     case "$line" in *FAIL*) fail=1 ;; esac
 done
