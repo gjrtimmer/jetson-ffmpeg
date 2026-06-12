@@ -131,6 +131,15 @@ and wait for them to confirm before continuing.
 validates against the live GitLab instance (resolves YAML anchors, `extends`,
 `rules`, etc.), which a plain YAML parse cannot.
 
+## Upstream notification rule
+
+When a change in this repo fixes something that is tracked by an **open**
+issue on any upstream or fork repository (Keylost/jetson-ffmpeg,
+jocover/jetson-ffmpeg, or any fork), post a short comment on that upstream
+issue noting that a fix exists in this fork, with links to the commit and the
+local issue. Keep it factual and brief — symptom, where the fix lives, how it
+is regression-tested. Do not comment on closed upstream issues.
+
 ## Attribution policy
 
 Do not include AI attribution in any output. This includes:
