@@ -56,7 +56,13 @@ HW_SUITES="decoder-chunk encoder-gop" ./test/hw-all.sh   # subset of suites
 ./test/smoke-all.sh -v "4.2 6.0 8.0"         # subset
 ```
 
-There is no unit-test suite. Verification is layered: per-feature hardware suites (`test/hw-*.sh`, run by `test/hw-all.sh`; documented in `test/README.md`), the full cross-version harness (`test/smoke-all.sh`), and CI. New features/fixes ship together with the suite that guards them. CI compiles libnvmpi + patches/builds all seven FFmpeg versions against `stubs/` on non-Jetson runners, and hw-tests each version on self-hosted Jetson runners. **GitLab** (`.gitlab-ci.yml`) is the active pipeline; **GitHub Actions** (`.github/workflows/ci.yml`) is manual-only (`workflow_dispatch`) because it needs self-hosted Jetson runners + arm64 containers.
+There is no unit-test suite. Verification is layered: per-feature hardware suites (`test/hw-*.sh`, run by `test/hw-all.sh`; documented in `test/README.md`), the full cross-version harness (`test/smoke-all.sh`), and CI. New features/fixes ship together with the suite that guards them.
+
+**Never push code changes without a passing `./test/smoke-all.sh` run** (7/7
+matrix green). Docs-only changes are exempt and may push with `-o ci.skip`.
+
+**Never `rm -rf build`** — use `./scripts/build.sh --clean`; the build
+directory may be shared with a concurrent build. CI compiles libnvmpi + patches/builds all seven FFmpeg versions against `stubs/` on non-Jetson runners, and hw-tests each version on self-hosted Jetson runners. **GitLab** (`.gitlab-ci.yml`) is the active pipeline; **GitHub Actions** (`.github/workflows/ci.yml`) is manual-only (`workflow_dispatch`) because it needs self-hosted Jetson runners + arm64 containers.
 
 ## Critical workflow rule: never hand-edit `ffmpeg/patches/`
 
@@ -143,6 +149,13 @@ and wait for them to confirm before continuing.
 **Lint `.gitlab-ci.yml` with `glab ci lint`** after every edit to it — this
 validates against the live GitLab instance (resolves YAML anchors, `extends`,
 `rules`, etc.), which a plain YAML parse cannot.
+
+## Working agreements
+
+- A "go" approves the plan **as presented**. If execution reveals the plan is
+  moot or materially different (e.g. an issue turns out already fixed and
+  different work remains), stop and re-confirm the revised scope before
+  writing new code. Read-only verification/triage may proceed.
 
 ## Upstream notification rule
 
