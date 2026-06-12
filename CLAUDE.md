@@ -100,6 +100,13 @@ All commits MUST follow [Conventional Commits](https://www.conventionalcommits.o
 
 Examples: `feat(scripts): add build.sh for libnvmpi`, `fix(nvmpi): guard against null frame buffer`, `docs: document dev-container aliases`.
 
+**Never amend or rewrite an existing commit just to add metadata** (issue
+closing references, notes). Add an empty commit instead:
+`git commit --allow-empty -m "<type>: <subject>" -m "Fixes #N"`. Amending
+rewrites history and forces rebases of stacked branches for a change with no
+content; an empty commit carries the same closing keywords to the default
+branch.
+
 ## GitHub issue tracker
 
 GitHub issues for this project live at **`gjrtimmer/jetson-ffmpeg`**. Use
