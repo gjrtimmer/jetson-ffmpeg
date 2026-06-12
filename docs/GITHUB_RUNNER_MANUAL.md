@@ -22,7 +22,7 @@ sudo systemctl restart docker
 Verify GPU access in Docker:
 
 ```bash
-sudo docker run --rm --runtime=nvidia nvcr.io/nvidia/l4t-jetpack:r36.4.0 \
+sudo docker run --rm --runtime=nvidia harbor.local/jetson/l4t-jetpack:r36.4.0 \
   bash -c "ls /usr/lib/aarch64-linux-gnu/tegra/ && echo OK"
 ```
 

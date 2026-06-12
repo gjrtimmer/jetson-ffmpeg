@@ -207,7 +207,7 @@ The NVIDIA container runtime is not installed or not configured. Follow the [Jet
 
 ### Container build fails pulling L4T image
 
-Ensure the Jetson has internet access and the L4T version matches your JetPack installation. Check available tags at `nvcr.io/nvidia/l4t-jetpack`.
+Ensure the Jetson can reach the registry and the L4T version matches your JetPack installation. Check available tags at `harbor.local/jetson/l4t-jetpack`.
 
 ### Permission denied on workspace files
 

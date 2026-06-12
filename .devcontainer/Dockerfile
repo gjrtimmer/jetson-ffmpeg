@@ -3,11 +3,11 @@
 # Runs ON Jetson hardware via VS Code Remote SSH + Dev Containers
 #
 # Base images by JetPack version:
-#   JetPack 5.x (L4T R35): nvcr.io/nvidia/l4t-jetpack:r35.4.1
-#   JetPack 6.0 (L4T R36): nvcr.io/nvidia/l4t-jetpack:r36.3.0
-#   JetPack 6.1 (L4T R36): nvcr.io/nvidia/l4t-jetpack:r36.4.0
+#   JetPack 5.x (L4T R35): harbor.local/jetson/l4t-jetpack:r35.4.1
+#   JetPack 6.0 (L4T R36): harbor.local/jetson/l4t-jetpack:r36.3.0
+#   JetPack 6.1 (L4T R36): harbor.local/jetson/l4t-jetpack:r36.4.0
 ARG L4T_VERSION=r36.4.0
-FROM nvcr.io/nvidia/l4t-jetpack:${L4T_VERSION}
+FROM harbor.local/jetson/l4t-jetpack:${L4T_VERSION}
 
 ARG DEBIAN_FRONTEND=noninteractive
 

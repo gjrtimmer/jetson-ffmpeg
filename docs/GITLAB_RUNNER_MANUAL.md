@@ -37,7 +37,7 @@ sudo systemctl restart docker
 Verify GPU access in Docker:
 
 ```bash
-sudo docker run --rm --runtime=nvidia nvcr.io/nvidia/l4t-jetpack:r36.4.0 \
+sudo docker run --rm --runtime=nvidia harbor.local/jetson/l4t-jetpack:r36.4.0 \
   bash -c "ls /usr/lib/aarch64-linux-gnu/tegra/ && echo OK"
 ```
 
@@ -53,7 +53,7 @@ sudo gitlab-runner register \
   --url "https://gitlab.timmertech.nl/" \
   --token "<glrt-YOUR_PROJECT_RUNNER_TOKEN>" \
   --executor "docker" \
-  --docker-image "nvcr.io/nvidia/l4t-jetpack:r36.4.0" \
+  --docker-image "harbor.local/jetson/l4t-jetpack:r36.4.0" \
   --docker-runtime "nvidia" \
   --description "jetson-<variant>" \
   --docker-volumes "/tmp:/tmp"
@@ -96,7 +96,7 @@ Edit `/etc/gitlab-runner/config.toml` to fine-tune settings.
   url = "https://gitlab.timmertech.nl/"
   executor = "docker"
   [runners.docker]
-    image = "nvcr.io/nvidia/l4t-jetpack:r36.4.0"
+    image = "harbor.local/jetson/l4t-jetpack:r36.4.0"
     runtime = "nvidia"
     privileged = false
     volumes = ["/tmp:/tmp", "/cache"]

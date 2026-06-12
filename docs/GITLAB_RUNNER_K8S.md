@@ -129,7 +129,7 @@ runners:
     [[runners]]
       [runners.kubernetes]
         namespace = "gitlab-runner"
-        image = "nvcr.io/nvidia/l4t-jetpack:r36.4.0"
+        image = "harbor.local/jetson/l4t-jetpack:r36.4.0"
         runtime_class_name = "nvidia"
         [runners.kubernetes.node_selector]
           kubernetes.io/hostname = "<jetson-node-hostname>"
@@ -172,7 +172,7 @@ Quick pod test:
 ```bash
 kubectl run gpu-test --rm -it --restart=Never \
   --overrides='{"spec":{"runtimeClassName":"nvidia","nodeSelector":{"kubernetes.io/hostname":"<jetson-node>"}}}' \
-  --image=nvcr.io/nvidia/l4t-jetpack:r36.4.0 \
+  --image=harbor.local/jetson/l4t-jetpack:r36.4.0 \
   -- bash -c "ls /usr/lib/aarch64-linux-gnu/tegra/ && echo OK"
 ```
 

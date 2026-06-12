@@ -65,14 +65,14 @@ Submit a pull request with this change. Once merged, the HW test job runs on you
 
 ## L4T Version
 
-The build/patch jobs run in the `nvcr.io/nvidia/l4t-jetpack:r36.4.0` container. The
+The build/patch jobs run in the `harbor.local/jetson/l4t-jetpack:r36.4.0` container. The
 tag is hardcoded on the `container.image:` lines in `.github/workflows/ci.yml`
 (GitHub Actions does not allow the `env` context in `jobs.<id>.container.image`).
 If your Jetson runs a different JetPack/L4T version, edit those two lines:
 
 ```yaml
     container:
-      image: nvcr.io/nvidia/l4t-jetpack:r36.3.0
+      image: harbor.local/jetson/l4t-jetpack:r36.3.0
 ```
 
 Check your installed version:
