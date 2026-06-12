@@ -1,59 +1,35 @@
 # jetson-ffmpeg
-L4T Multimedia API for ffmpeg.  
-This library provides the ability to use hardware acceleration for video encoding and decoding on Nvidia Jetson platforms with the FFmpeg multimedia framework.
 
-### Jetson/JetPack support table
-  - :white_check_mark: - Fully supported.
-  - :large_blue_circle: - Not tested.
-  - :x: - Not supported.
-  - :large_orange_diamond: - There is no JetPack version available for this platform.
-    
-| 			    | TK1 | TX1 | TX2 | TX2i | Nano | AGX Xavier | Xavier NX | AGX Orin | Orin NX | Orin Nano |
-| ------------- | --- | --- | --- | ---- | ----	| ---------	 | --------- | -------- | ------- | --------- |
-| JetPack 1.0.x | :large_blue_circle: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: |
-| JetPack 1.1.x | :large_blue_circle: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: |
-| JetPack 1.2.x | :large_blue_circle: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: |
-| JetPack 2.0.x | :large_blue_circle: | :large_blue_circle: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: |
-| JetPack 2.1.x | :large_blue_circle: | :large_blue_circle: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: |
-| JetPack 2.2.x | :large_blue_circle: | :large_blue_circle: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: |
-| JetPack 2.3.x | :large_blue_circle: | :large_blue_circle: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: |
-| JetPack 3.0.x | :large_blue_circle: | :large_blue_circle: | :large_blue_circle: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: |
-| JetPack 3.1.x | :large_blue_circle: | :large_blue_circle: | :large_blue_circle: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: |
-| JetPack 3.2.x | :large_orange_diamond: | :large_blue_circle: | :large_blue_circle: | :large_blue_circle: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: |
-| JetPack 3.3.x | :large_orange_diamond: | :large_blue_circle: | :large_blue_circle: | :large_blue_circle: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: |
-| JetPack 4.1.x | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_blue_circle: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: |
-| JetPack 4.2.x | :large_orange_diamond: | :large_blue_circle: | :large_blue_circle: | :large_blue_circle: | :large_blue_circle: | :large_blue_circle: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: |
-| JetPack 4.3.x | :large_orange_diamond: | :large_blue_circle: | :large_blue_circle: | :large_blue_circle: | :large_blue_circle: | :large_blue_circle: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: |
-| JetPack 4.4.x | :large_orange_diamond: | :large_blue_circle: | :large_blue_circle: | :large_blue_circle: | :large_blue_circle: | :large_blue_circle: | :large_blue_circle: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: |
-| JetPack 4.5.x | :large_orange_diamond: | :large_blue_circle: | :large_blue_circle: | :large_blue_circle: | :white_check_mark: | :white_check_mark: | :white_check_mark: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: |
-| JetPack 4.6.x | :large_orange_diamond: | :large_blue_circle: | :large_blue_circle: | :large_blue_circle: | :white_check_mark: | :white_check_mark: | :white_check_mark: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: |
-| JetPack 5.0.x | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :white_check_mark: | :white_check_mark: | :white_check_mark: | :large_orange_diamond: | :large_orange_diamond: |
-| JetPack 5.1.x | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: |
-| JetPack 6.0.x | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :white_check_mark: | :white_check_mark: | :white_check_mark: |
-| JetPack 6.1.x | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :white_check_mark: | :white_check_mark: | :white_check_mark: |
-| JetPack 6.2.x | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :large_orange_diamond: | :white_check_mark: | :white_check_mark: | :white_check_mark: |
+Hardware-accelerated video encoding and decoding for NVIDIA Jetson, fully
+integrated into FFmpeg.
 
-### FFmpeg support list
+Every NVIDIA Jetson module ships dedicated silicon for video encoding and
+decoding, but a stock FFmpeg build cannot use it. **jetson-ffmpeg** bridges
+that gap with two components:
 
-  - The library is currently compatible with all FFmpeg versions from 4.2 to 8.0+.
-  - It may also work with versions older than 4.2, but it has not been tested.
+- **libnvmpi** — a lightweight shared library that wraps NVIDIA's Jetson
+  Multimedia API (V4L2/NvBuffer) behind a simple C interface.
+- **FFmpeg patches** — register native `*_nvmpi` decoders and encoders in
+  FFmpeg that drive the hardware through libnvmpi.
 
-### Supports Decoding
-  - H.264/AVC (ffmpeg codec name: h264_nvmpi)
-  - H.265/HEVC (ffmpeg codec name: hevc_nvmpi)
-  - MPEG2 (ffmpeg codec name: mpeg2_nvmpi)
-  - MPEG4 (ffmpeg codec name: mpeg4_nvmpi)
-  - VP8 (ffmpeg codec name: vp8_nvmpi)
-  - VP9 (ffmpeg codec name: vp9_nvmpi)
-  
-### Supports Encoding
-  - H.264/AVC (ffmpeg codec name: h264_nvmpi)
-  - H.265/HEVC (ffmpeg codec name: hevc_nvmpi)
-  
-### Other Features
-  - Hardware accelerated video scaling during decoding
+Once installed, any FFmpeg-based application can offload H.264, HEVC, MPEG-2,
+MPEG-4, VP8, and VP9 decoding — and H.264/HEVC encoding — to the Jetson's
+hardware engines, leaving the CPU free for your actual workload:
 
-### Quick Start
+```bash
+ffmpeg -c:v h264_nvmpi -i input.mp4 -c:v hevc_nvmpi -b:v 4M output.mp4
+```
+
+## Compatibility
+
+jetson-ffmpeg runs on Jetson platforms from the original Nano through the
+Orin family (JetPack 4.x – 6.x) and supports FFmpeg **4.2 up to 8.0+**.
+
+See **[docs/COMPATIBILITY.md](docs/COMPATIBILITY.md)** for the supported
+codecs, the full Jetson/JetPack support matrix, and the list of tested
+FFmpeg releases.
+
+## Quick Start
 
 ```bash
 # 1. Build and install libnvmpi
@@ -71,9 +47,12 @@ make
 sudo make install
 ```
 
-For full build instructions, CMake options, cross-compilation, and usage examples see **[docs/BUILD.md](docs/BUILD.md)**.
+For full build instructions, CMake options, cross-compilation, and usage
+examples see **[docs/BUILD.md](docs/BUILD.md)**.
 
-### Documentation
+## Documentation
 
 - **[Build Guide](docs/BUILD.md)** — Complete build, installation, and usage instructions
+- **[Compatibility](docs/COMPATIBILITY.md)** — Supported codecs, Jetson/JetPack support matrix, FFmpeg versions
+- **[Scripts Reference](docs/SCRIPTS.md)** — Every script, command, and dev-container alias
 - **[Development Guide](docs/DEVELOPMENT.md)** — Architecture, patch system, and how to add new FFmpeg versions
