@@ -129,7 +129,7 @@ step "Context Mode — context window optimization"
 progress "Adding marketplace mksglu/context-mode..."
 claude plugin marketplace add mksglu/context-mode || true
 progress "claude plugin install context-mode@context-mode"
-if claude plugin install context-mode@context-mode 2>/dev/null; then
+if claude plugin install context-mode@context-mode; then
     ok "Context Mode installed"
 else
     err "Context Mode install failed (non-fatal)"
@@ -141,9 +141,9 @@ fi
 # ---------------------------------------------------------------------------
 step "Fullstack Dev Skills — 66 specialized skills"
 progress "Adding marketplace jeffallan/claude-skills..."
-claude plugin marketplace add jeffallan/claude-skills 2>/dev/null || true
+claude plugin marketplace add jeffallan/claude-skills || true
 progress "claude plugin install fullstack-dev-skills@jeffallan"
-if claude plugin install fullstack-dev-skills@jeffallan 2>/dev/null; then
+if claude plugin install fullstack-dev-skills@jeffallan; then
     ok "Fullstack Dev Skills installed"
 else
     err "Fullstack Dev Skills install failed (non-fatal)"
