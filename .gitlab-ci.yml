@@ -10,14 +10,15 @@
 #     test    - HW encode/decode smoke test on each Jetson variant
 #
 #   Tag pipelines (v<X.Y.Z>):  -> see docs/RELEASE.md
-#     package - build REAL libnvmpi + ffmpeg per version on Jetson and tar each
-#               (the stub builds above are NOT runnable, so releases rebuild)
+#     package - build REAL libnvmpi + ffmpeg per version in a plain container
+#               (the stub builds above are NOT runnable, so releases rebuild
+#               against the real tegra libs, pulled from NVIDIA's apt repo)
 #     release - changelog (git-cliff) -> GitLab Release with package assets,
 #               and mirror to GitHub (if GITHUB_REPO/GITHUB_TOKEN are set)
 #
 # Runner tag convention:
-#   build/patch have NO tags (any runner); test + package need real hardware
-#   ("jetson" + "<variant>"). release runs in the release-tools image (any runner).
+#   only test needs real hardware ("jetson" + "<variant>"); build/patch/package
+#   have NO tags (any runner). release runs in the release-tools image (any runner).
 #
 # To add a new hardware variant:
 #   1. Register a project runner with tags: jetson, <variant>
@@ -50,22 +51,28 @@ variables:
   rules:
     - if: '$CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+$/'
 
+# Shared apt setup for every job that compiles (build/patch/package). The
+# l4t-jetpack image ships with NVIDIA's jetson apt repo preconfigured, which
+# provides the Multimedia API headers (and the real tegra libs for .package).
+.install-build-deps: &install-build-deps
+  - apt-get update -qq
+  - >-
+    apt-get install -y -qq --no-install-recommends
+    git build-essential cmake pkg-config yasm nasm wget ca-certificates
+    libv4l-dev libx264-dev libx265-dev libnuma-dev libvpx-dev libopus-dev
+    libmp3lame-dev libvorbis-dev libdav1d-dev libass-dev libfreetype6-dev
+    libgnutls28-dev
+  - |
+    if [ ! -d /usr/src/jetson_multimedia_api ]; then
+      apt-get install -y -qq --no-install-recommends nvidia-l4t-jetson-multimedia-api
+    fi
+
 default:
   image:
     name: nvcr.io/nvidia/l4t-jetpack:${L4T_TAG}
     pull_policy: if-not-present
   before_script:
-    - apt-get update -qq
-    - >-
-      apt-get install -y -qq --no-install-recommends
-      git build-essential cmake pkg-config yasm nasm wget ca-certificates
-      libv4l-dev libx264-dev libx265-dev libnuma-dev libvpx-dev libopus-dev
-      libmp3lame-dev libvorbis-dev libdav1d-dev libass-dev libfreetype6-dev
-      libgnutls28-dev
-    - |
-      if [ ! -d /usr/src/jetson_multimedia_api ]; then
-        apt-get install -y -qq --no-install-recommends nvidia-l4t-jetson-multimedia-api
-      fi
+    - *install-build-deps
 
 # ---------------------------------------------------------------------------
 # Stage: build — compile nvmpi with stubs (any runner)
@@ -174,8 +181,8 @@ patch:ffmpeg-8.0:
   stage: test
   <<: *not-on-tag
   tags: [jetson, "${JETSON_VARIANT}"]
-  # Serialize all Jetson work (one job at a time) so per-version builds/tests
-  # don't thrash a single device — see also .package.
+  # Serialize all Jetson work (one job at a time) so per-version tests
+  # don't thrash a single device.
   resource_group: jetson
   parallel:
     matrix:
@@ -222,30 +229,43 @@ test:hw-ffmpeg-8.0:           # path D
   needs: ["patch:ffmpeg-8.0"]
 
 # ---------------------------------------------------------------------------
-# Stage: package — build REAL libnvmpi + ffmpeg on a Jetson and tar each
-# version (tag pipelines only). The build/patch stages above link stubs and are
-# NOT runnable; releases must rebuild against the real Multimedia API.
+# Stage: package — build REAL libnvmpi + ffmpeg per version and tar each one
+# (tag pipelines only). The build/patch stages above link stubs and are NOT
+# runnable; releases must rebuild against the real Multimedia API.
+#
+# This is a plain container build on any (arm64) runner — NO Jetson hardware
+# is needed: nothing encodes/decodes here, and the `ffmpeg -encoders` check
+# below only lists registered codecs. The real tegra userspace libraries
+# (libnvv4l2, libnvjpeg, libnvbufsurface, libnvbufsurftransform) are installed
+# from NVIDIA's jetson apt repo; the touch file skips nvidia-l4t-core's
+# "must run on an NVIDIA Tegra platform" preinstall check inside containers.
+# --no-stubs makes build.sh hard-fail if those libs are missing, so a release
+# can never silently ship stub-linked (non-runnable) tarballs.
 # Produces dist/jetson-ffmpeg_<ver>_ffmpeg<ff>_l4t<tag>_aarch64.tar.gz.
 # ---------------------------------------------------------------------------
-# NOTE: package jobs use `extends:` (not the YAML `<<` merge) so that each job's
-# `variables: {FFVER}` DEEP-merges with the NVIDIA_* vars below (a `<<` merge
-# would replace the whole variables map and drop them). The NVIDIA_* vars expose
-# the tegra libraries so build.sh links REAL libnvmpi (not stubs).
 .package:
   stage: package
   <<: *only-tag
-  tags: [jetson]
-  # One build at a time on the Jetson (each build already uses -j$(nproc)).
-  # Shared group with .hw-test so nothing else hammers the device concurrently.
-  resource_group: jetson
-  variables:
-    NVIDIA_VISIBLE_DEVICES: "all"
-    NVIDIA_DRIVER_CAPABILITIES: "all"
+  before_script:
+    - *install-build-deps
+    - mkdir -p /opt/nvidia/l4t-packages && touch /opt/nvidia/l4t-packages/.nv-l4t-disable-boot-fw-update-in-preinstall
+    - |
+      # The SoC-specific BSP debs (libnvv4l2 & co) live in the t234 (Orin)
+      # repo; the image preconfigures only "common". Same OTA signing key.
+      if ! grep -rqs 'repo.download.nvidia.com/jetson/t234' /etc/apt/sources.list /etc/apt/sources.list.d/; then
+        wget -qO /etc/apt/trusted.gpg.d/jetson-ota-public.asc https://repo.download.nvidia.com/jetson/jetson-ota-public.asc
+        echo "deb https://repo.download.nvidia.com/jetson/t234 ${L4T_TAG%.*} main" > /etc/apt/sources.list.d/nvidia-l4t-t234.list
+        apt-get update -qq
+      fi
+    - >-
+      apt-get install -y -qq --no-install-recommends
+      nvidia-l4t-multimedia nvidia-l4t-multimedia-utils
+    - ldconfig
   script:
     - export VERSION="${CI_COMMIT_TAG#v}"
     - PFX="${CI_PROJECT_DIR}/_pkg"
     - >-
-      bash ./scripts/build.sh --ffmpeg "${FFVER}" --install
+      bash ./scripts/build.sh --no-stubs --ffmpeg "${FFVER}" --install
       --prefix "${PFX}" --ffmpeg-prefix "${PFX}" -j"$(nproc)"
       --ffmpeg-args "--enable-shared --disable-static --enable-libx265 --enable-libvpx
       --enable-libopus --enable-libmp3lame --enable-libvorbis --enable-libdav1d
