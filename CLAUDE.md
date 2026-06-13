@@ -61,6 +61,12 @@ There is no unit-test suite. Verification is layered: per-feature hardware suite
 **Never push code changes without a passing `./test/smoke-all.sh` run** (7/7
 matrix green). Docs-only changes are exempt and may push with `-o ci.skip`.
 
+**Always create MRs with auto-merge** (`glab mr create` then
+`glab mr merge <nr> --auto-merge`). Auto-merge waits for the pipeline to pass
+before merging — never force-merge or merge manually while a pipeline is
+running. The GitLab project requires pipelines to succeed before merge
+(`only_allow_merge_if_pipeline_succeeds`).
+
 **Never `rm -rf build`** — use `./scripts/build.sh --clean`; the build
 directory may be shared with a concurrent build. CI compiles libnvmpi + patches/builds all seven FFmpeg versions against `stubs/` on non-Jetson runners, and hw-tests each version on self-hosted Jetson runners. **GitLab** (`.gitlab-ci.yml`) is the active pipeline; **GitHub Actions** (`.github/workflows/ci.yml`) is manual-only (`workflow_dispatch`) because it needs self-hosted Jetson runners + arm64 containers.
 
