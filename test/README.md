@@ -13,12 +13,15 @@ engines (NVDEC/NVENC/VIC) actually engaged.
 | `hw-smoke.sh` | suite | nvmpi codecs registered; h264→hevc and h264→h264 HW transcodes produce the expected codec |
 | `hw-rtp-sdp.sh` | suite | RTP/SDP streams with out-of-band SPS/PPS decode frames (upstream [Keylost#14](https://github.com/Keylost/jetson-ffmpeg/issues/14) regression — extradata priming at decoder init) |
 | `hw-decoder-chunk.sh` | suite | `chunk_size` AVOption works; packets larger than the input buffers are rejected with a clean error, never a crash or silent truncation |
+| `hw-decoder-codecs.sh` | suite | MPEG-2, MPEG-4, VP8, VP9 decode paths (codec-type mapping and V4L2 decode pipeline per codec); VP8/VP9 skip when libvpx absent |
+| `hw-decoder-downscale.sh` | suite | `-resize WxH` hardware downscale (VIC) produces the requested output dimensions |
+| `hw-decoder-pool.sh` | suite | `frame_pool_size` AVOption boundary values (min=1, max=32); no deadlock or crash at extremes |
 | `hw-encoder-header.sh` | suite | `-flags +global_header` yields non-empty extradata for h264_nvmpi **and** hevc_nvmpi (bounded NAL scan incl. the H.265 VPS/SPS/PPS branch) |
 | `hw-encoder-gop.sh` | suite | `AV_PKT_FLAG_KEY` only on IDR packets at the configured GOP cadence (upstream [Keylost#26](https://github.com/Keylost/jetson-ffmpeg/issues/26) all-keyframe bug guard) |
 | `gen-samples.sh` | helpers | Input-sample paths + generators (sourced by suites, never executed) |
 | `smoke-all.sh` | harness | Full cross-version matrix: builds libnvmpi, then patch→configure→build→`hw-all.sh` for **every** supported FFmpeg version |
 
-Planned expansion (lifecycle, pools, formats, flush, JPEG, perf, libnvmpi API
+Planned expansion (lifecycle, formats, flush, JPEG, perf, libnvmpi API
 harness): see [#27](https://github.com/gjrtimmer/jetson-ffmpeg/issues/27).
 
 ## Running

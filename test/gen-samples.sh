@@ -33,3 +33,44 @@ gen-sample-oversized() {
     -c:v libx264 -g 1 -qp 0 \
     "$1"
 }
+
+# shellcheck disable=SC2034  # consumed by hw-decoder-codecs.sh
+SAMPLE_MPEG2_720P="/tmp/nvmpi-sample-mpeg2-720p.mkv"
+# shellcheck disable=SC2034
+SAMPLE_MPEG4_720P="/tmp/nvmpi-sample-mpeg4-720p.mkv"
+# shellcheck disable=SC2034
+SAMPLE_VP8_720P="/tmp/nvmpi-sample-vp8-720p.mkv"
+# shellcheck disable=SC2034
+SAMPLE_VP9_720P="/tmp/nvmpi-sample-vp9-720p.mkv"
+
+# Short software-encoded MPEG-2 sample (B-frames disabled for exact frame count).
+#   gen-sample-mpeg2 FILE [SECONDS]
+gen-sample-mpeg2() {
+  ffmpeg -y -hide_banner -loglevel error \
+    -f lavfi -i testsrc2=s=1280x720:r=30 -t "${2:-3}" \
+    -c:v mpeg2video -g 15 -bf 0 -b:v 5M "$1"
+}
+
+# Short software-encoded MPEG-4 Part 2 sample.
+#   gen-sample-mpeg4 FILE [SECONDS]
+gen-sample-mpeg4() {
+  ffmpeg -y -hide_banner -loglevel error \
+    -f lavfi -i testsrc2=s=1280x720:r=30 -t "${2:-3}" \
+    -c:v mpeg4 -g 15 -bf 0 -b:v 5M "$1"
+}
+
+# Short software-encoded VP8 sample (requires --enable-libvpx).
+#   gen-sample-vp8 FILE [SECONDS]
+gen-sample-vp8() {
+  ffmpeg -y -hide_banner -loglevel error \
+    -f lavfi -i testsrc2=s=1280x720:r=30 -t "${2:-3}" \
+    -c:v libvpx -b:v 3M "$1"
+}
+
+# Short software-encoded VP9 sample (requires --enable-libvpx).
+#   gen-sample-vp9 FILE [SECONDS]
+gen-sample-vp9() {
+  ffmpeg -y -hide_banner -loglevel error \
+    -f lavfi -i testsrc2=s=1280x720:r=30 -t "${2:-3}" \
+    -c:v libvpx-vp9 -b:v 3M "$1"
+}
