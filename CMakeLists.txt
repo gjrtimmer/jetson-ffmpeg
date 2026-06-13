@@ -7,6 +7,7 @@ set(CUDA_INCLUDE_DIR_DEFAULT "/usr/local/cuda/include")
 set(CUDA_LIB_DIR_DEFAULT "/usr/local/cuda/lib64")
 
 option(WITH_STUBS "Build nvmpi library and link stubs instead of original libraries. Default: OFF." OFF)
+option(WITH_VENDORED_NVV4L2 "Use vendored NvV4l2ElementPlane.cpp with pthread_join guard (glibc>=2.34 fix). Default: ON." ON)
 option(JETSON_MULTIMEDIA_API_DIR "Path to Jetson Multimedia API headers and common sources directory. Default: ${JETSON_MULTIMEDIA_API_DIR_DEFAULT}.")
 option(JETSON_MULTIMEDIA_LIB_DIR "Path to Jetson Multimedia libraries directory. Default: ${JETSON_MULTIMEDIA_LIB_DIR_DEFAULT}.")
 option(CUDA_INCLUDE_DIR "Path to CUDA headers directory. Default: ${CUDA_INCLUDE_DIR_DEFAULT}.")
@@ -63,13 +64,21 @@ set(NVMPI_INCLUDE_DIRS
 	${CUDA_INCLUDE_DIR}
 	${JETSON_MULTIMEDIA_API_INCLUDE_DIR})
 
+if(WITH_VENDORED_NVV4L2)
+    set(NVV4L2_ELEMENT_PLANE_SRC "${CMAKE_CURRENT_SOURCE_DIR}/vendor/mmapi/NvV4l2ElementPlane.cpp")
+    message(STATUS "Using vendored NvV4l2ElementPlane.cpp (pthread_join guard for glibc>=2.34)")
+else()
+    set(NVV4L2_ELEMENT_PLANE_SRC "${JETSON_MULTIMEDIA_API_SRC_DIR}/NvV4l2ElementPlane.cpp")
+    message(STATUS "Using system NvV4l2ElementPlane.cpp")
+endif()
+
 set(JETSON_MULTIMEDIA_API_SRC
     ${JETSON_MULTIMEDIA_API_SRC_DIR}/NvBuffer.cpp
     ${JETSON_MULTIMEDIA_API_SRC_DIR}/NvElement.cpp
     ${JETSON_MULTIMEDIA_API_SRC_DIR}/NvElementProfiler.cpp
     ${JETSON_MULTIMEDIA_API_SRC_DIR}/NvLogging.cpp
     ${JETSON_MULTIMEDIA_API_SRC_DIR}/NvV4l2Element.cpp
-    ${JETSON_MULTIMEDIA_API_SRC_DIR}/NvV4l2ElementPlane.cpp
+    ${NVV4L2_ELEMENT_PLANE_SRC}
     ${JETSON_MULTIMEDIA_API_SRC_DIR}/NvVideoDecoder.cpp
     ${JETSON_MULTIMEDIA_API_SRC_DIR}/NvVideoEncoder.cpp)
 

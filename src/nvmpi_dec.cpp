@@ -269,17 +269,21 @@ void nvmpictx::initDecoderCapturePlane(v4l2_format &format)
 //Called on resolution change (before re-init) and from nvmpi_decoder_close.
 void nvmpictx::deinitDecoderCapturePlane()
 {
+	if (numberCaptureBuffers == 0)
+		return;
+
 	int ret = 0;
 	dec->capture_plane.setStreamStatus(false);
 	dec->capture_plane.deinitPlane();
 	for (int index = 0; index < numberCaptureBuffers; index++) //V4L2_MEMORY_DMABUF
 	{
 		if (dmaBufferFileDescriptor[index] != 0)
-		{	
+		{
 			ret = NvBufferDestroy(dmaBufferFileDescriptor[index]);
 			TEST_ERROR(ret < 0, "Failed to Destroy NvBuffer", ret);
 		}
 	}
+	numberCaptureBuffers = 0;
 	return;
 }
 

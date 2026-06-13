@@ -119,6 +119,28 @@ The `stubs/` directory contains minimal aarch64 ELF shared objects that satisfy 
 
 ---
 
+## Vendored NVIDIA Sample Classes
+
+NVIDIA's `NvV4l2ElementPlane.cpp` (from `${JETSON_MULTIMEDIA_API_DIR}/samples/common/classes`) has an unguarded `pthread_join` in `stopDQThread()` and `waitForDQThread()`. On glibc >= 2.34 (Ubuntu 22.04+, JetPack 6), calling `pthread_join` on a zero/uninitialized `pthread_t` segfaults instead of returning `ESRCH`. This crashes every decoder/encoder teardown path.
+
+Since this is NVIDIA's sample code (not patchable in-place), libnvmpi vendors a fixed copy at `vendor/mmapi/NvV4l2ElementPlane.cpp`. The vendored file adds `if (dq_thread)` guards before both `pthread_join` calls — safe on all glibc versions.
+
+**CMake option:** `WITH_VENDORED_NVV4L2` (default: `ON`)
+
+```bash
+# Use vendored copy (default, recommended)
+cmake ..
+
+# Force system copy (only if your MMAPI is already patched)
+cmake -DWITH_VENDORED_NVV4L2=OFF ..
+```
+
+The vendored file is a byte-for-byte copy of the JetPack 6 (R36.4.x) original with only the two `pthread_join` guards added. If NVIDIA fixes this upstream in a future JetPack release, set `-DWITH_VENDORED_NVV4L2=OFF` to use the system version.
+
+**Upstream references:** [Keylost/jetson-ffmpeg#21](https://github.com/Keylost/jetson-ffmpeg/issues/21), [LanderN/jetson-ffmpeg](https://github.com/LanderN/jetson-ffmpeg) (original fix).
+
+---
+
 ## Verifying the Installation
 
 **Check libnvmpi is installed:**
