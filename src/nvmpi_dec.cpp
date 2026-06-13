@@ -101,6 +101,9 @@ struct nvmpictx
 	uint32_t chunk_size{CHUNK_SIZE_DEFAULT}; //bytes per compressed-input OUTPUT-plane buffer
 	//producer/consumer pool: capture thread fills, user thread consumes
 	NVMPI_bufPool<NVMPI_frameBuf*>* framePool;
+	//all frame bufs ever allocated by initFramePool — ensures deinitFramePool
+	//can destroy every buffer even if one is temporarily outside both queues
+	std::vector<NVMPI_frameBuf*> allocatedFrameBufs;
 
 	//output frame size params
 	//(describes the pitch-linear dst_dma buffers; filled by
@@ -278,12 +281,13 @@ void nvmpictx::deinitDecoderCapturePlane()
 	// DQ thread state the decoder never uses (we use std::thread instead);
 	// for DMABUF the only work deinitPlane() does beyond that is reqbufs(0)
 	dec->capture_plane.reqbufs(V4L2_MEMORY_DMABUF, 0);
-	for (int index = 0; index < numberCaptureBuffers; index++) //V4L2_MEMORY_DMABUF
+	for (int index = 0; index < numberCaptureBuffers; index++)
 	{
-		if (dmaBufferFileDescriptor[index] != 0)
+		if (dmaBufferFileDescriptor[index] >= 0)
 		{
 			ret = NvBufferDestroy(dmaBufferFileDescriptor[index]);
 			TEST_ERROR(ret < 0, "Failed to Destroy NvBuffer", ret);
+			dmaBufferFileDescriptor[index] = -1;
 		}
 	}
 	numberCaptureBuffers = 0;
@@ -371,26 +375,21 @@ void nvmpictx::updateBufferTransformParams()
 #endif
 }
 
-//Drain both pool queues and destroy every frame buffer. Buffers currently
-//checked out by a consumer would leak — callers must ensure the capture
-//thread is stopped and the user is no longer holding frames.
+//Destroy all frame buffers tracked by allocatedFrameBufs and drain both
+//pool queues. Uses the vector instead of the queues so that buffers
+//temporarily outside both queues (e.g. held by a concurrent get_frame
+//call during resolution change) are still freed.
 void nvmpictx::deinitFramePool()
 {
-	//TODO check that all allocated buffers returned to pool before deinit
-	NVMPI_frameBuf* fb = NULL;
-	
-	while((fb = framePool->dqEmptyBuf()))
+	while(framePool->dqEmptyBuf()) {}
+	while(framePool->dqFilledBuf()) {}
+
+	for (auto* fb : allocatedFrameBufs)
 	{
 		fb->destroy();
 		delete fb;
 	}
-	
-	while((fb = framePool->dqFilledBuf()))
-	{
-		fb->destroy();
-		delete fb;
-	}
-	return;
+	allocatedFrameBufs.clear();
 }
 
 //Allocate frame_pool_size pitch-linear DMA buffers at the output resolution
@@ -420,10 +419,10 @@ void nvmpictx::initFramePool()
 	for(int i=0;i<frame_pool_size;i++)
 	{
 		NVMPI_frameBuf* fb = new NVMPI_frameBuf();
-		if(!fb->alloc(input_params)) break;
+		if(!fb->alloc(input_params)) { delete fb; break; }
+		allocatedFrameBufs.push_back(fb);
 		framePool->qEmptyBuf(fb);
 	}
-	//TODO retun false on allocation failed
 	return;
 }
 
@@ -453,6 +452,9 @@ void respondToResolutionEvent(v4l2_format &format, v4l2_crop &crop,nvmpictx* ctx
 	ctx->output_height = ctx->resized.height ? ctx->resized.height : crop.c.height;
 
 	//init/reinit DecoderCapturePlane
+#ifndef WITH_NVUTILS
+	bool hadCapture = ctx->numberCaptureBuffers > 0;
+#endif
 	ctx->deinitDecoderCapturePlane();
 	ctx->initDecoderCapturePlane(format);
 	
@@ -464,10 +466,12 @@ void respondToResolutionEvent(v4l2_format &format, v4l2_crop &crop,nvmpictx* ctx
 	ctx->session.cuda_stream = 0;
 	NvBufSurfTransformSetSessionParams(&(ctx->session));
 #else
+	if (hadCapture)
+		NvBufferSessionDestroy(ctx->session);
 	ctx->session = NvBufferSessionCreate();
 #endif
-	
-	//alloc frame pool buffers (dst_dma buffers). TODO: check if already allocated and deinit pool first
+
+	ctx->deinitFramePool();
 	ctx->initFramePool();
 	//get dst_dma buffer params and set corresponding frame size and linesize in nvmpictx
 	ctx->updateFrameSizeParams();
@@ -656,11 +660,6 @@ void dec_capture_loop_fcn(void *arg)
 			}
 		}
 	}
-	
-#ifndef WITH_NVUTILS
-	NvBufferSessionDestroy(ctx->session);
-#endif
-	
 	return;
 }
 
@@ -748,7 +747,7 @@ nvmpictx* nvmpi_create_decoder(nvDecParam* param)
 	ctx->eos=false;
 	ctx->index=0;
 	for(int index=0;index<MAX_BUFFERS;index++)
-		ctx->dmaBufferFileDescriptor[index]=0;
+		ctx->dmaBufferFileDescriptor[index]=-1;
 	ctx->numberCaptureBuffers=0;
 	ctx->dec_capture_loop = std::thread(dec_capture_loop_fcn,ctx);
 	pthread_setname_np(ctx->dec_capture_loop.native_handle(), "dec_capture");
@@ -905,10 +904,18 @@ int nvmpi_decoder_get_frame(nvmpictx* ctx,nvFrame* frame,bool wait)
 }
 
 //Public API: shut the decoder down and free everything.
-//Order matters: signal eos and STREAMOFF the capture plane (unblocks the
-//capture thread), join the thread, then release the CAPTURE-plane DMA
-//buffers, the frame pool and finally the device/context. The handle is
-//invalid after this call.
+//
+//Teardown order (each step depends on the previous):
+//  1. Signal EOS and STREAMOFF capture plane — unblocks the capture thread.
+//  2. Join the capture thread — guarantees no transforms are in flight.
+//  3. Destroy the VIC transform session (legacy path only).
+//  4. Stop the output (input-side) plane and release its V4L2 buffers.
+//  5. Release CAPTURE-plane DMA buffers (decoder output side).
+//  6. Destroy frame pool (VIC destination buffers) — safe because all
+//     planes are stopped and no transforms can be pending.
+//  7. Free the pool container, decoder device, and context.
+//
+//The handle is invalid after this call.
 int nvmpi_decoder_close(nvmpictx* ctx)
 {
 	ctx->eos=true;
@@ -917,16 +924,23 @@ int nvmpi_decoder_close(nvmpictx* ctx)
 	{
 		ctx->dec_capture_loop.join();
 	}
-	
-	//deinit DstDmaBuffer and DecoderCapturePlane
-	ctx->deinitDecoderCapturePlane();
-	//empty frame queue and free buffers
-	ctx->deinitFramePool();
+
+#ifndef WITH_NVUTILS
+	if (ctx->numberCaptureBuffers > 0)
+		NvBufferSessionDestroy(ctx->session);
+#endif
 
 	ctx->dec->output_plane.setStreamStatus(false);
 	ctx->dec->output_plane.deinitPlane();
 
-	delete ctx->dec; ctx->dec = nullptr;
+	ctx->deinitDecoderCapturePlane();
+
+	ctx->deinitFramePool();
+	delete ctx->framePool;
+	ctx->framePool = nullptr;
+
+	delete ctx->dec;
+	ctx->dec = nullptr;
 
 	delete ctx;
 
