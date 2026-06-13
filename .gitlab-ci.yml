@@ -45,9 +45,8 @@ variables:
   L4T_TAG: "r36.4.0"
   NVMPI_PREFIX: "${CI_PROJECT_DIR}/_nvmpi"
   FFMPEG_PREFIX: "${CI_PROJECT_DIR}/_ffmpeg"
-  # release-tools image lives in Harbor (this instance's registry convention),
-  # under a distinct sub-path so it never collides with the project's own image.
-  RELEASE_IMAGE: "${HARBOR_REGISTRY}/${CI_PROJECT_PATH}/release-tools:latest"
+  BUILDER_IMAGE: "harbor.local/jetson/jetson-ffmpeg-builder:${L4T_TAG}"
+  RELEASE_IMAGE: "harbor.local/docker.io/${DOCKERHUB_USERNAME}/jetson-ffmpeg-release-tools:latest"
 
 # Reusable pipeline rules:
 #   .not-on-tag — branch/MR work; skipped on tag pipelines
@@ -56,33 +55,19 @@ variables:
   rules:
     - if: '$CI_COMMIT_TAG'
       when: never
+    - if: '$BUILD_IMAGES == "true"'
+      when: never
     - when: on_success
 .only-tag: &only-tag
   rules:
+    - if: '$BUILD_IMAGES == "true"'
+      when: never
     - if: '$CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+$/'
-
-# Shared apt setup for every job that compiles (build/patch/package). The
-# l4t-jetpack image ships with NVIDIA's jetson apt repo preconfigured, which
-# provides the Multimedia API headers (and the real tegra libs for .package).
-.install-build-deps: &install-build-deps
-  - apt-get update -qq
-  - >-
-    apt-get install -y -qq --no-install-recommends
-    git build-essential cmake pkg-config yasm nasm wget ca-certificates
-    libv4l-dev libx264-dev libx265-dev libnuma-dev libvpx-dev libopus-dev
-    libmp3lame-dev libvorbis-dev libdav1d-dev libass-dev libfreetype6-dev
-    libgnutls28-dev
-  - |
-    if [ ! -d /usr/src/jetson_multimedia_api ]; then
-      apt-get install -y -qq --no-install-recommends nvidia-l4t-jetson-multimedia-api
-    fi
 
 default:
   image:
-    name: harbor.local/jetson/l4t-jetpack:${L4T_TAG}
+    name: "${BUILDER_IMAGE}"
     pull_policy: if-not-present
-  before_script:
-    - *install-build-deps
 
 # ---------------------------------------------------------------------------
 # Stage: build — compile nvmpi with stubs (any runner)
@@ -257,16 +242,13 @@ test:hw-ffmpeg-8.0:           # path D
   stage: package
   <<: *only-tag
   before_script:
-    - *install-build-deps
     - mkdir -p /opt/nvidia/l4t-packages && touch /opt/nvidia/l4t-packages/.nv-l4t-disable-boot-fw-update-in-preinstall
     - |
-      # The SoC-specific BSP debs (libnvv4l2 & co) live in the t234 (Orin)
-      # repo; the image preconfigures only "common". Same OTA signing key.
       if ! grep -rqs 'repo.download.nvidia.com/jetson/t234' /etc/apt/sources.list /etc/apt/sources.list.d/; then
         wget -qO /etc/apt/trusted.gpg.d/jetson-ota-public.asc https://repo.download.nvidia.com/jetson/jetson-ota-public.asc
         echo "deb https://repo.download.nvidia.com/jetson/t234 ${L4T_TAG%.*} main" > /etc/apt/sources.list.d/nvidia-l4t-t234.list
-        apt-get update -qq
       fi
+    - apt-get update -qq
     - >-
       apt-get install -y -qq --no-install-recommends
       nvidia-l4t-multimedia nvidia-l4t-multimedia-utils
@@ -299,8 +281,8 @@ package:ffmpeg-8.0: { extends: .package, variables: { FFVER: "8.0" } }
 
 # ---------------------------------------------------------------------------
 # Stage: release — changelog + GitLab Release (+ generic package assets), then
-# mirror to GitHub. Runs in the pinned release-tools image (build it once via
-# the manual build:release-image job below). Tag pipelines only.
+# mirror to GitHub. Runs in the release-tools image from DockerHub (rebuilt
+# weekly by scheduled pipeline). Tag pipelines only.
 # ---------------------------------------------------------------------------
 release:
   stage: release
@@ -324,44 +306,60 @@ release:
     - bash ./scripts/release.sh
 
 # ---------------------------------------------------------------------------
-# Bootstrap: build + push the release-tools image to Harbor.
+# Bootstrap: build + push CI images to DockerHub (and Harbor for the builder).
 #
-# Mirrors this instance's image-build convention (the docker/arm64 CI component):
-# docker buildx against the remote buildkit backend, registry auth from
-# $DOCKER_AUTH_CONFIG, pushed to $HARBOR_REGISTRY. We replicate the mechanism in
-# one job (rather than `include:`-ing the component) because that component sets
-# a global stages list + a docker-CLI default image, which would clash with this
-# pipeline's l4t-based build/patch/test/package jobs.
+# Uses the remote buildkit backend; auth from $DOCKER_AUTH_CONFIG (Harbor)
+# and $DOCKERHUB_TOKEN (DockerHub). Images are pulled in CI through
+# harbor.local (builder from harbor.local/jetson, release-tools proxied
+# via harbor.local/docker.io).
 #
-# Run this once before the first release, and whenever ci/release-tools.Dockerfile
-# changes (it auto-runs on default-branch changes to that file; also manual).
-# Requires the group CI vars: HARBOR_REGISTRY, DOCKER_HUB_PROXY, DOCKER_AUTH_CONFIG.
+# Triggered by: weekly scheduled pipeline (BUILD_IMAGES=true) or on
+# default-branch changes to the respective Dockerfile.
+# Requires CI vars: DOCKER_AUTH_CONFIG, DOCKERHUB_USERNAME, DOCKERHUB_TOKEN.
 # ---------------------------------------------------------------------------
-build:release-image:
+.build-image:
   stage: build
   image:
     name: "${DOCKER_HUB_PROXY}/docker:28.2.2-cli"
     pull_policy: always
-  # no tags -> the k8s-executor default runner (which reaches the buildkit backend)
   variables:
     DOCKER_CLI_EXPERIMENTAL: enabled
     BUILDKIT_BUILDER_ID: "${CI_PROJECT_NAME}_${CI_JOB_ID}_builder"
-  rules:
-    - if: '$CI_COMMIT_TAG'
-      when: never
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-      changes:
-        paths: ["ci/release-tools.Dockerfile"]
-    - when: manual
-      allow_failure: true
   before_script:
     - mkdir -p "$HOME/.docker"; cat "$DOCKER_AUTH_CONFIG" > "$HOME/.docker/config.json"
+    - echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
     - docker buildx create --use --driver remote --name "$BUILDKIT_BUILDER_ID" tcp://buildkit.coding.svc:1234
   after_script:
     - docker buildx rm "$BUILDKIT_BUILDER_ID" --force || true
+
+build:release-image:
+  extends: .build-image
+  rules:
+    - if: '$CI_COMMIT_TAG'
+      when: never
+    - if: '$BUILD_IMAGES == "true"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        paths: ["ci/release-tools.Dockerfile"]
   script:
     - >-
       docker buildx build --push --provenance=false --platform=linux/arm64
-      --build-arg=DOCKER_HUB_PROXY="$DOCKER_HUB_PROXY"
       --file ci/release-tools.Dockerfile
-      --tag "${RELEASE_IMAGE}" .
+      --tag "docker.io/${DOCKERHUB_USERNAME}/jetson-ffmpeg-release-tools:latest" .
+
+build:builder-image:
+  extends: .build-image
+  rules:
+    - if: '$CI_COMMIT_TAG'
+      when: never
+    - if: '$BUILD_IMAGES == "true"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        paths: ["ci/builder.Dockerfile"]
+  script:
+    - >-
+      docker buildx build --push --provenance=false --platform=linux/arm64
+      --build-arg=L4T_TAG="$L4T_TAG"
+      --file ci/builder.Dockerfile
+      --tag "harbor.local/jetson/jetson-ffmpeg-builder:${L4T_TAG}"
+      --tag "docker.io/${DOCKERHUB_USERNAME}/jetson-ffmpeg-builder:${L4T_TAG}" .
