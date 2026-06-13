@@ -236,6 +236,13 @@ MR_EOF
   --target-branch main
 ```
 
+**Enable auto-merge** (waits for pipeline to pass before merging):
+```bash
+glab mr merge NR --auto-merge
+```
+
+Never force-merge or merge manually while a pipeline is running.
+
 If GitLab MR creation fails (auth, network), fall back to GitHub PR:
 ```bash
 gh pr create -R gjrtimmer/jetson-ffmpeg \
