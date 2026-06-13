@@ -94,6 +94,21 @@ When adding a new FFmpeg version or handling a new API change, see the step-by-s
 
 The CMake build also pulls NVIDIA sample classes (`NvVideoDecoder`, `NvVideoEncoder`, etc.) from `${JETSON_MULTIMEDIA_API_DIR}/samples/common/classes` — these are not vendored in this repo and must exist on the build host (or via the devcontainer mounts).
 
+## Branch naming convention
+
+All work branches follow the pattern `{type}/{NR}-{short-desc}`:
+
+| Type | Pattern | Example |
+|------|---------|---------|
+| Bug fix | `fix/{NR}-{short-desc}` | `fix/8-decoder-crash-on-exit` |
+| Feature | `feat/{NR}-{short-desc}` | `feat/18-mjpeg-decoder` |
+| Performance | `perf/{NR}-{short-desc}` | `perf/9-max-perf-mode` |
+| Refactor | `refactor/{NR}-{short-desc}` | `refactor/17-encoder-lifecycle` |
+
+- `NR` = GitHub issue number.
+- `short-desc` = kebab-case summary from issue title, max 40 chars.
+- Always branch from `main`.
+
 ## Commit conventions
 
 All commits MUST follow [Conventional Commits](https://www.conventionalcommits.org/):
