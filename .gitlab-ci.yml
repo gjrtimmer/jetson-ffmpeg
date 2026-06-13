@@ -205,6 +205,9 @@ patch:ffmpeg-8.0:
 .hw-test: &hw-test
   stage: test
   <<: *not-on-tag
+  image:
+    name: "harbor.local/jetson/l4t-jetpack:${L4T_TAG}"
+    pull_policy: if-not-present
   tags: [jetson, "${JETSON_VARIANT}"]
   # Serialize all Jetson work (one job at a time) so per-version tests
   # don't thrash a single device.
