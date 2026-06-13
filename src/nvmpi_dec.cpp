@@ -274,7 +274,10 @@ void nvmpictx::deinitDecoderCapturePlane()
 
 	int ret = 0;
 	dec->capture_plane.setStreamStatus(false);
-	dec->capture_plane.deinitPlane();
+	// bypass deinitPlane() — it calls waitForDQThread() which touches MMAPI
+	// DQ thread state the decoder never uses (we use std::thread instead);
+	// for DMABUF the only work deinitPlane() does beyond that is reqbufs(0)
+	dec->capture_plane.reqbufs(V4L2_MEMORY_DMABUF, 0);
 	for (int index = 0; index < numberCaptureBuffers; index++) //V4L2_MEMORY_DMABUF
 	{
 		if (dmaBufferFileDescriptor[index] != 0)
