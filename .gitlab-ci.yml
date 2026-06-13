@@ -4,7 +4,7 @@
 #
 # Two kinds of pipeline:
 #
-#   Branch / MR pipelines (NOT a tag):
+#   Branch / MR pipelines (NOT a tag, deduplicated — see workflow:rules):
 #     build   - compile nvmpi library (stubs) on any runner
 #     patch   - apply ffpatch.sh to each supported ffmpeg version, build ffmpeg
 #     test    - all HW test suites (test/hw-all.sh) on each Jetson variant
@@ -30,6 +30,16 @@ stages:
   - test
   - package
   - release
+
+# Pipeline deduplication: when a branch has an open MR, only the MR
+# pipeline runs — the branch pipeline is suppressed. Tag pipelines always run.
+workflow:
+  rules:
+    - if: '$CI_COMMIT_TAG'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS'
+      when: never
+    - if: '$CI_COMMIT_BRANCH'
 
 variables:
   L4T_TAG: "r36.4.0"
