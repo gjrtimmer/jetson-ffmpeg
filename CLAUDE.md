@@ -132,6 +132,13 @@ for all issue operations — do not search for the remote or guess the repo slug
   closed directly, but require the same evidence-comment standard
   (verification method, commits/ancestry, code locations).
 
+## Issue workflow
+
+Before starting work on a GitHub issue, **always post a comment on the issue**
+with the implementation plan — what will change, which files, how it will be
+tested. This creates a public record, invites early feedback, and prevents
+duplicate effort when multiple sessions or contributors are active.
+
 ## Interacting with GitLab and GitHub
 
 Use the official CLIs — **`glab`** for GitLab (`gitlab.timmertech.nl`) and **`gh`**

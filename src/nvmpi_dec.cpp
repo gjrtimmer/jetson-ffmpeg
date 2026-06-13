@@ -269,17 +269,24 @@ void nvmpictx::initDecoderCapturePlane(v4l2_format &format)
 //Called on resolution change (before re-init) and from nvmpi_decoder_close.
 void nvmpictx::deinitDecoderCapturePlane()
 {
+	if (numberCaptureBuffers == 0)
+		return;
+
 	int ret = 0;
 	dec->capture_plane.setStreamStatus(false);
-	dec->capture_plane.deinitPlane();
+	// bypass deinitPlane() — it calls waitForDQThread() which touches MMAPI
+	// DQ thread state the decoder never uses (we use std::thread instead);
+	// for DMABUF the only work deinitPlane() does beyond that is reqbufs(0)
+	dec->capture_plane.reqbufs(V4L2_MEMORY_DMABUF, 0);
 	for (int index = 0; index < numberCaptureBuffers; index++) //V4L2_MEMORY_DMABUF
 	{
 		if (dmaBufferFileDescriptor[index] != 0)
-		{	
+		{
 			ret = NvBufferDestroy(dmaBufferFileDescriptor[index]);
 			TEST_ERROR(ret < 0, "Failed to Destroy NvBuffer", ret);
 		}
 	}
+	numberCaptureBuffers = 0;
 	return;
 }
 
@@ -915,7 +922,10 @@ int nvmpi_decoder_close(nvmpictx* ctx)
 	ctx->deinitDecoderCapturePlane();
 	//empty frame queue and free buffers
 	ctx->deinitFramePool();
-	
+
+	ctx->dec->output_plane.setStreamStatus(false);
+	ctx->dec->output_plane.deinitPlane();
+
 	delete ctx->dec; ctx->dec = nullptr;
 
 	delete ctx;
