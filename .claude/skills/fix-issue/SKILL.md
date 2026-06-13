@@ -37,6 +37,25 @@ These rules are MANDATORY at every phase. Violating them wastes context budget.
 Each phase produces a compact artifact (summary, plan, result). Only that artifact
 carries forward. Raw investigation data stays in subagents or ctx indexes.
 
+### Issue communication
+
+**Every phase posts a status comment on the GitHub issue.** This creates a
+public audit trail and keeps watchers informed. Use `gh issue comment NR -R
+gjrtimmer/jetson-ffmpeg --body "..."` at each gate.
+
+| Phase | Comment content |
+|-------|----------------|
+| 0 Triage | "Triaging — confirmed actionable, no existing PR/branch" |
+| 1 Plan | Full implementation plan (root cause, files, tests, risks) |
+| 2 Implement | "Implementation started on branch `fix/NR-short-desc`" |
+| 3 Local verify | "Local verification: build OK, hw-all [PASS/FAIL details]" |
+| 4 Full matrix | "smoke-all.sh: [N/7] green [details if partial]" |
+| 5 Ship | Full resolution comment (commits, files, root cause, validation) |
+| 6 Upstream | Comment on upstream issues (if applicable) |
+
+Failure comments are equally important — if a phase fails and needs rework,
+post what failed and what the fix approach is. Silence on an issue = abandoned work.
+
 ---
 
 ## Phase 0: Triage
@@ -96,6 +115,13 @@ Format: `fix/{NR}-{short-desc}` — kebab-case from issue title, max 40 chars.
 git checkout -b fix/NR-short-desc main
 ```
 
+### Status update
+
+Post comment on issue:
+```bash
+gh issue comment NR -R gjrtimmer/jetson-ffmpeg --body "Work started on branch \`fix/NR-short-desc\`."
+```
+
 ### Implementation
 
 - Minimal change. No scope creep.
@@ -124,6 +150,14 @@ test failures if output is large.
 
 **Loop**: fix → build → test → repeat until green. Do NOT proceed with failures.
 
+### Status update
+
+Post comment on issue with local test results:
+```bash
+gh issue comment NR -R gjrtimmer/jetson-ffmpeg --body "Local verification: build OK, hw-all PASS (all suites green on Orin)."
+```
+On failure, post what failed and the fix approach before iterating.
+
 ## Phase 4: Full Matrix
 
 ```bash
@@ -136,6 +170,13 @@ test failures if output is large.
 - Re-run with `-v "X.Y"` subset first, then full
 
 **Gate**: 7/7 green required. Never commit with failures.
+
+### Status update
+
+Post comment on issue with matrix results:
+```bash
+gh issue comment NR -R gjrtimmer/jetson-ffmpeg --body "smoke-all.sh: 7/7 green (FFmpeg 4.2, 4.4, 6.0, 6.1, 7.0, 7.1, 8.0)."
+```
 
 ## Phase 5: Commit & Ship
 
@@ -167,13 +208,16 @@ factual comment with commit link and test evidence. Skip closed upstream issues.
 ## TodoWrite Checklist
 
 Create on invocation:
-1. Triage issue #NR
+1. Triage issue #NR — post triage status on issue
 2. Investigate root cause (subagent)
-3. Post plan on issue, get approval
-4. Create branch + implement fix
-5. Write/update tests
-6. Local verify — build + hw-all
-7. Full matrix — smoke-all.sh 7/7
-8. Commit + evidence comment
-9. Push + PR
-10. Upstream notification (if applicable)
+3. Post implementation plan on issue, get user approval
+4. Create branch `fix/NR-short-desc` from main
+5. Post "work started" comment on issue
+6. Implement fix
+7. Write/update tests
+8. Local verify — build + hw-all, post results on issue
+9. Full matrix — smoke-all.sh 7/7, post results on issue
+10. Commit with `Fixes #NR` footer
+11. Post resolution/evidence comment on issue
+12. Push branch + create PR
+13. Upstream notification (if applicable)
