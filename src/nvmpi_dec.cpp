@@ -922,7 +922,10 @@ int nvmpi_decoder_close(nvmpictx* ctx)
 	ctx->deinitDecoderCapturePlane();
 	//empty frame queue and free buffers
 	ctx->deinitFramePool();
-	
+
+	ctx->dec->output_plane.setStreamStatus(false);
+	ctx->dec->output_plane.deinitPlane();
+
 	delete ctx->dec; ctx->dec = nullptr;
 
 	delete ctx;

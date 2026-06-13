@@ -46,6 +46,7 @@ for i in $(seq 1 $ITERATIONS); do
     echo "$out" | tail -15
     exit 1
   fi
+  sleep 0.05
 done
 echo "  ${ITERATIONS} iterations clean."
 
@@ -74,6 +75,7 @@ for i in $(seq 1 $ITERATIONS); do
     echo "$out" | tail -15
     exit 1
   fi
+  sleep 0.05
 done
 echo "  ${ITERATIONS} iterations clean."
 
