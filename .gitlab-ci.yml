@@ -2,6 +2,36 @@
 #
 # CI pipeline for jetson-ffmpeg (nvmpi library + ffmpeg patches).
 #
+# CI image builds use the docker component from the GitLab catalog:
+#   https://gitlab.timmertech.nl/templates/components/docker (arm64 template)
+# Buildkit cache is stored in Harbor via $HARBOR_REGISTRY_CACHE.
+
+include:
+  - component: gitlab.timmertech.nl/templates/components/docker/arm64@1.13.0
+    inputs:
+      name: "builder"
+      stage: build
+      dockerfile: ci/builder.Dockerfile
+      tag: "harbor.local/jetson/jetson-ffmpeg-builder:${L4T_TAG}"
+      tags: "--tag docker.io/${DOCKERHUB_USERNAME}/jetson-ffmpeg-builder:${L4T_TAG}"
+      args: "--build-arg=L4T_TAG=$L4T_TAG"
+      before:
+        - 'echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin'
+      cache: true
+      cache_tag: "builder"
+      check: false
+  - component: gitlab.timmertech.nl/templates/components/docker/arm64@1.13.0
+    inputs:
+      name: "release-tools"
+      stage: build
+      dockerfile: ci/release-tools.Dockerfile
+      tag: "docker.io/${DOCKERHUB_USERNAME}/jetson-ffmpeg-release-tools:latest"
+      before:
+        - 'echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin'
+      cache: true
+      cache_tag: "release-tools"
+      check: false
+#
 # Two kinds of pipeline:
 #
 #   Branch / MR pipelines (NOT a tag, deduplicated — see workflow:rules):
@@ -306,54 +336,34 @@ release:
     - bash ./scripts/release.sh
 
 # ---------------------------------------------------------------------------
-# Bootstrap: build + push CI images to DockerHub (and Harbor for the builder).
+# Docker image build overrides — rules for component-generated jobs.
 #
-# Uses the remote buildkit backend; auth from $DOCKER_AUTH_CONFIG (Harbor)
-# and $DOCKERHUB_TOKEN (DockerHub). Images are pulled in CI through
-# harbor.local (builder from harbor.local/jetson, release-tools proxied
-# via harbor.local/docker.io).
+# The docker component (included above) creates docker:builder and
+# docker:release-tools jobs. We override their rules to restrict them to
+# scheduled pipelines (BUILD_IMAGES=true) or Dockerfile changes on the
+# default branch, and set the correct runner image (our default: points
+# to the builder image, not docker CLI).
 #
-# Triggered by: weekly scheduled pipeline (BUILD_IMAGES=true) or on
-# default-branch changes to the respective Dockerfile.
+# Buildkit cache: enabled via component inputs; cache images stored in
+# $HARBOR_REGISTRY_CACHE/$CI_PROJECT_PATH:<cache_tag>.
 # Requires CI vars: DOCKER_AUTH_CONFIG, DOCKERHUB_USERNAME, DOCKERHUB_TOKEN.
 # ---------------------------------------------------------------------------
-.build-image:
-  stage: build
-  image:
-    name: "${DOCKER_HUB_PROXY}/docker:28.2.2-cli"
-    pull_policy: always
-  variables:
-    DOCKER_CLI_EXPERIMENTAL: enabled
-    BUILDKIT_BUILDER_ID: "${CI_PROJECT_NAME}_${CI_JOB_ID}_builder"
-  before_script:
-    - mkdir -p "$HOME/.docker"; cat "$DOCKER_AUTH_CONFIG" > "$HOME/.docker/config.json"
-    - echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin
-    - docker buildx create --use --driver remote --name "$BUILDKIT_BUILDER_ID" tcp://buildkit.coding.svc:1234
-  after_script:
-    - docker buildx rm "$BUILDKIT_BUILDER_ID" --force || true
-
-build:release-image:
-  extends: .build-image
+docker:builder:
   rules:
     - if: '$CI_COMMIT_TAG'
       when: never
     - if: '$BUILD_IMAGES == "true"'
-  script:
-    - >-
-      docker buildx build --push --provenance=false --platform=linux/arm64
-      --file ci/release-tools.Dockerfile
-      --tag "docker.io/${DOCKERHUB_USERNAME}/jetson-ffmpeg-release-tools:latest" .
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        paths: ["ci/builder.Dockerfile"]
+    - when: never
 
-build:builder-image:
-  extends: .build-image
+docker:release-tools:
   rules:
     - if: '$CI_COMMIT_TAG'
       when: never
     - if: '$BUILD_IMAGES == "true"'
-  script:
-    - >-
-      docker buildx build --push --provenance=false --platform=linux/arm64
-      --build-arg=L4T_TAG="$L4T_TAG"
-      --file ci/builder.Dockerfile
-      --tag "harbor.local/jetson/jetson-ffmpeg-builder:${L4T_TAG}"
-      --tag "docker.io/${DOCKERHUB_USERNAME}/jetson-ffmpeg-builder:${L4T_TAG}" .
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        paths: ["ci/release-tools.Dockerfile"]
+    - when: never
