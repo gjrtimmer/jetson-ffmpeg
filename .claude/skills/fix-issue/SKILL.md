@@ -7,6 +7,14 @@ user-invocable: true
 
 Fix a GitHub issue end-to-end. Invoke: **"Fix Issue #NR"**.
 
+## Skill Activation
+
+Before starting work, activate these skills if not already active:
+- `/caveman full` — terse output, saves context budget
+- `superpowers:brainstorming` — invoke if the fix approach is non-obvious
+- `superpowers:systematic-debugging` — invoke if root cause is unclear
+- `superpowers:verification-before-completion` — invoke before marking done
+
 ## Token Optimization Rules
 
 These rules are MANDATORY at every phase. Violating them wastes context budget.
@@ -51,7 +59,7 @@ gjrtimmer/jetson-ffmpeg --body "..."` at each gate.
 | 3 Local verify | "Local verification: build OK, hw-all [PASS/FAIL details]" |
 | 4 Full matrix | "smoke-all.sh: [N/7] green [details if partial]" |
 | 5 Ship | Full resolution comment (commits, files, root cause, validation) |
-| 6 Upstream | Comment on upstream issues (if applicable) |
+| 6 Upstream | Comment on related open fork/upstream issues (if applicable) |
 
 Failure comments are equally important — if a phase fails and needs rework,
 post what failed and what the fix approach is. Silence on an issue = abandoned work.
@@ -72,7 +80,7 @@ queries: ["issue title", "issue body", "labels", "existing PR"]
 ```
 
 **Gate**: If PR exists or issue already fixed → STOP and report. Note any
-upstream references (Keylost#XX, jocover#XX) for Phase 6.
+upstream/fork references for Phase 6.
 
 ## Phase 1: Investigate & Plan
 
@@ -180,30 +188,99 @@ gh issue comment NR -R gjrtimmer/jetson-ffmpeg --body "smoke-all.sh: 7/7 green (
 
 ## Phase 5: Commit & Ship
 
-1. **Commit** — conventional format, `Fixes #NR` footer:
-   ```bash
-   git add <specific files>
-   git commit -m "fix(scope): description
+### 5a. Commit (ask first)
 
-   Fixes #NR"
+**Ask user for confirmation before committing.** Show the diff summary and
+proposed commit message. Only proceed on explicit approval.
+
+Conventional format with `Fixes #NR` footer:
+```bash
+git add <specific files>
+git commit -m "fix(scope): description
+
+Fixes #NR"
+```
+
+### 5b. Evidence comment on issue
+
+Post resolution details on the GitHub issue:
+```bash
+gh issue comment NR -R gjrtimmer/jetson-ffmpeg --body "Resolution: ..."
+```
+Include: commits, files changed, root cause, fix summary, validation results.
+
+### 5c. Push & MR (ask first)
+
+**Ask user for confirmation before pushing.** Pushing triggers CI on GitLab
+and mirrors to GitHub.
+
+```bash
+git push -u origin fix/NR-short-desc
+```
+
+**Create MR on GitLab** (primary repo — GitHub auto-syncs via push mirror):
+```bash
+glab mr create \
+  --title "fix(scope): description" \
+  --description "$(cat <<'MR_EOF'
+## Summary
+- <what and why>
+
+## Test plan
+- [ ] smoke-all.sh 7/7 green
+- [ ] hw-all N/N suites pass
+
+Fixes #NR
+MR_EOF
+)" \
+  --target-branch main
+```
+
+If GitLab MR creation fails (auth, network), fall back to GitHub PR:
+```bash
+gh pr create -R gjrtimmer/jetson-ffmpeg \
+  --title "fix(scope): desc" --body "..."
+```
+
+## Phase 6: Upstream & Fork Notification
+
+Our issue may reference issues on ANY fork in the network. The fork network
+includes dozens of repos (tracked in `docs/FORKS.md`).
+
+### 6a. Discover related upstream/fork issues
+
+1. Parse the issue body for references: `owner/repo#XX`, full GitHub URLs,
+   or shorthand like `ForkOwner#XX`.
+2. Check `docs/FORKS_RESULT.md` for the cluster this issue belongs to —
+   it maps fork commits to issue clusters and lists related repos.
+3. For each referenced issue on a different repo:
+
+### 6b. Notify open issues
+
+For each **open** issue on an upstream/fork repo:
+
+1. **Verify it's open**:
+   ```bash
+   gh issue view XX -R owner/jetson-ffmpeg --json state -q '.state'
    ```
 
-2. **Evidence comment on issue**:
+2. **Post factual comment** linking back to our repo and issue:
    ```bash
-   gh issue comment NR -R gjrtimmer/jetson-ffmpeg --body "Resolution: ..."
+   gh issue comment XX -R owner/jetson-ffmpeg --body "$(cat <<'UPSTREAM_EOF'
+   This is addressed in the [gjrtimmer/jetson-ffmpeg](https://github.com/gjrtimmer/jetson-ffmpeg) fork:
+
+   - **Issue**: gjrtimmer/jetson-ffmpeg#NR
+   - **Commit**: [`<hash>`](https://github.com/gjrtimmer/jetson-ffmpeg/commit/<hash>)
+   - **Fix**: <one-line summary>
+   - **Validated**: smoke-all.sh 7/7 FFmpeg versions, hw-all N/N suites on Orin
+   UPSTREAM_EOF
+   )"
    ```
-   Include: commits, files changed, root cause, fix summary, validation results.
 
-3. **Push + PR**:
-   ```bash
-   git push -u origin fix/NR-short-desc
-   gh pr create -R gjrtimmer/jetson-ffmpeg --title "fix(scope): desc" --body "..."
-   ```
-
-## Phase 6: Upstream Notification
-
-If issue references open upstream issues (Keylost#XX, jocover#XX), post brief
-factual comment with commit link and test evidence. Skip closed upstream issues.
+3. **Skip closed** issues — do not comment on them.
+4. If our fix supersedes or consolidates work from multiple forks, mention
+   that in the comment (e.g. "consolidates fixes from w3sip, dthk-cogmatix,
+   and xia-chu forks").
 
 ## TodoWrite Checklist
 
