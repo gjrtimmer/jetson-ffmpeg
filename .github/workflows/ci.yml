@@ -3,7 +3,7 @@
 # Jobs:
 #   build     - compile nvmpi library (stubs), no GPU needed
 #   patch     - apply ffpatch.sh to each supported ffmpeg version, then build
-#   hw-test   - HW encode/decode smoke test on each Jetson variant
+#   hw-test   - all HW test suites (test/hw-all.sh) on each Jetson variant
 #
 # Runner label convention:
 #   Build and patch jobs run on any available runner (ubuntu-latest or self-hosted).
@@ -171,4 +171,4 @@ jobs:
           export PATH="${{ github.workspace }}/_ffmpeg/bin:${PATH}"
           export LD_LIBRARY_PATH="${{ github.workspace }}/_ffmpeg/lib:/usr/lib/aarch64-linux-gnu/tegra:${LD_LIBRARY_PATH:-}"
           ldconfig || true
-          bash test/hw-test.sh
+          bash test/hw-all.sh

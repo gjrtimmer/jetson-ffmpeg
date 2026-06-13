@@ -143,12 +143,12 @@ fi
 # FFmpeg build (--ffmpeg)
 # ---------------------------------------------------------------------------
 # Resolve the FFmpeg tree: an existing dir is patched in place; otherwise the
-# argument is treated as a release version and cloned via test/clone-ffmpeg.sh.
+# argument is treated as a release version and cloned via scripts/clone-ffmpeg.sh.
 if [ -d "${FFMPEG_TARGET}" ]; then
     FF_DIR="$(cd "${FFMPEG_TARGET}" && pwd)"
     echo "[i] Using existing FFmpeg tree: ${FF_DIR}"
 else
-    "${REPO_ROOT}/test/clone-ffmpeg.sh" -d "${FFMPEG_DIR}" "${FFMPEG_TARGET}"
+    "${REPO_ROOT}/scripts/clone-ffmpeg.sh" -d "${FFMPEG_DIR}" "${FFMPEG_TARGET}"
     FF_DIR="${FFMPEG_DIR}/ffmpeg${FFMPEG_TARGET}"
 fi
 

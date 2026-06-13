@@ -4,10 +4,10 @@
 #
 # Two kinds of pipeline:
 #
-#   Branch / MR pipelines (NOT a tag):
+#   Branch / MR pipelines (NOT a tag, deduplicated — see workflow:rules):
 #     build   - compile nvmpi library (stubs) on any runner
 #     patch   - apply ffpatch.sh to each supported ffmpeg version, build ffmpeg
-#     test    - HW encode/decode smoke test on each Jetson variant
+#     test    - all HW test suites (test/hw-all.sh) on each Jetson variant
 #
 #   Tag pipelines (v<X.Y.Z>):  -> see docs/RELEASE.md
 #     package - build REAL libnvmpi + ffmpeg per version in a plain container
@@ -30,6 +30,16 @@ stages:
   - test
   - package
   - release
+
+# Pipeline deduplication: when a branch has an open MR, only the MR
+# pipeline runs — the branch pipeline is suppressed. Tag pipelines always run.
+workflow:
+  rules:
+    - if: '$CI_COMMIT_TAG'
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    - if: '$CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS'
+      when: never
+    - if: '$CI_COMMIT_BRANCH'
 
 variables:
   L4T_TAG: "r36.4.0"
@@ -198,7 +208,7 @@ patch:ffmpeg-8.0:
     - export PATH="${FFMPEG_PREFIX}/bin:${PATH}"
     - export LD_LIBRARY_PATH="${FFMPEG_PREFIX}/lib:/usr/lib/aarch64-linux-gnu/tegra:${LD_LIBRARY_PATH:-}"
     - ldconfig || true
-    - bash test/hw-test.sh
+    - bash test/hw-all.sh
 
 test:hw-ffmpeg-4.2:           # path A
   <<: *hw-test

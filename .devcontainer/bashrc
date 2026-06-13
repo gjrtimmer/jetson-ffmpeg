@@ -24,7 +24,7 @@ alias build='"${JETSON_FFMPEG_ROOT}/scripts/build.sh"'           # build libnvmp
 alias ffpatch='"${JETSON_FFMPEG_ROOT}/scripts/ffpatch.sh"'       # patch an ffmpeg tree
 alias update-patch='"${JETSON_FFMPEG_ROOT}/ffmpeg/dev/update_patch.sh"'  # regenerate patches
 alias try-build='"${JETSON_FFMPEG_ROOT}/ffmpeg/dev/try_build.sh"'        # build-validate all versions
-alias hw-test='"${JETSON_FFMPEG_ROOT}/test/hw-test.sh"'          # hardware smoke test
+alias hw-all='"${JETSON_FFMPEG_ROOT}/test/hw-all.sh"'            # all hardware test suites
 alias init-claude='"${JETSON_FFMPEG_ROOT}/scripts/init-claude.sh"'
 
 # History
