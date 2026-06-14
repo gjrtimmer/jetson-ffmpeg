@@ -38,6 +38,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxcb1-dev \
     libxcb-shm0-dev \
     libxcb-xfixes0-dev \
+    python3-pip \
     shellcheck \
     texinfo \
     zlib1g-dev \
@@ -59,6 +60,8 @@ RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.5/install.sh | b
     && . "${HOME}/.nvm/nvm.sh" \
     && nvm install --lts
 USER ${USERNAME}
+
+RUN pip3 install --no-cache-dir jetson-stats
 
 RUN NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 

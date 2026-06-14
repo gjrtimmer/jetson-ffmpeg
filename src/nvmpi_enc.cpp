@@ -81,7 +81,8 @@ struct nvmpictx
 	uint32_t packets_num;          //V4L2 buffer count per plane (param->capture_num)
 
 	bool insert_sps_pps_at_idr;
-	bool max_perf; //enable max performance mode
+	bool max_perf;                 //enable max performance mode
+	uint32_t poc_type;             //H.264 picture order count type (0=default, 2=low-latency)
 	bool enable_extended_colorformat;
 	bool enableLossless;           //constant QP 0 + High 4:4:4 profile (H.264)
 	bool blocking_mode;            //true: use NvVideoEncoder's DQ thread (only mode implemented)
@@ -289,7 +290,8 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 	ctx->capPlaneGotEOS = false;
 	ctx->flushing = false;
 	ctx->blocking_mode = true; //TODO non-blocking mode support
-	ctx->max_perf = true; //TODO invistigate why encoder is slow without max_perf even with MAXN power mode
+	ctx->max_perf = param->max_perf;
+	ctx->poc_type = param->poc_type;
 	ctx->vbv_buffer_size = param->vbv_buffer_size;
 	
 	//Profile mapping: the caller passes FFmpeg-style H.264 profile ids
@@ -519,12 +521,16 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 	ret = ctx->enc->setIFrameInterval(ctx->iframe_interval);
 	TEST_ERROR(ret < 0, "Could not set encoder I-Frame interval", ret);
 	
-    if(ctx->max_perf)
-    {
-        /* Enable maximum performance mode by disabling internal DFS logic.
-           NOTE: This enables encoder to run at max clocks */
-		ret = ctx->enc->setMaxPerfMode(ctx->max_perf);
+	if(ctx->max_perf)
+	{
+		ret = ctx->enc->setMaxPerfMode(1);
 		TEST_ERROR(ret < 0, "Error while setting encoder to max perf", ret);
+	}
+
+	if(ctx->poc_type)
+	{
+		ret = ctx->enc->setPocType(ctx->poc_type);
+		TEST_ERROR(ret < 0, "Error while setting encoder poc_type", ret);
 	}
 	
 	if(ctx->insert_sps_pps_at_idr){

@@ -82,6 +82,8 @@ typedef struct _NVENCPARAM{
 	unsigned int hw_preset_type;   //speed/quality preset: 1=ultrafast .. 4=slow
 	unsigned int vbv_buffer_size; //virtual buffer size of the encoder
 	nvCodingType codingType;       //NV_VIDEO_CodingH264 or NV_VIDEO_CodingHEVC
+	int max_perf;                  //non-zero: lift NVENC clock governor (max clocks)
+	unsigned int poc_type;         //H.264 picture order count type (0=default, 2=low-latency)
 } nvEncParam;
 
 //Decoder creation parameters, consumed once by nvmpi_create_decoder().
@@ -92,6 +94,8 @@ typedef struct _NVDECPARAM{
 	nvSize resized;          //optional hw scaling target; {0,0} keeps stream resolution
 	unsigned int chunk_size; //bytes per compressed-input V4L2 buffer; 0 = default (10 MiB).
 	                         //One input packet (access unit) must fit in one chunk.
+	int max_perf;            //non-zero: lift NVDEC clock governor (max clocks)
+	int disable_dpb;         //non-zero: skip decoded-picture-buffer reordering (low-latency)
 } nvDecParam;
 
 //Compressed packet exchanged across the API boundary.

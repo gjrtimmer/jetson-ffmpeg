@@ -65,6 +65,8 @@ typedef struct {
 	char *resize_expr;     //"-resize WxH" option (hw downscale in libnvmpi)
 	int frame_pool_size;   //"-frame_pool_size N" option
 	int chunk_size;        //"-chunk_size N" option (bytes; 0 = auto)
+	int max_perf;          //lift NVDEC clock governor (default on)
+	int disable_dpb;       //skip DPB reordering (low-latency, default off)
 } nvmpiDecodeContext;
 
 //Translate FFmpeg's codec id into libnvmpi's coding type enum.
@@ -112,6 +114,9 @@ static int nvmpi_init_decoder(AVCodecContext *avctx)
 		av_log(avctx, AV_LOG_WARNING, "Incorrect chunk_size specified: %d. Auto (libnvmpi default) will be used.\n", nvmpi_context->chunk_size);
 		param.chunk_size = OPT_chunk_size_AUTO;
 	}
+
+	param.max_perf = nvmpi_context->max_perf;
+	param.disable_dpb = nvmpi_context->disable_dpb;
 
 	//Workaround for default pix_fmt not being set, so check if it isnt set and set it,
 	//or if it is set, but isnt set to something we can work with.
@@ -315,6 +320,8 @@ static const AVOption options[] = {
     { "resize",   "Resize (width)x(height)", OFFSET(resize_expr), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, VD, "resize" },
     { "frame_pool_size", "Number of frames that could be buffered in the decoder before user must read it with avcodec_receive_frame()", OFFSET(frame_pool_size), AV_OPT_TYPE_INT, {.i64 = OPT_frame_pool_size_DEFAULT }, OPT_frame_pool_size_MIN, OPT_frame_pool_size_MAX, VD, "frame_pool_size" },
     { "chunk_size", "Bytes per compressed-input buffer; one input packet must fit in one chunk (0 = auto, 10 MiB)", OFFSET(chunk_size), AV_OPT_TYPE_INT, {.i64 = OPT_chunk_size_AUTO }, 0, OPT_chunk_size_MAX, VD, "chunk_size" },
+    { "max_perf", "Enable max performance mode (lifts NVDEC clock governor)", OFFSET(max_perf), AV_OPT_TYPE_BOOL, {.i64 = 1 }, 0, 1, VD, "max_perf" },
+    { "disable_dpb", "Disable decoded-picture-buffer reordering (low-latency, B-frame-free streams only)", OFFSET(disable_dpb), AV_OPT_TYPE_BOOL, {.i64 = 0 }, 0, 1, VD, "disable_dpb" },
     { NULL }
 };
 

@@ -83,6 +83,8 @@ typedef struct {
 	int level;                  //level option (10*level, 0 = auto)
 	int rc;                     //rate control option: -1 default, 0 CBR, 1 VBR
 	int preset;                 //hw preset option: 1=ultrafast .. 4=slow
+	int max_perf;               //lift NVENC clock governor (default on)
+	int poc_type;               //H.264 picture order count type (0=default, 2=low-latency)
 	int encoder_flushing;       //set after EOS was sent to libnvmpi
 	AVFrame *frame; //tmp frame
 	                //(holds the pulled-but-not-yet-sent input frame in the
@@ -223,6 +225,8 @@ static av_cold int nvmpi_encode_init(AVCodecContext *avctx)
 	param.capture_num=nvmpi_context->num_capture_buffers;
 	//param.packet_pool_size=nvmpi_context->packet_pool_size;
 	param.hw_preset_type=nvmpi_context->preset;
+	param.max_perf=nvmpi_context->max_perf;
+	param.poc_type=nvmpi_context->poc_type;
 	//with GLOBAL_HEADER the SPS/PPS live in extradata (generated below)
 	//instead of being repeated in-band at every IDR
 	param.insert_spspps_idr=(avctx->flags & AV_CODEC_FLAG_GLOBAL_HEADER)?0:1;
@@ -648,6 +652,9 @@ static const AVOption options[] = {
 	{ "medium",          "",                        0,                    AV_OPT_TYPE_CONST, { .i64 = 3 },            0, 0, VE, "preset" },
 	{ "fast",            "",                        0,                    AV_OPT_TYPE_CONST, { .i64 = 2 },            0, 0, VE, "preset" },
 	{ "ultrafast",       "",                        0,                    AV_OPT_TYPE_CONST, { .i64 = 1 },            0, 0, VE, "preset" },
+
+	{ "max_perf", "Enable max performance mode (lifts NVENC clock governor)", OFFSET(max_perf), AV_OPT_TYPE_BOOL, {.i64 = 1 }, 0, 1, VE, "max_perf" },
+	{ "poc_type", "H.264 picture order count type (0=default, 2=decode-order for low-latency)", OFFSET(poc_type), AV_OPT_TYPE_INT, {.i64 = 0 }, 0, 2, VE, "poc_type" },
 	{ NULL }
 };
 
