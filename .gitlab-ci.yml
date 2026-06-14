@@ -26,7 +26,10 @@ include:
       stage: build
       dockerfile: ci/l4t-jetpack.Dockerfile
       tag: "harbor.local/jetson/l4t-jetpack:${L4T_TAG}"
+      tags: "--tag docker.io/${DOCKERHUB_USERNAME}/l4t-jetpack:${L4T_TAG}"
       args: "--build-arg=L4T_TAG=$L4T_TAG"
+      before:
+        - 'echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin'
       cache: false
       check: false
   - component: gitlab.timmertech.nl/templates/components/docker/arm64@1.13.0
