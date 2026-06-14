@@ -373,6 +373,19 @@ docker:builder:
         paths: ["ci/builder.Dockerfile"]
     - when: never
 
+docker:l4t-jetpack:
+  image:
+    name: "${DOCKER_HUB_PROXY}/docker:28.2.2-cli"
+    pull_policy: always
+  rules:
+    - if: '$CI_COMMIT_TAG'
+      when: never
+    - if: '$BUILD_IMAGES == "true"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        paths: ["ci/l4t-jetpack.Dockerfile"]
+    - when: never
+
 docker:release-tools:
   image:
     name: "${DOCKER_HUB_PROXY}/docker:28.2.2-cli"
