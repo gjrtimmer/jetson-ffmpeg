@@ -144,35 +144,32 @@ gh issue comment NR -R gjrtimmer/jetson-ffmpeg --body "Work started on branch \`
 - Add/update `test/hw-*.sh` suites following existing patterns.
 - Read `test/README.md` for conventions (only if writing new suite).
 
-## Phase 3: Local Verification
+## Phase 3: Build Verification (off-Jetson safe)
 
-Run on Jetson hardware (devcontainer has `--runtime=nvidia`, Orin GPU live):
+Compile-time check — no hw needed, runs anywhere:
 
 ```bash
-./scripts/build.sh --install
-JETSON_VARIANT=orin-nano ./test/hw-all.sh
+./scripts/build.sh --stubs
+./ffmpeg/dev/try_build.sh
 ```
 
-Use `ctx_batch_execute` for build output analysis. Use `ctx_execute` to parse
-test failures if output is large.
+7/7 FFmpeg versions must compile. Use `ctx_batch_execute` for output analysis.
 
-**Loop**: fix → build → test → repeat until green. Do NOT proceed with failures.
+**Loop**: fix → build → check → repeat until green.
 
-### Status update
+## Phase 4: Full Hardware Matrix
 
-Post comment on issue with local test results:
-```bash
-gh issue comment NR -R gjrtimmer/jetson-ffmpeg --body "Local verification: build OK, hw-all PASS (all suites green on Orin)."
-```
-On failure, post what failed and the fix approach before iterating.
+Run on Jetson hardware (devcontainer has `--runtime=nvidia`, Orin GPU live).
 
-## Phase 4: Full Matrix
+`smoke-all.sh` builds libnvmpi, then for each of the 7 FFmpeg versions:
+patches+builds FFmpeg, and runs `hw-all.sh` (which auto-discovers all
+`test/hw-*.sh` suites). ~30 min total.
 
 ```bash
 ./test/smoke-all.sh
 ```
 
-7 FFmpeg versions, ~30 min. If partial failure:
+If partial failure:
 - Use `ctx_search` on indexed output to find which version failed
 - Fix version-specific issue
 - Re-run with `-v "X.Y"` subset first, then full
@@ -299,8 +296,8 @@ Create on invocation:
 5. Post "work started" comment on issue
 6. Implement fix
 7. Write/update tests
-8. Local verify — build + hw-all, post results on issue
-9. Full matrix — smoke-all.sh 7/7, post results on issue
+8. Build verify — build.sh --stubs + try_build.sh 7/7 compile
+9. Full hw matrix — smoke-all.sh 7/7 (builds FFmpeg + hw-all), post results on issue
 10. Commit with `Fixes #NR` footer
 11. Post resolution/evidence comment on issue
 12. Push branch + create PR
