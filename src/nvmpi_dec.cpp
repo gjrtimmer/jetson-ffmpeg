@@ -99,6 +99,8 @@ struct nvmpictx
 
 	int frame_pool_size{12};            //number of NVMPI_frameBuf's to allocate
 	uint32_t chunk_size{CHUNK_SIZE_DEFAULT}; //bytes per compressed-input OUTPUT-plane buffer
+	bool max_perf{true};                //lift NVDEC clock governor for max throughput
+	bool disable_dpb{false};            //skip DPB reordering (low-latency, B-frame-free only)
 	//producer/consumer pool: capture thread fills, user thread consumes
 	NVMPI_bufPool<NVMPI_frameBuf*>* framePool;
 	//all frame bufs ever allocated by initFramePool — ensures deinitFramePool
@@ -685,6 +687,8 @@ nvmpictx* nvmpi_create_decoder(nvDecParam* param)
 	TEST_ERROR(ret < 0, "Could not subscribe to V4L2_EVENT_RESOLUTION_CHANGE", ret);
 	
 	ctx->frame_pool_size = param->frame_pool_size;
+	ctx->max_perf = param->max_perf;
+	ctx->disable_dpb = param->disable_dpb;
 
 	//0 keeps the default; out-of-range values (including garbage from
 	//callers built against an older nvDecParam layout) fall back too.
@@ -729,9 +733,17 @@ nvmpictx* nvmpi_create_decoder(nvDecParam* param)
 	ret = ctx->dec->setFrameInputMode(0);
 	TEST_ERROR(ret < 0, "Error in decoder setFrameInputMode for NALU", ret);
 	
-	//TODO: create option to enable max performace mode (?)
-	//ret = ctx->dec->setMaxPerfMode(true);
-	//TEST_ERROR(ret < 0, "Error while setting decoder to max perf", ret);
+	if(ctx->disable_dpb)
+	{
+		ret = ctx->dec->disableDPB();
+		TEST_ERROR(ret < 0, "Error in decoder disableDPB", ret);
+	}
+
+	if(ctx->max_perf)
+	{
+		ret = ctx->dec->setMaxPerfMode(1);
+		TEST_ERROR(ret < 0, "Error while setting decoder to max perf", ret);
+	}
 
 	//10 USERPTR buffers on the OUTPUT plane; packet data is memcpy'd into
 	//them in nvmpi_decoder_put_packet()

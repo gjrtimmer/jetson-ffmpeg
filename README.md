@@ -12,6 +12,19 @@ that gap with two components:
 - **FFmpeg patches** — register native `*_nvmpi` decoders and encoders in
   FFmpeg that drive the hardware through libnvmpi.
 
+### Performance
+
+jetson-ffmpeg now enables **hardware max-performance mode** by default, lifting
+the NVDEC/NVENC clock governor for maximum throughput:
+
+| Workload | Without `max_perf` | With `max_perf` | Speedup |
+|----------|-------------------|-----------------|---------|
+| 720p H.264 decode | ~46 fps | ~290 fps | **~6x** |
+| 4K HEVC decode | ~28 fps | ~64 fps | **~2.3x** |
+
+Additional low-latency options: `disable_dpb` (decoder) skips picture-buffer
+reordering, `poc_type=2` (encoder) removes reorder latency for H.264 streams.
+
 Once installed, any FFmpeg-based application can offload H.264, HEVC, MPEG-2,
 MPEG-4, VP8, and VP9 decoding — and H.264/HEVC encoding — to the Jetson's
 hardware engines, leaving the CPU free for your actual workload:
@@ -58,3 +71,14 @@ examples see **[docs/BUILD.md](docs/BUILD.md)**.
 - **[Compatibility](docs/COMPATIBILITY.md)** — Supported codecs, Jetson/JetPack support matrix, FFmpeg versions
 - **[Scripts Reference](docs/SCRIPTS.md)** — Every script, command, and dev-container alias
 - **[Development Guide](docs/DEVELOPMENT.md)** — Architecture, patch system, and how to add new FFmpeg versions
+
+## Support This Project
+
+If jetson-ffmpeg is useful to you, please consider supporting its development:
+
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-yellow?style=flat&logo=buy-me-a-coffee)](https://buymeacoffee.com/gjrtimmer)
+
+Maintaining and improving hardware-accelerated video on Jetson takes significant
+time and resources. Your support helps keep development going — fixing bugs
+faster, adding new features, and keeping up with new FFmpeg releases and Jetson
+platforms. Every contribution, no matter the size, is appreciated.

@@ -43,6 +43,27 @@ SAMPLE_VP8_720P="/tmp/nvmpi-sample-vp8-720p.mkv"
 # shellcheck disable=SC2034
 SAMPLE_VP9_720P="/tmp/nvmpi-sample-vp9-720p.mkv"
 
+# shellcheck disable=SC2034
+SAMPLE_H264_720P_LONG="/tmp/nvmpi-sample-h264-720p-long.mp4"
+# shellcheck disable=SC2034
+SAMPLE_HEVC_720P="/tmp/nvmpi-sample-hevc-720p.mp4"
+
+# Longer H.264 sample for benchmarking (enough frames to measure steady-state fps).
+#   gen-sample-h264-long FILE [SECONDS]
+gen-sample-h264-long() {
+  ffmpeg -y -hide_banner -loglevel error \
+    -f lavfi -i testsrc2=s=1280x720:r=30 -t "${2:-10}" \
+    -c:v libx264 -preset fast -g 30 "$1"
+}
+
+# Short software-encoded HEVC sample.
+#   gen-sample-hevc FILE [SECONDS]
+gen-sample-hevc() {
+  ffmpeg -y -hide_banner -loglevel error \
+    -f lavfi -i testsrc2=s=1280x720:r=30 -t "${2:-3}" \
+    -c:v libx265 "$1"
+}
+
 # Short software-encoded MPEG-2 sample (B-frames disabled for exact frame count).
 #   gen-sample-mpeg2 FILE [SECONDS]
 gen-sample-mpeg2() {

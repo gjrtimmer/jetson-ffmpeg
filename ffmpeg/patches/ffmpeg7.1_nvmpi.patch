@@ -178,10 +178,10 @@ index aa0fc47..ced5aa2 100644
  extern const FFCodec ff_vqa_decoder;
 diff --git a/libavcodec/nvmpi_dec.c b/libavcodec/nvmpi_dec.c
 new file mode 100644
-index 0000000..23d3bb9
+index 0000000..70b7954
 --- /dev/null
 +++ b/libavcodec/nvmpi_dec.c
-@@ -0,0 +1,394 @@
+@@ -0,0 +1,401 @@
 +/*
 + * nvmpi_dec.c — FFmpeg decoder wrapper for libnvmpi (layer 2 of
 + * jetson-ffmpeg, the FFmpeg integration layer).
@@ -249,6 +249,8 @@ index 0000000..23d3bb9
 +	char *resize_expr;     //"-resize WxH" option (hw downscale in libnvmpi)
 +	int frame_pool_size;   //"-frame_pool_size N" option
 +	int chunk_size;        //"-chunk_size N" option (bytes; 0 = auto)
++	int max_perf;          //lift NVDEC clock governor (default on)
++	int disable_dpb;       //skip DPB reordering (low-latency, default off)
 +} nvmpiDecodeContext;
 +
 +//Translate FFmpeg's codec id into libnvmpi's coding type enum.
@@ -296,6 +298,9 @@ index 0000000..23d3bb9
 +		av_log(avctx, AV_LOG_WARNING, "Incorrect chunk_size specified: %d. Auto (libnvmpi default) will be used.\n", nvmpi_context->chunk_size);
 +		param.chunk_size = OPT_chunk_size_AUTO;
 +	}
++
++	param.max_perf = nvmpi_context->max_perf;
++	param.disable_dpb = nvmpi_context->disable_dpb;
 +
 +	//Workaround for default pix_fmt not being set, so check if it isnt set and set it,
 +	//or if it is set, but isnt set to something we can work with.
@@ -499,6 +504,8 @@ index 0000000..23d3bb9
 +    { "resize",   "Resize (width)x(height)", OFFSET(resize_expr), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, VD, "resize" },
 +    { "frame_pool_size", "Number of frames that could be buffered in the decoder before user must read it with avcodec_receive_frame()", OFFSET(frame_pool_size), AV_OPT_TYPE_INT, {.i64 = OPT_frame_pool_size_DEFAULT }, OPT_frame_pool_size_MIN, OPT_frame_pool_size_MAX, VD, "frame_pool_size" },
 +    { "chunk_size", "Bytes per compressed-input buffer; one input packet must fit in one chunk (0 = auto, 10 MiB)", OFFSET(chunk_size), AV_OPT_TYPE_INT, {.i64 = OPT_chunk_size_AUTO }, 0, OPT_chunk_size_MAX, VD, "chunk_size" },
++    { "max_perf", "Enable max performance mode (lifts NVDEC clock governor)", OFFSET(max_perf), AV_OPT_TYPE_BOOL, {.i64 = 1 }, 0, 1, VD, "max_perf" },
++    { "disable_dpb", "Disable decoded-picture-buffer reordering (low-latency, B-frame-free streams only)", OFFSET(disable_dpb), AV_OPT_TYPE_BOOL, {.i64 = 0 }, 0, 1, VD, "disable_dpb" },
 +    { NULL }
 +};
 +
@@ -578,10 +585,10 @@ index 0000000..23d3bb9
 +
 diff --git a/libavcodec/nvmpi_enc.c b/libavcodec/nvmpi_enc.c
 new file mode 100644
-index 0000000..7d1a80a
+index 0000000..c3e0eda
 --- /dev/null
 +++ b/libavcodec/nvmpi_enc.c
-@@ -0,0 +1,733 @@
+@@ -0,0 +1,740 @@
 +/*
 + * nvmpi_enc.c — FFmpeg encoder wrapper for libnvmpi (layer 2 of
 + * jetson-ffmpeg, the FFmpeg integration layer).
@@ -667,6 +674,8 @@ index 0000000..7d1a80a
 +	int level;                  //level option (10*level, 0 = auto)
 +	int rc;                     //rate control option: -1 default, 0 CBR, 1 VBR
 +	int preset;                 //hw preset option: 1=ultrafast .. 4=slow
++	int max_perf;               //lift NVENC clock governor (default on)
++	int poc_type;               //H.264 picture order count type (0=default, 2=low-latency)
 +	int encoder_flushing;       //set after EOS was sent to libnvmpi
 +	AVFrame *frame; //tmp frame
 +	                //(holds the pulled-but-not-yet-sent input frame in the
@@ -807,6 +816,8 @@ index 0000000..7d1a80a
 +	param.capture_num=nvmpi_context->num_capture_buffers;
 +	//param.packet_pool_size=nvmpi_context->packet_pool_size;
 +	param.hw_preset_type=nvmpi_context->preset;
++	param.max_perf=nvmpi_context->max_perf;
++	param.poc_type=nvmpi_context->poc_type;
 +	//with GLOBAL_HEADER the SPS/PPS live in extradata (generated below)
 +	//instead of being repeated in-band at every IDR
 +	param.insert_spspps_idr=(avctx->flags & AV_CODEC_FLAG_GLOBAL_HEADER)?0:1;
@@ -1232,6 +1243,9 @@ index 0000000..7d1a80a
 +	{ "medium",          "",                        0,                    AV_OPT_TYPE_CONST, { .i64 = 3 },            0, 0, VE, "preset" },
 +	{ "fast",            "",                        0,                    AV_OPT_TYPE_CONST, { .i64 = 2 },            0, 0, VE, "preset" },
 +	{ "ultrafast",       "",                        0,                    AV_OPT_TYPE_CONST, { .i64 = 1 },            0, 0, VE, "preset" },
++
++	{ "max_perf", "Enable max performance mode (lifts NVENC clock governor)", OFFSET(max_perf), AV_OPT_TYPE_BOOL, {.i64 = 1 }, 0, 1, VE, "max_perf" },
++	{ "poc_type", "H.264 picture order count type (0=default, 2=decode-order for low-latency)", OFFSET(poc_type), AV_OPT_TYPE_INT, {.i64 = 0 }, 0, 2, VE, "poc_type" },
 +	{ NULL }
 +};
 +
