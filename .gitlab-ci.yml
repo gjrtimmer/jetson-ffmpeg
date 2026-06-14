@@ -22,6 +22,15 @@ include:
       check: false
   - component: gitlab.timmertech.nl/templates/components/docker/arm64@1.13.0
     inputs:
+      name: "l4t-jetpack"
+      stage: build
+      dockerfile: ci/l4t-jetpack.Dockerfile
+      tag: "harbor.local/jetson/l4t-jetpack:${L4T_TAG}"
+      args: "--build-arg=L4T_TAG=$L4T_TAG"
+      cache: false
+      check: false
+  - component: gitlab.timmertech.nl/templates/components/docker/arm64@1.13.0
+    inputs:
       name: "release-tools"
       stage: build
       dockerfile: ci/release-tools.Dockerfile
@@ -207,7 +216,7 @@ patch:ffmpeg-8.0:
   <<: *not-on-tag
   image:
     name: "harbor.local/jetson/l4t-jetpack:${L4T_TAG}"
-    pull_policy: if-not-present
+    pull_policy: always
   tags: [jetson, "${JETSON_VARIANT}"]
   # Serialize all Jetson work (one job at a time) so per-version tests
   # don't thrash a single device.
