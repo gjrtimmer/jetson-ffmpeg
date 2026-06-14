@@ -24,6 +24,7 @@ need to `cd` anywhere first.
 | _(test)_ | `test/smoke-all.sh` | Full build + hw-all across **all** versions |
 | _(release)_ | `scripts/package.sh` | Stage a build prefix into a versioned archive + `install.sh` |
 | _(release/CI)_ | `scripts/release.sh` | Changelog + GitLab Release + GitHub mirror (see [RELEASE.md](RELEASE.md)) |
+| _(images)_ | `scripts/build-images.sh` | Build, flatten, and push CI Docker images from a local machine |
 
 The aliases are defined in [`.devcontainer/bashrc`](../.devcontainer/bashrc),
 which `postCreateCommand` concatenates into `~/.bashrc`, so they are present in
@@ -215,3 +216,59 @@ Requires a real Jetson (the hw-test stages have no software fallback) and the
 FFmpeg build dependencies incl. `libx264` (the dev container and CI install
 these). Because it builds libnvmpi and a full FFmpeg per version, expect it to
 run for many minutes.
+
+---
+
+## `scripts/build-images.sh` — build CI Docker images locally
+
+Builds and pushes the CI Docker images from a local machine (e.g. a Mac with
+Apple Silicon). This is the preferred way to update CI images — it is
+significantly faster than the in-cluster buildkit pipeline.
+
+### Images
+
+| Image | Dockerfile | Purpose |
+|-------|-----------|---------|
+| `l4t-jetpack` | `ci/l4t-jetpack.Dockerfile` | Thin wrapper over NVIDIA's `nvcr.io/nvidia/l4t-jetpack` with a dpkg conffile fix for non-interactive installs |
+| `builder` | `ci/builder.Dockerfile` | Full CI builder: l4t-jetpack base + all build dependencies pre-installed |
+
+The builder image depends on l4t-jetpack — always build l4t-jetpack first (the
+script handles this automatically when building `all`).
+
+### Registries
+
+Each image is pushed to both:
+
+- **Harbor**: `harbor.local/jetson/...` — used by CI via `pull_policy: always`
+- **DockerHub**: `docker.io/$DOCKERHUB_USERNAME/...` — public mirror
+
+### Usage
+
+```bash
+# Build + push all images (requires DOCKERHUB_USERNAME)
+DOCKERHUB_USERNAME=myuser scripts/build-images.sh
+
+# Only rebuild l4t-jetpack
+scripts/build-images.sh l4t-jetpack
+
+# Build without pushing (local testing)
+scripts/build-images.sh --no-push
+
+# Build for a different L4T version
+scripts/build-images.sh --l4t-tag r36.5.0
+
+# Preview commands without executing
+scripts/build-images.sh --dry-run
+```
+
+### When to rebuild
+
+Rebuild images when:
+
+- Upgrading the L4T / JetPack version (`--l4t-tag`)
+- Changing `ci/l4t-jetpack.Dockerfile` or `ci/builder.Dockerfile`
+- Adding or removing build dependencies in `ci/builder.Dockerfile`
+
+CI also builds these images on scheduled pipelines (`.gitlab-ci.yml` docker
+component jobs), but the in-cluster buildkit build is much slower due to layer
+extraction overhead.
