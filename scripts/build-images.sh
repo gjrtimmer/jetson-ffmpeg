@@ -8,9 +8,10 @@
 #   scripts/build-images.sh [options] [image...]
 #
 # Images:
-#   l4t-jetpack   Base JetPack image with dpkg conffile fix
-#   builder       CI builder image (depends on l4t-jetpack)
-#   all           Both images in order (default)
+#   l4t-jetpack     Base JetPack image with dpkg conffile fix
+#   builder         CI builder image (depends on l4t-jetpack)
+#   release-tools   Release stage tooling (git-cliff, gh, release-cli)
+#   all             All images in dependency order (default)
 #
 # Options:
 #   --l4t-tag TAG       L4T version tag (default: r36.4.0)
@@ -20,9 +21,10 @@
 #   -h, --help          Show this help
 #
 # Examples:
-#   scripts/build-images.sh                    # build + push all
-#   scripts/build-images.sh l4t-jetpack        # only l4t-jetpack
-#   scripts/build-images.sh --no-push builder  # build builder locally
+#   scripts/build-images.sh                        # build + push all
+#   scripts/build-images.sh l4t-jetpack            # only l4t-jetpack
+#   scripts/build-images.sh --no-push builder      # build builder locally
+#   scripts/build-images.sh release-tools          # only release-tools
 
 set -euo pipefail
 
@@ -54,7 +56,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ ${#IMAGES[@]} -eq 0 ]] && IMAGES=(all)
-[[ "${IMAGES[*]}" == "all" ]] && IMAGES=(l4t-jetpack builder)
+[[ "${IMAGES[*]}" == "all" ]] && IMAGES=(l4t-jetpack builder release-tools)
 
 if $PUSH && [[ -z "$DOCKERHUB_USERNAME" ]]; then
     die "set DOCKERHUB_USERNAME env var or pass --dockerhub USER for DockerHub push"
@@ -65,28 +67,28 @@ run() {
     $DRY_RUN || "$@"
 }
 
-HARBOR_L4T="harbor.local/jetson/l4t-jetpack:${L4T_TAG}"
-HARBOR_BUILDER="harbor.local/jetson/jetson-ffmpeg-builder:${L4T_TAG}"
-DOCKERHUB_L4T="docker.io/${DOCKERHUB_USERNAME}/l4t-jetpack:${L4T_TAG}"
-DOCKERHUB_BUILDER="docker.io/${DOCKERHUB_USERNAME}/jetson-ffmpeg-builder:${L4T_TAG}"
-
-build_image() {
-    local name="$1" dockerfile="$2" tag="$3" dockerhub_tag="$4"
+build_and_push() {
+    local name="$1" dockerfile="$2"
+    shift 2
+    local tags=("$@")
 
     echo "=== Building ${name} ==="
+    local tag_args=()
+    for t in "${tags[@]}"; do
+        tag_args+=(-t "${t}")
+    done
+
     run docker build --platform linux/arm64 \
         -f "${REPO_ROOT}/${dockerfile}" \
         --build-arg "L4T_TAG=${L4T_TAG}" \
-        -t "${tag}" \
+        "${tag_args[@]}" \
         "${REPO_ROOT}"
 
     if $PUSH; then
         echo "=== Pushing ${name} ==="
-        run docker push "${tag}"
-        if [[ -n "$dockerhub_tag" ]]; then
-            run docker tag "${tag}" "${dockerhub_tag}"
-            run docker push "${dockerhub_tag}"
-        fi
+        for t in "${tags[@]}"; do
+            run docker push "${t}"
+        done
     fi
 
     echo "=== ${name} done ==="
@@ -96,15 +98,22 @@ build_image() {
 for img in "${IMAGES[@]}"; do
     case "$img" in
         l4t-jetpack)
-            build_image "l4t-jetpack" "ci/l4t-jetpack.Dockerfile" \
-                "${HARBOR_L4T}" "${DOCKERHUB_L4T}"
+            build_and_push "l4t-jetpack" "ci/l4t-jetpack.Dockerfile" \
+                "harbor.local/jetson/l4t-jetpack:${L4T_TAG}" \
+                "docker.io/${DOCKERHUB_USERNAME}/l4t-jetpack:${L4T_TAG}"
             ;;
         builder)
-            build_image "builder" "ci/builder.Dockerfile" \
-                "${HARBOR_BUILDER}" "${DOCKERHUB_BUILDER}"
+            build_and_push "builder" "ci/builder.Dockerfile" \
+                "harbor.local/jetson/jetson-ffmpeg-builder:${L4T_TAG}" \
+                "docker.io/${DOCKERHUB_USERNAME}/jetson-ffmpeg-builder:${L4T_TAG}"
+            ;;
+        release-tools)
+            build_and_push "release-tools" "ci/release-tools.Dockerfile" \
+                "harbor.local/jetson/jetson-ffmpeg-release-tools:latest" \
+                "docker.io/${DOCKERHUB_USERNAME}/jetson-ffmpeg-release-tools:latest"
             ;;
         *)
-            die "unknown image: ${img} (expected: l4t-jetpack, builder, all)"
+            die "unknown image: ${img} (expected: l4t-jetpack, builder, release-tools, all)"
             ;;
     esac
 done

@@ -231,6 +231,7 @@ significantly faster than the in-cluster buildkit pipeline.
 |-------|-----------|---------|
 | `l4t-jetpack` | `ci/l4t-jetpack.Dockerfile` | Thin wrapper over NVIDIA's `nvcr.io/nvidia/l4t-jetpack` with a dpkg conffile fix for non-interactive installs |
 | `builder` | `ci/builder.Dockerfile` | Full CI builder: l4t-jetpack base + all build dependencies pre-installed |
+| `release-tools` | `ci/release-tools.Dockerfile` | Release stage tooling: git-cliff, gh CLI, release-cli |
 
 The builder image depends on l4t-jetpack — always build l4t-jetpack first (the
 script handles this automatically when building `all`).
