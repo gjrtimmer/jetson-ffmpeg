@@ -917,6 +917,46 @@ int nvmpi_decoder_get_frame(nvmpictx* ctx,nvFrame* frame,bool wait)
 
 //Public API: shut the decoder down and free everything.
 //
+//Reset the decoder pipeline without destroying it (seek / stream restart).
+//
+//Sequence:
+//  1. Signal EOS and STREAMOFF capture — stops the capture thread.
+//  2. Join the capture thread.
+//  3. STREAMOFF output plane — aborts any in-flight V4L2 buffers.
+//  4. Drain the frame pool (move filled frames back to the empty queue).
+//  5. Reset EOS flag and output-plane buffer index.
+//  6. STREAMON output plane.
+//  7. Restart the capture thread — it will wait for the next
+//     resolution-change event (triggered when the caller re-primes
+//     extradata / SPS / PPS), then reinitialize the capture plane
+//     and frame pool via respondToResolutionEvent().
+//
+//The caller MUST re-prime extradata after this call so the hardware
+//decoder can reconfigure its capture plane (same path as initial setup).
+int nvmpi_decoder_flush(nvmpictx* ctx)
+{
+	ctx->eos = true;
+	ctx->dec->capture_plane.setStreamStatus(false);
+	if (ctx->dec_capture_loop.joinable())
+		ctx->dec_capture_loop.join();
+
+	ctx->dec->output_plane.setStreamStatus(false);
+
+	NVMPI_frameBuf* fb;
+	while ((fb = ctx->framePool->dqFilledBuf()))
+		ctx->framePool->qEmptyBuf(fb);
+
+	ctx->eos = false;
+	ctx->index = 0;
+
+	ctx->dec->output_plane.setStreamStatus(true);
+
+	ctx->dec_capture_loop = std::thread(dec_capture_loop_fcn, ctx);
+	pthread_setname_np(ctx->dec_capture_loop.native_handle(), "dec_capture");
+
+	return 0;
+}
+
 //Teardown order (each step depends on the previous):
 //  1. Signal EOS and STREAMOFF capture plane — unblocks the capture thread.
 //  2. Join the capture thread — guarantees no transforms are in flight.

@@ -151,6 +151,12 @@ extern "C" {
 	//(non-blocking; the 'wait' flag is currently not honoured).
 	int nvmpi_decoder_get_frame(nvmpictx* ctx, nvFrame* frame,bool wait);
 
+	//Reset the decoder pipeline for seek / stream restart: stops the
+	//capture thread, drains in-flight frames, and restarts. The caller
+	//MUST re-prime extradata (SPS/PPS) after this call so the hardware
+	//decoder can reconfigure its capture plane. Always returns 0.
+	int nvmpi_decoder_flush(nvmpictx* ctx);
+
 	//Stop the capture thread, free all DMA buffers/pools and destroy ctx.
 	//The handle is invalid afterwards. Always returns 0.
 	int nvmpi_decoder_close(nvmpictx* ctx);
