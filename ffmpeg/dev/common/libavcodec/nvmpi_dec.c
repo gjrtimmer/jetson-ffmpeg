@@ -320,18 +320,6 @@ static void nvmpi_flush_decoder(AVCodecContext *avctx)
 
 	nvmpi_decoder_flush(nvmpi_context->ctx);
 
-	if(nvmpi_context->bufFrame)
-	{
-		av_frame_unref(nvmpi_context->bufFrame);
-		if(avctx->width > 0 && avctx->height > 0)
-		{
-			nvmpi_context->bufFrame->width = avctx->width;
-			nvmpi_context->bufFrame->height = avctx->height;
-			if(ff_get_buffer(avctx, nvmpi_context->bufFrame, 0) < 0)
-				av_log(avctx, AV_LOG_WARNING, "Failed to re-acquire buffer after flush.\n");
-		}
-	}
-
 	if(avctx->extradata && avctx->extradata_size >= 4 &&
 	   avctx->extradata_size < (1 << 20) &&
 	   avctx->extradata[0] == 0 && avctx->extradata[1] == 0 &&
