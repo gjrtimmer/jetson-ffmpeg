@@ -178,10 +178,10 @@ index f5ec2e0..d81b9e5 100644
  extern const FFCodec ff_vqa_decoder;
 diff --git a/libavcodec/nvmpi_dec.c b/libavcodec/nvmpi_dec.c
 new file mode 100644
-index 0000000..70b7954
+index 0000000..8d69f43
 --- /dev/null
 +++ b/libavcodec/nvmpi_dec.c
-@@ -0,0 +1,401 @@
+@@ -0,0 +1,439 @@
 +/*
 + * nvmpi_dec.c — FFmpeg decoder wrapper for libnvmpi (layer 2 of
 + * jetson-ffmpeg, the FFmpeg integration layer).
@@ -494,6 +494,42 @@ index 0000000..70b7954
 +
 +
 +
++//AVCodec/FFCodec .flush callback: reset the libnvmpi decoder pipeline
++//(stops capture thread, drains stale frames, restarts) and re-prime
++//the hardware with extradata (SPS/PPS) so it can reconfigure its capture
++//plane. Called by avcodec_flush_buffers() on seek / stream restart.
++static void nvmpi_flush_decoder(AVCodecContext *avctx)
++{
++	nvmpiDecodeContext *nvmpi_context = avctx->priv_data;
++
++	nvmpi_decoder_flush(nvmpi_context->ctx);
++
++	if(nvmpi_context->bufFrame)
++	{
++		av_frame_unref(nvmpi_context->bufFrame);
++		if(avctx->width > 0 && avctx->height > 0)
++		{
++			nvmpi_context->bufFrame->width = avctx->width;
++			nvmpi_context->bufFrame->height = avctx->height;
++			if(ff_get_buffer(avctx, nvmpi_context->bufFrame, 0) < 0)
++				av_log(avctx, AV_LOG_WARNING, "Failed to re-acquire buffer after flush.\n");
++		}
++	}
++
++	if(avctx->extradata && avctx->extradata_size >= 4 &&
++	   avctx->extradata_size < (1 << 20) &&
++	   avctx->extradata[0] == 0 && avctx->extradata[1] == 0 &&
++	   (avctx->extradata[2] == 1 ||
++	    (avctx->extradata_size >= 5 && avctx->extradata[2] == 0 && avctx->extradata[3] == 1)))
++	{
++		nvPacket packet = {0};
++		packet.payload_size=avctx->extradata_size;
++		packet.payload=avctx->extradata;
++		packet.pts=0;
++		nvmpi_decoder_put_packet(nvmpi_context->ctx, &packet);
++	}
++}
++
 +//AVOption table: user-settable private options, resolved into
 +//nvmpiDecodeContext fields by FFmpeg's option system before .init runs.
 +//OFFSET locates the field inside the priv_data struct; VD restricts the
@@ -545,6 +581,7 @@ index 0000000..70b7954
 +			.init           = nvmpi_init_decoder, \
 +			.close          = nvmpi_close, \
 +			FF_CODEC_DECODE_CB(nvmpi_decode), \
++			.flush          = nvmpi_flush_decoder, \
 +			.p.priv_class     = &nvmpi_##NAME##_dec_class, \
 +			.p.capabilities   = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_AVOID_PROBING | AV_CODEC_CAP_HARDWARE, \
 +			.p.pix_fmts	=(const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P,AV_PIX_FMT_NV12,AV_PIX_FMT_NONE},\
@@ -564,6 +601,7 @@ index 0000000..70b7954
 +			.init           = nvmpi_init_decoder, \
 +			.close          = nvmpi_close, \
 +			.decode         = nvmpi_decode, \
++			.flush          = nvmpi_flush_decoder, \
 +			.priv_class     = &nvmpi_##NAME##_dec_class, \
 +			.capabilities   = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_AVOID_PROBING | AV_CODEC_CAP_HARDWARE, \
 +			.pix_fmts	=(const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P,AV_PIX_FMT_NV12,AV_PIX_FMT_NONE},\
