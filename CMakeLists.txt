@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.9)
-project(nvmpi VERSION 2.6.0 DESCRIPTION "nvidia multimedia api")
+project(nvmpi VERSION 2.7.0 DESCRIPTION "nvidia multimedia api")
 
 set(JETSON_MULTIMEDIA_API_DIR_DEFAULT "/usr/src/jetson_multimedia_api")
 set(JETSON_MULTIMEDIA_LIB_DIR_DEFAULT "/usr/lib/aarch64-linux-gnu/tegra")
