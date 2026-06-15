@@ -81,6 +81,7 @@ struct nvmpictx
 	uint32_t packets_num;          //V4L2 buffer count per plane (param->capture_num)
 
 	bool insert_sps_pps_at_idr;
+	bool insert_vui;               //embed VUI timing_info (fps) in the bitstream
 	bool max_perf;                 //enable max performance mode
 	uint32_t poc_type;             //H.264 picture order count type (0=default, 2=low-latency)
 	bool enable_extended_colorformat;
@@ -287,6 +288,7 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 	ctx->num_b_frames=param->max_b_frames;
 	ctx->num_reference_frames=param->refs;
 	ctx->insert_sps_pps_at_idr=(param->insert_spspps_idr==1)?true:false;
+	ctx->insert_vui=(param->insert_vui!=0)?true:false;
 	ctx->capPlaneGotEOS = false;
 	ctx->flushing = false;
 	ctx->blocking_mode = true; //TODO non-blocking mode support
@@ -419,8 +421,10 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 
 	TEST_ERROR(ret < 0, "Could not set output plane format", ret);
 
-	//pick the raw input format: 10-bit semi-planar for HEVC Main10,
-	//8-bit planar YUV420 otherwise
+	//pick the raw input format. Priority: lossless (YUV444M, set below) >
+	//HEVC Main10 (10-bit P010M) > requested 8-bit layout (NV12M vs YUV420M).
+	//NV12 only affects the 8-bit default branch; it never overrides the
+	//10-bit or lossless paths.
 	switch (ctx->profile)
 	{
 		case V4L2_MPEG_VIDEO_H265_PROFILE_MAIN10:
@@ -428,7 +432,7 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 			break;
 		case V4L2_MPEG_VIDEO_H265_PROFILE_MAIN:
 		default:
-			ctx->raw_pixfmt = V4L2_PIX_FMT_YUV420M;
+			ctx->raw_pixfmt = (param->pixFormat == NV_PIX_NV12) ? V4L2_PIX_FMT_NV12M : V4L2_PIX_FMT_YUV420M;
 	}
 
 	//lossless H.264 requires the High 4:4:4 Predictive profile and YUV444
@@ -536,6 +540,15 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 	if(ctx->insert_sps_pps_at_idr){
 		ret = ctx->enc->setInsertSpsPpsAtIdrEnabled(true);
 		TEST_ERROR(ret < 0, "Could not set insertSPSPPSAtIDR", ret);
+	}
+
+	//VUI carries timing_info (fps) in the SPS so players/muxers report the
+	//correct frame rate. Independent of SPS/PPS-at-IDR. Must be set after
+	//setFormat (done above) and before STREAMON; the fps value comes from
+	//setFrameRate below, which the firmware reads together with this flag.
+	if(ctx->insert_vui){
+		ret = ctx->enc->setInsertVuiEnabled(true);
+		TEST_ERROR(ret < 0, "Could not set insertVUI", ret);
 	}
 
 	ret = ctx->enc->setFrameRate(ctx->fps_n, ctx->fps_d);

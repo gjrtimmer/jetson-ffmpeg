@@ -85,6 +85,7 @@ typedef struct {
 	int preset;                 //hw preset option: 1=ultrafast .. 4=slow
 	int max_perf;               //lift NVENC clock governor (default on)
 	int poc_type;               //H.264 picture order count type (0=default, 2=low-latency)
+	int insert_vui;             //embed VUI timing_info (fps) in the bitstream (default on)
 	int encoder_flushing;       //set after EOS was sent to libnvmpi
 	AVFrame *frame; //tmp frame
 	                //(holds the pulled-but-not-yet-sent input frame in the
@@ -230,7 +231,17 @@ static av_cold int nvmpi_encode_init(AVCodecContext *avctx)
 	//with GLOBAL_HEADER the SPS/PPS live in extradata (generated below)
 	//instead of being repeated in-band at every IDR
 	param.insert_spspps_idr=(avctx->flags & AV_CODEC_FLAG_GLOBAL_HEADER)?0:1;
-	
+	param.insert_vui=nvmpi_context->insert_vui;
+
+	//Raw input layout: NV12 routes to libnvmpi's V4L2 NV12M path, otherwise
+	//planar YUV420. Full-range (YUVJ420P / MJPEG) input is intentionally NOT
+	//advertised in pix_fmts: the Jetson V4L2 encoder exposes no API to set
+	//the VUI video_full_range_flag, so it always emits limited-range. Letting
+	//FFmpeg's swscale convert full->limited range before the encoder yields
+	//correct levels; passing full-range pixels through under a limited-range
+	//flag would not (the latent bug in the bradcagle/xsacha forks).
+	param.pixFormat = (avctx->pix_fmt == AV_PIX_FMT_NV12) ? NV_PIX_NV12 : NV_PIX_YUV420;
+
 	nvmpi_context->frame = av_frame_alloc();
 	if (!nvmpi_context->frame) return AVERROR(ENOMEM);
 
@@ -655,6 +666,7 @@ static const AVOption options[] = {
 
 	{ "max_perf", "Enable max performance mode (lifts NVENC clock governor)", OFFSET(max_perf), AV_OPT_TYPE_BOOL, {.i64 = 1 }, 0, 1, VE, "max_perf" },
 	{ "poc_type", "H.264 picture order count type (0=default, 2=decode-order for low-latency)", OFFSET(poc_type), AV_OPT_TYPE_INT, {.i64 = 0 }, 0, 2, VE, "poc_type" },
+	{ "insert_vui", "Embed VUI timing_info (fps) in the bitstream so players/muxers report the frame rate", OFFSET(insert_vui), AV_OPT_TYPE_BOOL, {.i64 = 1 }, 0, 1, VE, "insert_vui" },
 	{ NULL }
 };
 
@@ -696,7 +708,7 @@ static const AVOption options[] = {
 			.init           = nvmpi_encode_init, \
 			FF_CODEC_RECEIVE_PACKET_CB(ff_nvmpi_receive_packet_async), \
 			.close          = nvmpi_encode_close, \
-			.p.pix_fmts       = (const enum AVPixelFormat[]) { AV_PIX_FMT_YUV420P, AV_PIX_FMT_NONE },\
+			.p.pix_fmts       = (const enum AVPixelFormat[]) { AV_PIX_FMT_YUV420P, AV_PIX_FMT_NV12, AV_PIX_FMT_NONE },\
 			.p.capabilities   = AV_CODEC_CAP_HARDWARE | AV_CODEC_CAP_DELAY, \
 			.defaults       = defaults,\
 			.p.wrapper_name   = "nvmpi", \
@@ -726,7 +738,7 @@ static const AVOption options[] = {
 			.init           = nvmpi_encode_init, \
 			NVMPI_ENC_API_CALLS, \
 			.close          = nvmpi_encode_close, \
-			.pix_fmts       = (const enum AVPixelFormat[]) { AV_PIX_FMT_YUV420P, AV_PIX_FMT_NONE },\
+			.pix_fmts       = (const enum AVPixelFormat[]) { AV_PIX_FMT_YUV420P, AV_PIX_FMT_NV12, AV_PIX_FMT_NONE },\
 			.capabilities   = AV_CODEC_CAP_HARDWARE | AV_CODEC_CAP_DELAY, \
 			.defaults       = defaults,\
 			.wrapper_name   = "nvmpi", \

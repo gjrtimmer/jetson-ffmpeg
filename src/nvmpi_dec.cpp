@@ -135,9 +135,31 @@ struct nvmpictx
 //plane to the matching NvBuffer NV12 color format variant (BT.601/709/2020,
 //standard vs extended luma range). Used when allocating the CAPTURE-plane
 //DMA buffers so the subsequent VIC transform interprets colors correctly.
-NvBufferColorFormat getNvColorFormatFromV4l2Format(v4l2_format &format)
+NvBufferColorFormat getNvColorFormatFromV4l2Format(v4l2_format &format, bool want_10bit)
 {
-	NvBufferColorFormat ret_cf = NvBufferColorFormat_NV12; 
+#ifdef WITH_NVUTILS
+	//10-bit (P010) output: pick the matching NV12_10LE colorimetry variant.
+	//These constants exist only in the NvUtils API, which is why P010 is
+	//gated on WITH_NVUTILS at the decoder init layer.
+	if (want_10bit)
+	{
+		switch (format.fmt.pix_mp.colorspace)
+		{
+			case V4L2_COLORSPACE_REC709:
+				return (format.fmt.pix_mp.quantization == V4L2_QUANTIZATION_DEFAULT)
+					? NvBufferColorFormat_NV12_10LE_709 : NvBufferColorFormat_NV12_10LE_709_ER;
+			case V4L2_COLORSPACE_BT2020:
+				return NvBufferColorFormat_NV12_10LE_2020;
+			case V4L2_COLORSPACE_SMPTE170M:
+			default:
+				return (format.fmt.pix_mp.quantization == V4L2_QUANTIZATION_DEFAULT)
+					? NvBufferColorFormat_NV12_10LE : NvBufferColorFormat_NV12_10LE_ER;
+		}
+	}
+#else
+	(void)want_10bit;
+#endif
+	NvBufferColorFormat ret_cf = NvBufferColorFormat_NV12;
 	switch (format.fmt.pix_mp.colorspace)
 	{
 		case V4L2_COLORSPACE_SMPTE170M:
@@ -210,7 +232,7 @@ void nvmpictx::initDecoderCapturePlane(v4l2_format &format)
 
 	//Block-linear layout matches what the hw decoder writes natively; the
 	//buffers are converted to pitch-linear later by the VIC transform.
-	cParams.colorFormat = getNvColorFormatFromV4l2Format(format);
+	cParams.colorFormat = getNvColorFormatFromV4l2Format(format, out_pixfmt == NV_PIX_P010);
 	cParams.width = coded_width;
 	cParams.height = coded_height;
 	cParams.layout = NvBufferLayout_BlockLinear;
@@ -401,7 +423,14 @@ void nvmpictx::deinitFramePool()
 void nvmpictx::initFramePool()
 {
 	//if(bufNumber <= 0) return false; //TODO log msg //TODO check if it's already allocated and deinit first
+	//VIC destination format: NV12 or planar YUV420 (8-bit), or NV12_10LE
+	//(P010, 10-bit). The 10-bit branch is NvUtils-only — out_pixfmt can
+	//never be NV_PIX_P010 on legacy builds (rejected at decoder init), but
+	//the constant must still be compiled out there.
 	NvBufferColorFormat cFmt = out_pixfmt==NV_PIX_NV12?NvBufferColorFormat_NV12: NvBufferColorFormat_YUV420;
+#ifdef WITH_NVUTILS
+	if(out_pixfmt==NV_PIX_P010) cFmt = NvBufferColorFormat_NV12_10LE;
+#endif
 	
 	NvBufferCreateParams input_params;
 	memset(&input_params, 0, sizeof(input_params));
@@ -677,6 +706,17 @@ nvmpictx* nvmpi_create_decoder(nvDecParam* param)
 {
 	int ret;
 	log_level = LOG_LEVEL_INFO;
+
+#ifndef WITH_NVUTILS
+	//P010 (10-bit) output uses the NvBufSurface NV12_10LE color formats, which
+	//exist only in the NvUtils API (JetPack 5+). The legacy nvbuf_utils build
+	//cannot honour it — fail loudly rather than emit corrupt 8-bit frames.
+	if(param->pixFormat == NV_PIX_P010)
+	{
+		std::cerr << "[libnvmpi][E]: P010 (10-bit) decode requires the NvUtils buffer API (JetPack 5+); not available in this build." << std::endl;
+		return NULL;
+	}
+#endif
 
 	nvmpictx* ctx=new nvmpictx();
 

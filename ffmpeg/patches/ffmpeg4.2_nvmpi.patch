@@ -177,10 +177,10 @@ index d2f9a39..b108f81 100644
  extern AVCodec ff_vqa_decoder;
 diff --git a/libavcodec/nvmpi_dec.c b/libavcodec/nvmpi_dec.c
 new file mode 100644
-index 0000000..0e9ff00
+index 0000000..a905f74
 --- /dev/null
 +++ b/libavcodec/nvmpi_dec.c
-@@ -0,0 +1,427 @@
+@@ -0,0 +1,477 @@
 +/*
 + * nvmpi_dec.c — FFmpeg decoder wrapper for libnvmpi (layer 2 of
 + * jetson-ffmpeg, the FFmpeg integration layer).
@@ -250,6 +250,7 @@ index 0000000..0e9ff00
 +	int chunk_size;        //"-chunk_size N" option (bytes; 0 = auto)
 +	int max_perf;          //lift NVDEC clock governor (default on)
 +	int disable_dpb;       //skip DPB reordering (low-latency, default off)
++	int output_format;     //requested output pixel format (AVPixelFormat; NONE = auto)
 +} nvmpiDecodeContext;
 +
 +//Translate FFmpeg's codec id into libnvmpi's coding type enum.
@@ -276,6 +277,8 @@ index 0000000..0e9ff00
 +{
 +	nvmpiDecodeContext *nvmpi_context = avctx->priv_data;
 +	nvDecParam param={0};
++	enum AVPixelFormat choices[4];
++	int nchoices;
 +
 +	param.codingType =nvmpi_get_codingtype(avctx);
 +	if (param.codingType == NV_VIDEO_CodingUnused)
@@ -301,19 +304,63 @@ index 0000000..0e9ff00
 +	param.max_perf = nvmpi_context->max_perf;
 +	param.disable_dpb = nvmpi_context->disable_dpb;
 +
-+	//Workaround for default pix_fmt not being set, so check if it isnt set and set it,
-+	//or if it is set, but isnt set to something we can work with.
-+	if(avctx->pix_fmt ==AV_PIX_FMT_NONE)
++	//Output pixel-format negotiation. The decoder can emit YUV420P, NV12, or
++	//(HEVC Main10 only) 10-bit P010LE, all produced natively by the VIC
++	//transform — no software conversion. Selection precedence:
++	//  1. explicit -output_format option (the reliable CLI knob; non-hwaccel
++	//     decoders otherwise always get pix_fmts[0] from default get_format);
++	//  2. a usable avctx->pix_fmt already set by the caller (programmatic API
++	//     consumers) — YUVJ420P is normalized to YUV420P + JPEG color range;
++	//  3. downstream negotiation via ff_get_format, defaulting to YUV420P.
++	//Whether the installed libnvmpi actually supports P010 (it needs the
++	//NvUtils/JetPack-5+ buffer API) is enforced in nvmpi_create_decoder,
++	//which returns NULL otherwise — handled below.
++	nchoices = 0;
++	choices[nchoices++] = AV_PIX_FMT_YUV420P;
++	choices[nchoices++] = AV_PIX_FMT_NV12;
++	if(avctx->codec_id == AV_CODEC_ID_HEVC)
++		choices[nchoices++] = AV_PIX_FMT_P010LE;
++	choices[nchoices] = AV_PIX_FMT_NONE;
++
++	if(nvmpi_context->output_format != AV_PIX_FMT_NONE)
 +	{
-+		 avctx->pix_fmt=AV_PIX_FMT_YUV420P;
++		avctx->pix_fmt = nvmpi_context->output_format;
 +	}
-+	else if((avctx->pix_fmt != AV_PIX_FMT_YUV420P) && (avctx->pix_fmt != AV_PIX_FMT_YUVJ420P))
++	else if(avctx->pix_fmt == AV_PIX_FMT_YUVJ420P)
 +	{
-+		av_log(avctx, AV_LOG_ERROR, "Invalid Pix_FMT for NVMPI: Only YUV420P and YUVJ420P are supported\n");
++		//Deprecated full-range alias: route as YUV420P. The decoder does not
++		//probe the stream's range, so no color_range is asserted here.
++		avctx->pix_fmt = AV_PIX_FMT_YUV420P;
++	}
++	else if(avctx->pix_fmt != AV_PIX_FMT_YUV420P &&
++	        avctx->pix_fmt != AV_PIX_FMT_NV12 &&
++	        avctx->pix_fmt != AV_PIX_FMT_P010LE)
++	{
++		enum AVPixelFormat got = ff_get_format(avctx, choices);
++		avctx->pix_fmt = (got != AV_PIX_FMT_NONE) ? got : AV_PIX_FMT_YUV420P;
++	}
++
++	if(avctx->pix_fmt == AV_PIX_FMT_P010LE && avctx->codec_id != AV_CODEC_ID_HEVC)
++	{
++		av_log(avctx, AV_LOG_ERROR, "P010LE (10-bit) output is only supported for HEVC streams.\n");
 +		return AVERROR_INVALIDDATA;
 +	}
-+	//TODO more pixformats support
-+	param.pixFormat = NV_PIX_YUV420;
++
++	switch(avctx->pix_fmt)
++	{
++		case AV_PIX_FMT_YUV420P:
++			param.pixFormat = NV_PIX_YUV420;
++			break;
++		case AV_PIX_FMT_NV12:
++			param.pixFormat = NV_PIX_NV12;
++			break;
++		case AV_PIX_FMT_P010LE:
++			param.pixFormat = NV_PIX_P010;
++			break;
++		default:
++			av_log(avctx, AV_LOG_ERROR, "Invalid Pix_FMT for NVMPI: only YUV420P, YUVJ420P, NV12 and P010LE are supported\n");
++			return AVERROR_INVALIDDATA;
++	}
 +
 +    if (nvmpi_context->resize_expr && sscanf(nvmpi_context->resize_expr, "%dx%d",
 +                                             &param.resized.width, &param.resized.height) != 2)
@@ -467,8 +514,10 @@ index 0000000..0e9ff00
 +		return decode_ret;
 +	}
 +
-+	//Hand the filled bufFrame to the caller (zero-copy move of the ref)...
-+	bufFrame->format=AV_PIX_FMT_YUV420P;
++	//Hand the filled bufFrame to the caller (zero-copy move of the ref).
++	//Output format mirrors the negotiated avctx->pix_fmt (YUV420P / NV12 /
++	//P010LE) — the bufFrame was allocated against it via ff_get_buffer.
++	bufFrame->format=avctx->pix_fmt;
 +	bufFrame->pts=_nvframe.timestamp;
 +	bufFrame->pkt_dts = AV_NOPTS_VALUE;
 +	av_frame_move_ref(frame, bufFrame);
@@ -529,6 +578,7 @@ index 0000000..0e9ff00
 +    { "chunk_size", "Bytes per compressed-input buffer; one input packet must fit in one chunk (0 = auto, 10 MiB)", OFFSET(chunk_size), AV_OPT_TYPE_INT, {.i64 = OPT_chunk_size_AUTO }, 0, OPT_chunk_size_MAX, VD, "chunk_size" },
 +    { "max_perf", "Enable max performance mode (lifts NVDEC clock governor)", OFFSET(max_perf), AV_OPT_TYPE_BOOL, {.i64 = 1 }, 0, 1, VD, "max_perf" },
 +    { "disable_dpb", "Disable decoded-picture-buffer reordering (low-latency, B-frame-free streams only)", OFFSET(disable_dpb), AV_OPT_TYPE_BOOL, {.i64 = 0 }, 0, 1, VD, "disable_dpb" },
++    { "output_format", "Decoder output pixel format (default auto=yuv420p; nv12; p010le for 10-bit HEVC)", OFFSET(output_format), AV_OPT_TYPE_PIXEL_FMT, {.i64 = AV_PIX_FMT_NONE }, -1, INT_MAX, VD },
 +    { NULL }
 +};
 +
@@ -571,7 +621,7 @@ index 0000000..0e9ff00
 +			.flush          = nvmpi_flush_decoder, \
 +			.p.priv_class     = &nvmpi_##NAME##_dec_class, \
 +			.p.capabilities   = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_AVOID_PROBING | AV_CODEC_CAP_HARDWARE, \
-+			.p.pix_fmts	=(const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P,AV_PIX_FMT_NV12,AV_PIX_FMT_NONE},\
++			.p.pix_fmts	=(const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P,AV_PIX_FMT_NV12,AV_PIX_FMT_P010LE,AV_PIX_FMT_NONE},\
 +			.bsfs           = BSFS, \
 +			.p.wrapper_name   = "nvmpi", \
 +		};
@@ -591,7 +641,7 @@ index 0000000..0e9ff00
 +			.flush          = nvmpi_flush_decoder, \
 +			.priv_class     = &nvmpi_##NAME##_dec_class, \
 +			.capabilities   = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_AVOID_PROBING | AV_CODEC_CAP_HARDWARE, \
-+			.pix_fmts	=(const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P,AV_PIX_FMT_NV12,AV_PIX_FMT_NONE},\
++			.pix_fmts	=(const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P,AV_PIX_FMT_NV12,AV_PIX_FMT_P010LE,AV_PIX_FMT_NONE},\
 +			.bsfs           = BSFS, \
 +			.wrapper_name   = "nvmpi", \
 +		};
@@ -610,10 +660,10 @@ index 0000000..0e9ff00
 +
 diff --git a/libavcodec/nvmpi_enc.c b/libavcodec/nvmpi_enc.c
 new file mode 100644
-index 0000000..c3e0eda
+index 0000000..063f885
 --- /dev/null
 +++ b/libavcodec/nvmpi_enc.c
-@@ -0,0 +1,740 @@
+@@ -0,0 +1,752 @@
 +/*
 + * nvmpi_enc.c — FFmpeg encoder wrapper for libnvmpi (layer 2 of
 + * jetson-ffmpeg, the FFmpeg integration layer).
@@ -701,6 +751,7 @@ index 0000000..c3e0eda
 +	int preset;                 //hw preset option: 1=ultrafast .. 4=slow
 +	int max_perf;               //lift NVENC clock governor (default on)
 +	int poc_type;               //H.264 picture order count type (0=default, 2=low-latency)
++	int insert_vui;             //embed VUI timing_info (fps) in the bitstream (default on)
 +	int encoder_flushing;       //set after EOS was sent to libnvmpi
 +	AVFrame *frame; //tmp frame
 +	                //(holds the pulled-but-not-yet-sent input frame in the
@@ -846,7 +897,17 @@ index 0000000..c3e0eda
 +	//with GLOBAL_HEADER the SPS/PPS live in extradata (generated below)
 +	//instead of being repeated in-band at every IDR
 +	param.insert_spspps_idr=(avctx->flags & AV_CODEC_FLAG_GLOBAL_HEADER)?0:1;
-+	
++	param.insert_vui=nvmpi_context->insert_vui;
++
++	//Raw input layout: NV12 routes to libnvmpi's V4L2 NV12M path, otherwise
++	//planar YUV420. Full-range (YUVJ420P / MJPEG) input is intentionally NOT
++	//advertised in pix_fmts: the Jetson V4L2 encoder exposes no API to set
++	//the VUI video_full_range_flag, so it always emits limited-range. Letting
++	//FFmpeg's swscale convert full->limited range before the encoder yields
++	//correct levels; passing full-range pixels through under a limited-range
++	//flag would not (the latent bug in the bradcagle/xsacha forks).
++	param.pixFormat = (avctx->pix_fmt == AV_PIX_FMT_NV12) ? NV_PIX_NV12 : NV_PIX_YUV420;
++
 +	nvmpi_context->frame = av_frame_alloc();
 +	if (!nvmpi_context->frame) return AVERROR(ENOMEM);
 +
@@ -1271,6 +1332,7 @@ index 0000000..c3e0eda
 +
 +	{ "max_perf", "Enable max performance mode (lifts NVENC clock governor)", OFFSET(max_perf), AV_OPT_TYPE_BOOL, {.i64 = 1 }, 0, 1, VE, "max_perf" },
 +	{ "poc_type", "H.264 picture order count type (0=default, 2=decode-order for low-latency)", OFFSET(poc_type), AV_OPT_TYPE_INT, {.i64 = 0 }, 0, 2, VE, "poc_type" },
++	{ "insert_vui", "Embed VUI timing_info (fps) in the bitstream so players/muxers report the frame rate", OFFSET(insert_vui), AV_OPT_TYPE_BOOL, {.i64 = 1 }, 0, 1, VE, "insert_vui" },
 +	{ NULL }
 +};
 +
@@ -1312,7 +1374,7 @@ index 0000000..c3e0eda
 +			.init           = nvmpi_encode_init, \
 +			FF_CODEC_RECEIVE_PACKET_CB(ff_nvmpi_receive_packet_async), \
 +			.close          = nvmpi_encode_close, \
-+			.p.pix_fmts       = (const enum AVPixelFormat[]) { AV_PIX_FMT_YUV420P, AV_PIX_FMT_NONE },\
++			.p.pix_fmts       = (const enum AVPixelFormat[]) { AV_PIX_FMT_YUV420P, AV_PIX_FMT_NV12, AV_PIX_FMT_NONE },\
 +			.p.capabilities   = AV_CODEC_CAP_HARDWARE | AV_CODEC_CAP_DELAY, \
 +			.defaults       = defaults,\
 +			.p.wrapper_name   = "nvmpi", \
@@ -1342,7 +1404,7 @@ index 0000000..c3e0eda
 +			.init           = nvmpi_encode_init, \
 +			NVMPI_ENC_API_CALLS, \
 +			.close          = nvmpi_encode_close, \
-+			.pix_fmts       = (const enum AVPixelFormat[]) { AV_PIX_FMT_YUV420P, AV_PIX_FMT_NONE },\
++			.pix_fmts       = (const enum AVPixelFormat[]) { AV_PIX_FMT_YUV420P, AV_PIX_FMT_NV12, AV_PIX_FMT_NONE },\
 +			.capabilities   = AV_CODEC_CAP_HARDWARE | AV_CODEC_CAP_DELAY, \
 +			.defaults       = defaults,\
 +			.wrapper_name   = "nvmpi", \
