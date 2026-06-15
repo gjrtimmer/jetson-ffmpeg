@@ -47,6 +47,8 @@ SAMPLE_VP9_720P="/tmp/nvmpi-sample-vp9-720p.mkv"
 SAMPLE_H264_720P_LONG="/tmp/nvmpi-sample-h264-720p-long.mp4"
 # shellcheck disable=SC2034
 SAMPLE_HEVC_720P="/tmp/nvmpi-sample-hevc-720p.mp4"
+# shellcheck disable=SC2034  # consumed by hw-format-pixfmt.sh
+SAMPLE_HEVC10_720P="/tmp/nvmpi-sample-hevc10-720p.mp4"
 
 # Longer H.264 sample for benchmarking (enough frames to measure steady-state fps).
 #   gen-sample-h264-long FILE [SECONDS]
@@ -62,6 +64,16 @@ gen-sample-hevc() {
   ffmpeg -y -hide_banner -loglevel error \
     -f lavfi -i testsrc2=s=1280x720:r=30 -t "${2:-3}" \
     -c:v libx265 "$1"
+}
+
+# 10-bit (Main10, yuv420p10le) software-encoded HEVC sample — input for the
+# P010 hardware-decode path. NVDEC produces 10-bit output only from a genuinely
+# 10-bit stream, so the sample must be encoded at 10 bpc.
+#   gen-sample-hevc10 FILE [SECONDS]
+gen-sample-hevc10() {
+  ffmpeg -y -hide_banner -loglevel error \
+    -f lavfi -i testsrc2=s=1280x720:r=30 -t "${2:-3}" \
+    -c:v libx265 -pix_fmt yuv420p10le "$1"
 }
 
 # Short software-encoded MPEG-2 sample (B-frames disabled for exact frame count).
