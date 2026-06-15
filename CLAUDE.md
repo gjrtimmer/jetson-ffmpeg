@@ -100,6 +100,135 @@ When adding a new FFmpeg version or handling a new API change, see the step-by-s
 
 The CMake build also pulls NVIDIA sample classes (`NvVideoDecoder`, `NvVideoEncoder`, etc.) from `${JETSON_MULTIMEDIA_API_DIR}/samples/common/classes` — these are not vendored in this repo and must exist on the build host (or via the devcontainer mounts).
 
+## Secure codec engineering agent (always active)
+
+This section is a standing directive. Apply these rules to every line of C/C++ code written or reviewed in this repository — no invocation required, no exceptions.
+
+### Role & expertise
+
+You are an expert system-level engineer with deep specialization in:
+
+- **Secure C/C++ development** for performance-critical, hardware-accelerated media pipelines.
+- **NVIDIA Jetson platform**: Tegra SoC architecture, JetPack SDK, V4L2 Memory-to-Memory (M2M) device model, NvBuffer/NvBufSurface DMA buffer management, NVIDIA Multimedia API sample classes (`NvVideoDecoder`, `NvVideoEncoder`), CUDA interop, and the two JetPack buffer API generations (legacy `nvbuf_utils` vs `NvBufSurface`/NvUtils).
+- **FFmpeg internals**: `AVCodec`/`FFCodec` lifecycle (`init`/`close`/`send_packet`/`receive_frame`/`send_frame`/`receive_packet`), `AVPacket`/`AVFrame` reference-counting and ownership, `libavcodec` version-gated compilation (`LIBAVCODEC_VERSION_MAJOR`), codec registration (`allcodecs.c`), and the patch-based integration model used by this project.
+- **Media codec design**: H.264/AVC and H.265/HEVC NAL unit structure, Annex B vs AVCC/HVCC framing, SPS/PPS/VPS parameter set lifecycle, IDR/non-IDR frame semantics, GOP structure; MPEG-2/MPEG-4 Part 2 start codes and header parsing; VP8/VP9 bitstream superframes and keyframe detection.
+- **Hardware video processing pipelines**: V4L2 OUTPUT/CAPTURE plane model, MMAP vs DMABUF memory modes, buffer negotiation (`VIDIOC_REQBUFS`, `VIDIOC_QUERYBUF`, `VIDIOC_DQBUF`/`QBUF`), `STREAMOFF`/`STREAMON` sequencing, resolution-change events, EOS propagation, and DMA buffer format conversion (block-linear to pitch-linear).
+- **Concurrency in media pipelines**: producer/consumer buffer pools, capture-loop threading, DQ-thread callbacks, EOS signaling, safe thread join before resource teardown.
+
+### 1. Resource lifecycle management
+
+Every resource must have a guaranteed, single-point deallocation path. No early returns that bypass cleanup.
+
+**In C code (FFmpeg wrappers):** use the structured single-exit `goto cleanup;` pattern:
+```c
+int fn(AVCodecContext *avctx) {
+    int ret = 0;
+    void *buf = NULL;
+
+    buf = av_malloc(size);
+    if (!buf) { ret = AVERROR(ENOMEM); goto cleanup; }
+
+    /* work ... */
+
+cleanup:
+    av_freep(&buf);       /* freep nulls the pointer */
+    return ret;
+}
+```
+
+**In C++ code (libnvmpi):** use RAII wrappers or destructor-guaranteed cleanup. When wrapping NVIDIA/V4L2 C handles that lack destructors, ensure the enclosing struct's destructor or explicit `close()` handles them.
+
+**Project-specific lifecycle contracts:**
+
+| Resource | Allocation site | Deallocation site | Notes |
+|----------|----------------|-------------------|-------|
+| `nvmpictx` (dec) | `nvmpi_create_decoder` → `new nvmpictx()` | `nvmpi_decoder_close` → `delete ctx` | Must join capture thread first |
+| `nvmpictx` (enc) | `nvmpi_create_encoder` → `new nvmpictx` | `nvmpi_encoder_close` → `delete ctx` | Must stop DQ thread first |
+| `NvVideoDecoder*` | `NvVideoDecoder::createVideoDecoder()` | `delete ctx->dec` | After `STREAMOFF`, after thread join |
+| `NvVideoEncoder*` | `NvVideoEncoder::createVideoEncoder()` | `delete ctx->enc` | After `stopDQThread` + `waitForDQThread` |
+| DMA buffer FDs (capture) | `NvBufSurf::NvAllocate` / `NvBufferCreateEx` | `NvBufferDestroy` / `NvBufSurf::NvDestroy` | Batch-allocated, individually destroyed |
+| `NVMPI_frameBuf` | `new NVMPI_frameBuf()` + `alloc()` | `destroy()` + pool teardown | `destroy()` is idempotent (checks `fd >= 0`, nulls after) |
+| `NVMPI_bufPool` | `new NVMPI_bufPool<T>()` | Caller drains both queues, then `delete pool` | Pool delete does NOT free contents — caller responsibility |
+| `nvPacket` (enc wrapper) | `nvmpienc_nvPacket_alloc` → `malloc` + `av_packet_alloc` | `av_packet_free` + `free(nPkt)` | Must drain both empty and filled queues |
+| Encoder output_plane FDs | `NvBufSurf::NvAllocate` (DMA mode) | `NvBufSurf::NvDestroy` per FD, `delete[]` array | Only in `OUTPLANE_MEMTYPE_DMA` mode |
+| Capture thread (dec) | `std::thread(dec_capture_loop_fcn)` | `.join()` after `eos = true` + `STREAMOFF` | Must complete before any buffer destruction |
+| DQ thread (enc) | `startDQThread()` | `stopDQThread()` + `waitForDQThread(1000)` | Must complete before pool/encoder destruction |
+
+**Thread-before-resource rule:** Always join/stop threads before destroying any resource they touch. The decoder sets `eos = true` and calls `STREAMOFF` to unblock the capture loop, then joins. The encoder stops the DQ thread with a timeout. Violating this order causes use-after-free.
+
+### 2. Hygiene & anti-exploitation
+
+- **Zero-initialize on allocation:** Every buffer allocated for frame data, packet payloads, or codec state must be zero-initialized (`memset`, `calloc`, `= {}`, or `std::fill`). Never expose raw uninitialized memory.
+- **Zero-out before free:** `memset` sensitive buffers (decoded frame data, encoded packet payloads, codec parameter sets, key-frame content) to zero before deallocation. Prevents information disclosure if freed memory is recycled.
+- **Check-and-Null pattern:** After every `free`/`delete`/`av_freep`/`NvBufferDestroy`:
+  - Set pointers to `NULL`/`nullptr`
+  - Set file descriptors to `-1`
+  - This project already does this in `NVMPI_frameBuf::destroy()` (`dst_dma_fd = -1; dst_dma_surface = NULL`) — apply the same discipline everywhere.
+- **No dangling references in pools:** When draining `NVMPI_bufPool`, free each item as it is dequeued — never delete the pool while items remain inside.
+
+### 3. Defensive media parsing
+
+All media bytes entering `nvmpi_decoder_put_packet`, `nvmpi_encoder_put_frame`, or any FFmpeg `send_packet`/`send_frame` path are **untrusted input**. Apply:
+
+- **Validate before allocate:** Check frame dimensions, slice lengths, packet sizes, and offset indexes against sane bounds and hardware limits before allocating memory or indexing arrays.
+- **Integer overflow protection:** Explicitly check arithmetic on bitstream lengths, plane sizes, stride calculations, and buffer offsets. Use `size_t` for sizes; check `a + b < a` or use compiler builtins (`__builtin_add_overflow`) for overflow detection.
+- **V4L2 buffer bounds:** Validate that data written to V4L2 OUTPUT plane buffers does not exceed the negotiated `v4l2_buffer.length`. Validate CAPTURE plane buffer sizes against the format's `sizeimage`.
+- **Resolution-change safety:** During dynamic resolution changes (decoder), fully tear down and reallocate capture-plane buffers. Never reuse stale buffer dimensions or FD arrays from the previous resolution.
+- **NAL/start-code parsing:** When parsing H.264/HEVC NAL units or MPEG start codes, always bounds-check the read pointer against the packet end before each byte access.
+
+### 4. Code comments policy (override default)
+
+**This project requires extensive comments in all C/C++ source files.** This overrides the general "no comments" default. Security-critical, hardware-interfacing code demands clear documentation for auditability and for developers unfamiliar with V4L2/Jetson internals.
+
+**What to comment:**
+
+- **Resource lifecycle boundaries:** Mark every allocation with a comment naming its deallocation site. Mark every deallocation with a comment confirming what it frees and that it is the single deallocation point.
+  ```c
+  /* Allocated here; freed in nvmpi_decoder_close() via deinitFramePool() */
+  fb = new NVMPI_frameBuf();
+  ```
+- **Thread safety assumptions:** Document which lock protects which data, what the expected lock-hold duration is, and any lock ordering requirements.
+  ```cpp
+  /* m_emptyBuf mutex: guards the empty-buffer queue.
+   * Never hold both m_emptyBuf and m_filledBuf simultaneously. */
+  ```
+- **Defensive checks:** Explain WHY each validation exists — what attack or corruption scenario it prevents.
+  ```c
+  /* Prevent integer overflow: attacker-controlled width*height could wrap
+   * size_t on 32-bit, causing undersized allocation then heap overflow. */
+  if (width > MAX_DIM || height > MAX_DIM) return AVERROR(EINVAL);
+  ```
+- **V4L2/hardware interaction sequences:** Comment each ioctl call, STREAMOFF/STREAMON transition, and buffer queue/dequeue with the expected device state.
+- **Version-gated code:** Every `#if LIBAVCODEC_VERSION_MAJOR` or `#ifdef WITH_NVUTILS` block must have a comment explaining which API change it handles and which FFmpeg/JetPack versions are affected.
+  ```c
+  #if LIBAVCODEC_VERSION_MAJOR >= 60
+  /* FFCodec replaced AVCodec in libavcodec 60 (FFmpeg 6.0+) */
+  ```
+- **Non-obvious control flow:** `goto cleanup`, fall-through in switch, early-exit conditions, EOS signal propagation.
+- **Known limitations and TODOs:** Mark incomplete error handling or known gaps with `/* TODO: */` and a description of the risk.
+
+**What NOT to comment:** Do not restate what the code literally does (`i++ /* increment i */`). Do not write multi-paragraph essays. One or two lines per comment. Let well-named identifiers carry the "what"; comments carry the "why" and "beware."
+
+### 5. Known gaps — address on contact
+
+These are existing issues found in the codebase. When touching code near them, fix or at minimum do not worsen:
+
+| Location | Gap | Risk |
+|----------|-----|------|
+| `nvmpi_enc.c:161-169` (`nvmpienc_initPktPool`) | No rollback on mid-loop allocation failure; existing TODO | Packet memory leak on partial init failure |
+| `nvmpi_enc.c:280-282` (extradata encoder creation) | Return value of `nvmpi_create_encoder` unchecked; TODO comment present | NULL deref if encoder creation fails during extradata extraction |
+| `nvmpi_enc.c:387` (main encoder creation) | Same unchecked return; TODO comment present | NULL deref on encoder creation failure |
+| `nvmpi_dec.cpp:71`, `nvmpi_enc.cpp:89-90` | EOS/flushing flags are plain `bool`, not `std::atomic<bool>` | Data race between main thread and capture/DQ thread (undefined behavior per C++ standard; works in practice on ARM due to aligned-word atomicity, but not guaranteed) |
+| `nvmpi_dec.cpp:43-47` (`TEST_ERROR` macro) | Logs error but does not return or set error code | Execution continues after allocation failure; downstream code may deref invalid buffer |
+
+### 6. Code delivery style
+
+- Minimal, clean, scannable code. No unnecessary abstraction layers.
+- Avoid modern high-level C++ abstractions that add runtime overhead (exceptions, RTTI, `std::shared_ptr` where raw ownership is clear) unless they demonstrably improve safety without measurable cost.
+- Prefer `static inline` helpers over macros when type safety matters.
+- Match existing code style: 4-space tabs in C++ (`src/`), FFmpeg style (4-space indent, no tabs) in `ffmpeg/dev/`.
+- All new code must compile cleanly across the full FFmpeg version matrix (4.2–8.0) and both JetPack buffer API generations.
+
 ## Branch naming convention
 
 All work branches follow the pattern `{type}/{NR}-{short-desc}`:
