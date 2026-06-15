@@ -35,6 +35,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libtool \
     libvorbis-dev \
     libx264-dev \
+    libx265-dev \
     libxcb1-dev \
     libxcb-shm0-dev \
     libxcb-xfixes0-dev \

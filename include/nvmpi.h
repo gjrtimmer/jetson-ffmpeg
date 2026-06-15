@@ -31,10 +31,13 @@
 //to the API family (decoder_* or encoder_*) that created it.
 typedef struct nvmpictx nvmpictx;
 
-//Raw (uncompressed) pixel layouts supported for decoder output.
+//Raw (uncompressed) pixel layouts. Used for decoder output and encoder
+//input. NV_PIX_P010 is 10-bit 4:2:0 semi-planar (matches FFmpeg P010LE) and
+//is decode-only, HEVC Main10 only, and requires the NvUtils buffer API.
 typedef enum {
 	NV_PIX_NV12,
-	NV_PIX_YUV420
+	NV_PIX_YUV420,
+	NV_PIX_P010
 }nvPixFormat;
 
 //Compressed bitstream codec selector. Decode supports all entries;
@@ -70,6 +73,8 @@ typedef struct _NVENCPARAM{
 	char enableLossless;           //non-zero: constant QP 0 / High 4:4:4 (H.264 only)
 	char mode_vbr;                 //non-zero: VBR rate control instead of CBR
 	char insert_spspps_idr;        //non-zero: repeat SPS/PPS at every IDR frame
+	char insert_vui;               //non-zero: embed VUI timing_info (fps) in the bitstream
+	nvPixFormat pixFormat;         //raw input layout: NV_PIX_YUV420 (default) or NV_PIX_NV12
 	unsigned int iframe_interval;  //I-frame period in frames
 	unsigned int idr_interval;     //IDR period in frames
 	unsigned int fps_n;            //framerate numerator

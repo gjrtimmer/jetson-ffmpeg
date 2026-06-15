@@ -33,6 +33,14 @@
 #define NvBufferColorFormat_NV12_709 NVBUF_COLOR_FORMAT_NV12_709
 #define NvBufferColorFormat_NV12_709_ER NVBUF_COLOR_FORMAT_NV12_709_ER
 #define NvBufferColorFormat_NV12_2020 NVBUF_COLOR_FORMAT_NV12_2020
+//10-bit semi-planar 4:2:0 (P010LE) variants, by colorimetry/luma range.
+//Only present in the NvUtils API (JetPack 5+); P010 decode is gated on
+//WITH_NVUTILS for exactly this reason.
+#define NvBufferColorFormat_NV12_10LE NVBUF_COLOR_FORMAT_NV12_10LE
+#define NvBufferColorFormat_NV12_10LE_ER NVBUF_COLOR_FORMAT_NV12_10LE_ER
+#define NvBufferColorFormat_NV12_10LE_709 NVBUF_COLOR_FORMAT_NV12_10LE_709
+#define NvBufferColorFormat_NV12_10LE_709_ER NVBUF_COLOR_FORMAT_NV12_10LE_709_ER
+#define NvBufferColorFormat_NV12_10LE_2020 NVBUF_COLOR_FORMAT_NV12_10LE_2020
 #define NvBufferColorFormat_YUV420 NVBUF_COLOR_FORMAT_YUV420
 //#define NvBufferColorFormat_ABGR32 NVBUF_COLOR_FORMAT_BGRA
 //NVBUF_COLOR_FORMAT_BGR - BGR-8-8-8 single plane. /nvbufsurface API only/
