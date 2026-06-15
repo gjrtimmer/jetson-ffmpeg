@@ -55,13 +55,13 @@ RUN groupadd --gid ${USER_GID} ${USERNAME} 2>/dev/null || true \
 
 COPY bashrc /etc/bashrc-custom
 
+RUN pip3 install --no-cache-dir jetson-stats
+
 # nvm + Node.js LTS
 RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.5/install.sh | bash \
     && . "${HOME}/.nvm/nvm.sh" \
     && nvm install --lts
 USER ${USERNAME}
-
-RUN pip3 install --no-cache-dir jetson-stats
 
 RUN NONINTERACTIVE=1 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
