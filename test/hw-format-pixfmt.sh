@@ -130,12 +130,16 @@ fps_on=$(ffprobe -v error -select_streams v:0 -show_entries stream=r_frame_rate 
 fps_off=$(ffprobe -v error -select_streams v:0 -show_entries stream=r_frame_rate \
   -of csv=p=0 /tmp/nvmpi-pf-vui-off.h264 || true)
 echo "   insert_vui=1 -> r_frame_rate=${fps_on:-unknown}; insert_vui=0 -> r_frame_rate=${fps_off:-unknown}"
-# With VUI on, the 30 fps timing must be recoverable from the bitstream.
-case "${fps_on}" in
-  30/1|30000/1000|*30*) : ;;
-  *) echo "FAIL: insert_vui=1 did not embed fps in the bitstream (got ${fps_on:-unknown})."
-     echo "Code: src/nvmpi_enc.cpp (setInsertVuiEnabled); nvmpi_enc.c (insert_vui AVOption)."
-     exit 1 ;;
-esac
+# With VUI on, the probed fps must be a normal frame rate, not the huge
+# fallback (e.g. 1200000/1) that ffprobe reports when no timing info is
+# present.  H.264 VUI encodes time_scale/(2*num_units_in_tick); different
+# FFmpeg versions may report 30/1 or 60/1 for a 30-fps source, so we check
+# the numerator is reasonable (<= 120) rather than matching an exact value.
+fps_num="${fps_on%%/*}"
+if [ "${fps_num:-0}" -le 0 ] || [ "${fps_num}" -gt 120 ]; then
+  echo "FAIL: insert_vui=1 did not embed fps in the bitstream (got ${fps_on:-unknown})."
+  echo "Code: src/nvmpi_enc.cpp (setInsertVuiEnabled); nvmpi_enc.c (insert_vui AVOption)."
+  exit 1
+fi
 
 echo "OK: hw-format-pixfmt passed on ${variant}."
