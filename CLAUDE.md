@@ -127,6 +127,16 @@ All commits MUST follow [Conventional Commits](https://www.conventionalcommits.o
 
 Examples: `feat(scripts): add build.sh for libnvmpi`, `fix(nvmpi): guard against null frame buffer`, `docs: document dev-container aliases`.
 
+**Split commits by concern** — never lump implementation, tests, and
+build/infra into a single commit. At minimum use separate commits for:
+
+1. **Implementation** — library code, FFmpeg integration, regenerated patches.
+2. **Tests** — new or modified test suites, test helpers, sample generators.
+3. **Build / infra / docs** — build scripts, CI, devcontainer, documentation.
+
+The `Fixes #N` footer goes on the implementation commit. Structure commits
+incrementally as work progresses, not as a single checkpoint before a gate run.
+
 **Never amend or rewrite an existing commit just to add metadata** (issue
 closing references, notes). Add an empty commit instead:
 `git commit --allow-empty -m "<type>: <subject>" -m "Fixes #N"`. Amending
