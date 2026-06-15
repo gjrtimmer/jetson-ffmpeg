@@ -13,3 +13,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 RUN echo 'Dpkg::Options { "--force-confdef"; "--force-confold"; };' \
         > /etc/apt/apt.conf.d/99-force-confold
+
+# jetson-stats: provides jtop Python API for NVDEC/NVENC/GPU utilization
+# metrics in hw-perf-bench.sh during CI hw-test jobs.
+RUN pip3 install --no-cache-dir jetson-stats
