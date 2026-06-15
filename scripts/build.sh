@@ -35,6 +35,11 @@
 #   --ffmpeg-prefix D  FFmpeg --prefix used when --install is given.
 #   --ffmpeg-args "A"  Extra ./configure args appended to the FFmpeg defaults.
 #   --no-libx264       Drop the default FFmpeg "--enable-gpl --enable-libx264".
+#   --no-libx265       Never add "--enable-libx265" (otherwise auto-enabled
+#                      when its dev headers are present). libx265 is optional
+#                      (software HEVC encoder); it is NOT needed for nvmpi or
+#                      for P010 hardware decode — only to generate the 10-bit
+#                      HEVC test sample in test/hw-format-pixfmt.sh.
 #
 # Quick builds:
 #   scripts/build.sh                 # libnvmpi only
@@ -64,6 +69,7 @@ FFMPEG_DIR="${FFMPEG_SRC_DIR:-$HOME/ffmpeg-build}"
 FFMPEG_PREFIX=""
 FFMPEG_ARGS=""
 WITH_X264=1
+WITH_X265="auto"   # auto|1|0; auto = enable --enable-libx265 if pkg-config finds x265
 
 usage() { sed -n '2,/^set /{/^set /d;s/^# \{0,1\}//;p}' "${BASH_SOURCE[0]}"; }
 
@@ -81,6 +87,7 @@ while [ $# -gt 0 ]; do
         --ffmpeg-prefix) FFMPEG_PREFIX="$2"; shift ;;
         --ffmpeg-args)  FFMPEG_ARGS="$2"; shift ;;
         --no-libx264)   WITH_X264=0 ;;
+        --no-libx265)   WITH_X265=0 ;;
         -j)             JOBS="$2"; shift ;;
         -j*)            JOBS="${1#-j}" ;;
         -h|--help)      usage; exit 0 ;;
@@ -160,6 +167,13 @@ export LD_LIBRARY_PATH="${PREFIX}/lib:/usr/lib/aarch64-linux-gnu/tegra:${LD_LIBR
 
 FF_CONF=(--enable-nvmpi --disable-doc)
 [ "${WITH_X264}" -eq 1 ] && FF_CONF+=(--enable-gpl --enable-libx264)
+# libx265 is optional (software HEVC encoder; used only to generate the 10-bit
+# HEVC test sample). auto = enable when its dev headers are present, so a
+# build.sh-built FFmpeg can run the full test suite; never required otherwise.
+if [ "${WITH_X265}" = auto ]; then
+    if pkg-config --exists x265 2>/dev/null; then WITH_X265=1; else WITH_X265=0; fi
+fi
+[ "${WITH_X265}" -eq 1 ] && FF_CONF+=(--enable-gpl --enable-libx265)
 [ -n "${FFMPEG_PREFIX}" ] && FF_CONF+=("--prefix=${FFMPEG_PREFIX}")
 # shellcheck disable=SC2206
 [ -n "${FFMPEG_ARGS}" ] && FF_CONF+=(${FFMPEG_ARGS})

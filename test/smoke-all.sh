@@ -14,7 +14,10 @@
 #   - A real Jetson with the Multimedia API (for the hw stages).
 #   - Build deps for FFmpeg incl. libx264 (the dev container installs these;
 #     in CI they are apt-installed). libx264 is needed because the hw suites
-#     generates its H.264 input with libx264.
+#     generate their H.264 input with libx264. libx265 is optional — enabled
+#     automatically when its dev headers are present — and lets the
+#     format-pixfmt suite generate a 10-bit HEVC sample for the P010 case;
+#     without it that one case is skipped.
 #
 # Usage:
 #   test/smoke-all.sh [options]
@@ -76,7 +79,12 @@ for v in $VERSIONS; do
     if "${REPO_ROOT}/scripts/ffpatch.sh" "$d"; then patch_r=OK; else patch_r=FAIL; fi
 
     if [ "$patch_r" = OK ]; then
-        if ( cd "$d" && ./configure --enable-nvmpi --enable-gpl --enable-libx264 --disable-doc ); then
+        # libx265 is optional: only enable it when the dev headers are present
+        # (the format-pixfmt suite uses it to generate a 10-bit HEVC sample for
+        # the P010 case, and skips that case when it is absent).
+        x265_flag=""
+        if pkg-config --exists x265 2>/dev/null; then x265_flag="--enable-libx265"; fi
+        if ( cd "$d" && ./configure --enable-nvmpi --enable-gpl --enable-libx264 $x265_flag --disable-doc ); then
             conf_r=OK
         else conf_r=FAIL; fi
     fi
