@@ -12,6 +12,7 @@
 #include <queue>
 #include <mutex>
 #include <condition_variable>
+#include <atomic>
 
 //default max size (bytes) of one compressed input chunk on the OUTPUT
 //plane; 4 MB proved too small for 4K high-bitrate I-frames. Overridable
@@ -38,7 +39,8 @@ using namespace std;
 struct nvmpictx
 {
 	NvVideoDecoder *dec{nullptr};       //NVIDIA V4L2 decoder device wrapper
-	bool eos{false};                    //set on EOS or fatal error; stops capture loop
+	std::atomic<bool> eos{false};       //set on EOS or fatal error; stops capture loop
+	                                    //(atomic: read by user thread, written by capture thread)
 	int index{0};                       //next OUTPUT-plane buffer index until all are used once
 	unsigned int coded_width{0};        //stream resolution reported by the decoder (crop)
 	unsigned int coded_height{0};
@@ -71,6 +73,7 @@ struct nvmpictx
 	uint32_t chunk_size{CHUNK_SIZE_DEFAULT}; //bytes per compressed-input OUTPUT-plane buffer
 	bool max_perf{true};                //lift NVDEC clock governor for max throughput
 	bool disable_dpb{false};            //skip DPB reordering (low-latency, B-frame-free only)
+	int wait_timeout_ms{500};           //blocking dequeue ceiling (ms); set via AVOption
 	//producer/consumer pool: capture thread fills, user thread consumes
 	NVMPI_bufPool<NVMPI_frameBuf*>* framePool;
 	//all frame bufs ever allocated by initFramePool — ensures deinitFramePool

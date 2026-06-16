@@ -143,6 +143,28 @@ The vendored file is a byte-for-byte copy of the JetPack 6 (R36.4.x) original wi
 
 ---
 
+## Unit Tests
+
+libnvmpi includes unit tests for platform-independent components. These run on
+any host (no Jetson hardware required).
+
+```bash
+# Build with tests enabled
+mkdir build && cd build
+cmake -DBUILD_TESTING=ON ..
+make -j$(nproc)
+
+# Run all unit tests
+ctest --output-on-failure
+```
+
+The `BUILD_TESTING` option adds the `test_bufpool` target, which validates the
+`NVMPI_bufPool` blocking dequeue, shutdown, reset, and concurrent access paths.
+
+For hardware tests (require Jetson), see [test/README.md](../test/README.md).
+
+---
+
 ## Verifying the Installation
 
 **Check libnvmpi is installed:**

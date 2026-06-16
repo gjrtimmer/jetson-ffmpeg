@@ -18,11 +18,16 @@ engines (NVDEC/NVENC/VIC) actually engaged.
 | `hw-decoder-pool.sh` | suite | `frame_pool_size` AVOption boundary values (min=1, max=32); no deadlock or crash at extremes |
 | `hw-encoder-header.sh` | suite | `-flags +global_header` yields non-empty extradata for h264_nvmpi **and** hevc_nvmpi (bounded NAL scan incl. the H.265 VPS/SPS/PPS branch) |
 | `hw-encoder-gop.sh` | suite | `AV_PKT_FLAG_KEY` only on IDR packets at the configured GOP cadence (upstream [Keylost#26](https://github.com/Keylost/jetson-ffmpeg/issues/26) all-keyframe bug guard) |
+| `hw-decoder-blocking-wait.sh` | suite | Blocking wait (`wait=true`) in `get_frame`: low-delay frames arrive, EOS no hang, latency comparison, `wait_timeout` AVOption, HEVC blocking, rapid open/close |
+| `hw-decoder-lifecycle.sh` | suite | Decoder lifecycle correctness: normal decode, flush+reuse (seek), short file EOS |
+| `hw-perf-blocking-wait.sh` | suite | Non-fatal performance metrics: first-frame latency, CPU usage, decode throughput (fps) |
 | `gen-samples.sh` | helpers | Input-sample paths + generators (sourced by suites, never executed) |
 | `smoke-all.sh` | harness | Full cross-version matrix: builds libnvmpi, then patch→configure→build→`hw-all.sh` for **every** supported FFmpeg version |
+| `unit/test_bufpool.cpp` | unit test | NVMPI_bufPool blocking dequeue, shutdown, reset, concurrent stress (no Jetson required; build with `-DBUILD_TESTING=ON`) |
 
-Planned expansion (lifecycle, formats, flush, JPEG, perf, libnvmpi API
-harness): see [#27](https://github.com/gjrtimmer/jetson-ffmpeg/issues/27).
+Planned expansion (formats, JPEG, libnvmpi API harness): see
+[#27](https://github.com/gjrtimmer/jetson-ffmpeg/issues/27). Lifecycle, flush,
+and perf suites landed with [#10](https://github.com/gjrtimmer/jetson-ffmpeg/issues/10).
 
 ## Running
 

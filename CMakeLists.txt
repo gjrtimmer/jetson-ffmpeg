@@ -135,3 +135,12 @@ install(FILES ${CMAKE_BINARY_DIR}/nvmpi.pc
 	    DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/pkgconfig)
 install(FILES ${CMAKE_BINARY_DIR}/nvmpi.pc
 	    DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig)
+
+find_package(Threads REQUIRED)
+include(CTest)
+if(BUILD_TESTING)
+  add_executable(test_bufpool test/unit/test_bufpool.cpp)
+  target_include_directories(test_bufpool PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+  target_link_libraries(test_bufpool PRIVATE Threads::Threads)
+  add_test(NAME bufpool COMMAND test_bufpool)
+endif()

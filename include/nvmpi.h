@@ -102,6 +102,7 @@ typedef struct _NVDECPARAM{
 	                         //One input packet (access unit) must fit in one chunk.
 	int max_perf;            //non-zero: lift NVDEC clock governor (max clocks)
 	int disable_dpb;         //non-zero: skip decoded-picture-buffer reordering (low-latency)
+	int wait_timeout;        //blocking wait timeout in ms (0 = use default 500ms)
 } nvDecParam;
 
 //Compressed packet exchanged across the API boundary.
@@ -153,8 +154,10 @@ extern "C" {
 
 	//Retrieve one decoded frame by copying it into the caller-provided
 	//frame->payload planes (which must already be allocated with matching
-	//linesize). Returns 0 on success or -1 if no decoded frame is ready
-	//(non-blocking; the 'wait' flag is currently not honoured).
+	//linesize). When wait is false: non-blocking, returns -1 immediately
+	//if no frame is ready. When wait is true: blocks up to wait_timeout
+	//milliseconds (configurable via nvDecParam.wait_timeout, default
+	//500ms). Returns -1 on timeout or shutdown.
 	int nvmpi_decoder_get_frame(nvmpictx* ctx, nvFrame* frame,bool wait);
 
 	//Reset the decoder pipeline for seek / stream restart: stops the

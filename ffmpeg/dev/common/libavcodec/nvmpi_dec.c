@@ -54,6 +54,10 @@
 #define OPT_chunk_size_MAX (64*1024*1024)
 #define OPT_chunk_size_AUTO 0
 
+#define OPT_wait_timeout_MIN 50
+#define OPT_wait_timeout_MAX 5000
+#define OPT_wait_timeout_AUTO 0
+
 //Per-instance private context (priv_data of the AVCodecContext).
 //AVClass must stay discoverable for the AVOption system; resize_expr and
 //frame_pool_size are set via AVOptions before init.
@@ -67,6 +71,7 @@ typedef struct {
 	int chunk_size;        //"-chunk_size N" option (bytes; 0 = auto)
 	int max_perf;          //lift NVDEC clock governor (default on)
 	int disable_dpb;       //skip DPB reordering (low-latency, default off)
+	int wait_timeout;      //blocking wait timeout in ms (0 = default 500ms)
 	int output_format;     //requested output pixel format (AVPixelFormat; NONE = auto)
 } nvmpiDecodeContext;
 
@@ -120,6 +125,7 @@ static int nvmpi_init_decoder(AVCodecContext *avctx)
 
 	param.max_perf = nvmpi_context->max_perf;
 	param.disable_dpb = nvmpi_context->disable_dpb;
+	param.wait_timeout = nvmpi_context->wait_timeout;
 
 	//Output pixel-format negotiation. The decoder can emit YUV420P, NV12, or
 	//(HEVC Main10 only) 10-bit P010LE, all produced natively by the VIC
@@ -395,6 +401,7 @@ static const AVOption options[] = {
     { "chunk_size", "Bytes per compressed-input buffer; one input packet must fit in one chunk (0 = auto, 10 MiB)", OFFSET(chunk_size), AV_OPT_TYPE_INT, {.i64 = OPT_chunk_size_AUTO }, 0, OPT_chunk_size_MAX, VD, "chunk_size" },
     { "max_perf", "Enable max performance mode (lifts NVDEC clock governor)", OFFSET(max_perf), AV_OPT_TYPE_BOOL, {.i64 = 1 }, 0, 1, VD, "max_perf" },
     { "disable_dpb", "Disable decoded-picture-buffer reordering (low-latency, B-frame-free streams only)", OFFSET(disable_dpb), AV_OPT_TYPE_BOOL, {.i64 = 0 }, 0, 1, VD, "disable_dpb" },
+    { "wait_timeout", "Blocking wait timeout in milliseconds for low-delay mode (0 = default 500ms)", OFFSET(wait_timeout), AV_OPT_TYPE_INT, {.i64 = OPT_wait_timeout_AUTO }, 0, OPT_wait_timeout_MAX, VD, "wait_timeout" },
     { "output_format", "Decoder output pixel format (default auto=yuv420p; nv12; p010le for 10-bit HEVC)", OFFSET(output_format), AV_OPT_TYPE_PIXEL_FMT, {.i64 = AV_PIX_FMT_NONE }, -1, INT_MAX, VD },
     { NULL }
 };
