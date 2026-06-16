@@ -12,7 +12,7 @@ Invoke: **`/retro`** or **`/retro <session-id-prefix>`** (target one session).
 
 ## Skill Version
 
-<!-- retro:version:4 -->
+<!-- retro:version:5 -->
 Track version here. Each self-improvement pass increments this counter and
 logs what changed in the commit message.
 
@@ -55,6 +55,7 @@ messages matching correction/feedback patterns. The script must:
 | `rule_violation` | never, already told you, we agreed, don't again | Violated an established rule or repeated a known mistake |
 | `missed_instruction` | missed, forgot, didn't, should have | Failed to follow an explicit instruction |
 | `premature_action` | do not start, analyze only, just plan, prepare but don't | Jumped from analysis/planning to implementation without go |
+| `unrequested_addition` | why is this added, should not have been added, not asked for | Added CI jobs, features, or changes the user didn't request |
 | `cost_concern` | cheaper, waste tokens, subagent model, too expensive | User flagging token/cost waste — use cheaper models, fewer calls |
 | `positive_signal` | yes exactly, perfect, good, correct, nice | Approach was validated — preserve what worked |
 
@@ -272,6 +273,11 @@ const PATTERNS = {
     /\byou need to\b/i, /\bwas supposed to\b/i,
     /\bdo not forget\b/i, /\bensure that\b.*\bshould\b/i,
     /\bensure.*all\b/i, /\bcover all\b/i, /\bat least cover\b/i
+  ],
+  unrequested_addition: [
+    /\bwhy\s+(is|was)\s+this\s+added\b/i, /\bshould not have been added\b/i,
+    /\bnot\s+asked\s+for\b/i, /\bwho\s+asked\b/i,
+    /\bI\s+didn'?t\s+(ask|request)\b/i
   ],
   premature_action: [
     /\bdo not\s+start\b/i, /\bjust\s+(analyze|plan|check)\b/i,
