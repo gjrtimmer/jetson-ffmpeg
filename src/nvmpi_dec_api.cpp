@@ -151,7 +151,8 @@ void nvmpictx::initFramePool()
 //streaming on it, then spawns the capture thread. The CAPTURE plane and
 //frame pool are NOT set up here — that happens on the capture thread once
 //the first resolution-change event reveals the stream geometry.
-//Returns the new context (errors are currently only logged, not returned).
+//Returns the new context, or NULL on failure (V4L2 device unavailable,
+//ioctl error, or unsupported configuration).
 nvmpictx* nvmpi_create_decoder(nvDecParam* param)
 {
 	int ret;
@@ -170,12 +171,29 @@ nvmpictx* nvmpi_create_decoder(nvDecParam* param)
 
 	nvmpictx* ctx=new nvmpictx();
 
+	/* Open the V4L2 decoder device. Returns NULL when the kernel device
+	 * is temporarily unavailable (e.g. after rapid open/close stress) —
+	 * propagate NULL so the FFmpeg wrapper reports AVERROR_EXTERNAL
+	 * instead of crashing on a NULL dereference. */
 	ctx->dec = NvVideoDecoder::createVideoDecoder("dec0");
-	TEST_ERROR(!ctx->dec, "Could not create decoder",ret);
+	if (!ctx->dec)
+	{
+		std::cerr << "[libnvmpi][E]: Could not create decoder "
+		          << "(V4L2 device unavailable)" << std::endl;
+		delete ctx;
+		return NULL;
+	}
 
 	ret=ctx->dec->subscribeEvent(V4L2_EVENT_RESOLUTION_CHANGE, 0, 0);
-	TEST_ERROR(ret < 0, "Could not subscribe to V4L2_EVENT_RESOLUTION_CHANGE", ret);
-	
+	if (ret < 0)
+	{
+		std::cerr << "[libnvmpi][E]: Could not subscribe to "
+		          << "V4L2_EVENT_RESOLUTION_CHANGE" << std::endl;
+		delete ctx->dec;
+		delete ctx;
+		return NULL;
+	}
+
 	ctx->frame_pool_size = param->frame_pool_size;
 	ctx->max_perf = param->max_perf;
 	ctx->disable_dpb = param->disable_dpb;
@@ -223,13 +241,24 @@ nvmpictx* nvmpi_create_decoder(nvDecParam* param)
 
 	//OUTPUT plane: compressed input, buffers sized ctx->chunk_size
 	ret=ctx->dec->setOutputPlaneFormat(ctx->decoder_pixfmt, ctx->chunk_size);
-
-	TEST_ERROR(ret < 0, "Could not set output plane format", ret);
+	if (ret < 0)
+	{
+		std::cerr << "[libnvmpi][E]: Could not set output plane format" << std::endl;
+		delete ctx->dec;
+		delete ctx;
+		return NULL;
+	}
 
 	//input mode 0 = feed complete NAL units / frames per buffer
 	ret = ctx->dec->setFrameInputMode(0);
-	TEST_ERROR(ret < 0, "Error in decoder setFrameInputMode for NALU", ret);
-	
+	if (ret < 0)
+	{
+		std::cerr << "[libnvmpi][E]: Error in decoder setFrameInputMode" << std::endl;
+		delete ctx->dec;
+		delete ctx;
+		return NULL;
+	}
+
 	if(ctx->disable_dpb)
 	{
 		ret = ctx->dec->disableDPB();
@@ -245,10 +274,25 @@ nvmpictx* nvmpi_create_decoder(nvDecParam* param)
 	//10 USERPTR buffers on the OUTPUT plane; packet data is memcpy'd into
 	//them in nvmpi_decoder_put_packet()
 	ret = ctx->dec->output_plane.setupPlane(V4L2_MEMORY_USERPTR, 10, false, true);
-	TEST_ERROR(ret < 0, "Error while setting up output plane", ret);
+	if (ret < 0)
+	{
+		std::cerr << "[libnvmpi][E]: Error while setting up output plane" << std::endl;
+		delete ctx->dec;
+		delete ctx;
+		return NULL;
+	}
 
-	ctx->dec->output_plane.setStreamStatus(true);
-	TEST_ERROR(ret < 0, "Error in output plane stream on", ret);
+	/* Capture the return value — previous code tested stale ret from
+	 * setupPlane(), silently missing setStreamStatus failures. */
+	ret = ctx->dec->output_plane.setStreamStatus(true);
+	if (ret < 0)
+	{
+		std::cerr << "[libnvmpi][E]: Error in output plane stream on" << std::endl;
+		ctx->dec->output_plane.deinitPlane();
+		delete ctx->dec;
+		delete ctx;
+		return NULL;
+	}
 
 	ctx->out_pixfmt=param->pixFormat;
 	ctx->resized = param->resized;
@@ -474,6 +518,9 @@ int nvmpi_decoder_flush(nvmpictx* ctx)
 //The handle is invalid after this call.
 int nvmpi_decoder_close(nvmpictx* ctx)
 {
+	if (!ctx)
+		return -1;
+
 	ctx->eos.store(true);
 	/* Unblock any get_frame() caller blocked in dqFilledBuf(timeout)
 	 * before STREAMOFF — otherwise the consumer hangs until its timeout

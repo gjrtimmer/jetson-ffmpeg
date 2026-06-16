@@ -272,6 +272,11 @@ static int nvmpi_close(AVCodecContext *avctx)
 		av_frame_free(&(nvmpi_context->bufFrame));
 		nvmpi_context->bufFrame = NULL;
 	}
+	/* Guard against NULL ctx — nvmpi_create_decoder may have returned NULL
+	 * (V4L2 device unavailable) and .close is called during init cleanup
+	 * when FF_CODEC_CAP_INIT_CLEANUP is set. */
+	if(!nvmpi_context->ctx)
+		return 0;
 	return nvmpi_decoder_close(nvmpi_context->ctx);
 }
 
@@ -445,6 +450,7 @@ static const AVOption options[] = {
 			.flush          = nvmpi_flush_decoder, \
 			.p.priv_class     = &nvmpi_##NAME##_dec_class, \
 			.p.capabilities   = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_AVOID_PROBING | AV_CODEC_CAP_HARDWARE, \
+			.caps_internal  = FF_CODEC_CAP_INIT_CLEANUP, \
 			.p.pix_fmts	=(const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P,AV_PIX_FMT_NV12,AV_PIX_FMT_P010LE,AV_PIX_FMT_NONE},\
 			.bsfs           = BSFS, \
 			.p.wrapper_name   = "nvmpi", \
@@ -465,6 +471,7 @@ static const AVOption options[] = {
 			.flush          = nvmpi_flush_decoder, \
 			.priv_class     = &nvmpi_##NAME##_dec_class, \
 			.capabilities   = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_AVOID_PROBING | AV_CODEC_CAP_HARDWARE, \
+			.caps_internal  = FF_CODEC_CAP_INIT_CLEANUP, \
 			.pix_fmts	=(const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P,AV_PIX_FMT_NV12,AV_PIX_FMT_P010LE,AV_PIX_FMT_NONE},\
 			.bsfs           = BSFS, \
 			.wrapper_name   = "nvmpi", \
