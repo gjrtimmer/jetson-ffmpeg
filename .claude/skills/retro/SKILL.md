@@ -26,7 +26,7 @@ Invoke: **`/retro`** or **`/retro <session-id-prefix>`** (target one session).
 
 ## Skill Version
 
-<!-- retro:version:9 -->
+<!-- retro:version:10 -->
 Track version here. Each self-improvement pass increments this counter and
 logs what changed in the commit message.
 
@@ -385,6 +385,9 @@ Skip messages that match correction patterns but are NOT user feedback:
   `make this a rule` instead)
 - Bare `\bmissed\b` or `\bdidn't\b` without subject "you" nearby (user
   describing external bugs, not correcting assistant)
+- "do not X yet" / "do not push/start/create" without frustration markers
+  ("I said", "already told", "again", "!") — proactive workflow gate from
+  user, not a correction of something the assistant already did wrong
 
 ---
 

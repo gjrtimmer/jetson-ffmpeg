@@ -72,11 +72,13 @@ pipeline — the MR pipeline is the one that matters:
 `glab mr merge <nr> --auto-merge`). Auto-merge waits for the pipeline to pass
 before merging — never force-merge or merge manually while a pipeline is
 running. The GitLab project requires pipelines to succeed before merge
-(`only_allow_merge_if_pipeline_succeeds`). **Wait for the pipeline to exist
-before setting auto-merge** — `glab mr merge --auto-merge` returns HTTP 405 if
-no pipeline has been created yet. Poll
-`glab api projects/.../merge_requests/<iid>` until `head_pipeline` is non-null
-(or `sleep 15`) before enabling auto-merge.
+(`only_allow_merge_if_pipeline_succeeds`). **Wait for the pipeline to be
+running before setting auto-merge** — `glab mr merge --auto-merge` returns
+HTTP 405 both when no pipeline exists AND when the pipeline exists but is still
+`pending` (no runner assigned yet). Poll
+`glab api projects/.../merge_requests/<iid>` until
+`head_pipeline.status` is `running` (not just non-null) before enabling
+auto-merge.
 
 **Never `rm -rf build`** — use `./scripts/build.sh --clean`; the build
 directory may be shared with a concurrent build. CI compiles libnvmpi + patches/builds all seven FFmpeg versions against `stubs/` on non-Jetson runners, and hw-tests each version on self-hosted Jetson runners. **GitLab** (`.gitlab-ci.yml`) is the active pipeline; **GitHub Actions** (`.github/workflows/ci.yml`) is manual-only (`workflow_dispatch`) because it needs self-hosted Jetson runners + arm64 containers.
