@@ -301,6 +301,13 @@ GitHub issues for this project live at **`gjrtimmer/jetson-ffmpeg`**. Use
 `gh issue create -R gjrtimmer/jetson-ffmpeg` (and `gh issue list -R …`, etc.)
 for all issue operations — do not search for the remote or guess the repo slug.
 
+**Always label issues on creation.** Every `gh issue create` must include
+`--label` flags for: type (`bug`, `enhancement`, `task`, `refactor`, …),
+area (`area:decoder`, `area:encoder`, `area:libnvmpi`, `area:ffmpeg`), and
+priority (`P0`–`P3`). If unsure about priority, default to `P3`. Check
+`gh label list -R gjrtimmer/jetson-ffmpeg` for available labels. When
+editing issues that lack labels, add them.
+
 **Issue closing rules:**
 
 - Issues fixed by code are closed **only through commits** — `Closes #N` /
