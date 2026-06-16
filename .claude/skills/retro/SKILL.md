@@ -12,7 +12,7 @@ Invoke: **`/retro`** or **`/retro <session-id-prefix>`** (target one session).
 
 ## Skill Version
 
-<!-- retro:version:5 -->
+<!-- retro:version:6 -->
 Track version here. Each self-improvement pass increments this counter and
 logs what changed in the commit message.
 
