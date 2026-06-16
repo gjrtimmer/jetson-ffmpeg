@@ -9,11 +9,11 @@ on one concern. The convention applies to both the decoder and encoder.
 
 `nvmpi_{codec}_{concern}.cpp` where `{codec}` is `dec` or `enc`:
 
-| Concern | Suffix | Decoder | Encoder (future) |
-|---------|--------|---------|------------------|
+| Concern | Suffix | Decoder | Encoder |
+|---------|--------|---------|---------|
 | Public API | `_api` | `nvmpi_dec_api.cpp` | `nvmpi_enc_api.cpp` |
 | Capture/output loop | `_capture` / `_output` | `nvmpi_dec_capture.cpp` | `nvmpi_enc_output.cpp` |
-| V4L2 plane management | `_planes` | `nvmpi_dec_planes.cpp` | `nvmpi_enc_planes.cpp` |
+| V4L2 plane management | `_planes` | `nvmpi_dec_planes.cpp` | — |
 | Internal header | `_internal.h` | `nvmpi_dec_internal.h` | `nvmpi_enc_internal.h` |
 
 Shared infrastructure:
@@ -36,7 +36,7 @@ Shared infrastructure:
 
 ### Include structure
 
-```
+```text
 include/nvmpi.h          <- public, installed
 include/NVMPI_bufPool.hpp <- public (used by both dec and enc)
 include/NVMPI_frameBuf.hpp
@@ -46,15 +46,12 @@ src/nvmpi_dec_capture.cpp <- includes nvmpi_dec_internal.h
 src/nvmpi_dec_planes.cpp  <- includes nvmpi_dec_internal.h
 ```
 
-### Applying to the encoder
+### Encoder files
 
-When encoder issues grow it beyond its current single-file size, apply the
-same split:
+The encoder follows the same modular pattern:
 
-1. Create `src/nvmpi_enc_internal.h` with the encoder's context struct.
-2. Extract the capture callback to `src/nvmpi_enc_output.cpp`.
-3. Extract plane setup to `src/nvmpi_enc_planes.cpp`.
-4. Rename `src/nvmpi_enc.cpp` to `src/nvmpi_enc_api.cpp`.
-5. Update `CMakeLists.txt`.
-
-Use the same `_api`, `_output`/`_capture`, `_planes`, `_internal.h` suffixes.
+| File | Concern |
+|------|---------|
+| `src/nvmpi_enc_api.cpp` | Public API (`create`, `put_frame`, `get_packet`, `close`, packet pool ops) |
+| `src/nvmpi_enc_output.cpp` | DQ-thread callback, output-plane DMA buffer setup |
+| `src/nvmpi_enc_internal.h` | Context struct, macros (`TEST_ERROR`, `MAX_BUFFERS`, `OUTPLANE_MEMTYPE_*`), forward declarations |

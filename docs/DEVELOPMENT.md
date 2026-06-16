@@ -36,7 +36,7 @@ See [DEVCONTAINER.md](DEVCONTAINER.md) for setup instructions covering host prer
 
 ## Repository Structure
 
-```
+```text
 jetson-ffmpeg/
 ├── CMakeLists.txt              # Build system for libnvmpi (shared + static)
 ├── nvmpi.pc.in                 # pkg-config template
@@ -49,8 +49,13 @@ jetson-ffmpeg/
 │   ├── NVMPI_frameBuf.hpp      # DMA frame buffer wrapper
 │   └── nvUtils2NvBuf.h         # Compatibility shim: NvUtils API ↔ legacy nvbuf_utils
 ├── src/
-│   ├── nvmpi_dec.cpp           # Decoder: V4L2 → DMA → frame pool → user
-│   ├── nvmpi_enc.cpp           # Encoder: frame → V4L2 → packet pool → user
+│   ├── nvmpi_dec_api.cpp       # Decoder public API (create/put/get/flush/close)
+│   ├── nvmpi_dec_capture.cpp   # Decoder capture thread loop, resolution-change
+│   ├── nvmpi_dec_planes.cpp    # Decoder V4L2 CAPTURE-plane alloc/teardown
+│   ├── nvmpi_dec_internal.h    # Decoder context struct, macros, forward decls
+│   ├── nvmpi_enc_api.cpp       # Encoder public API (create/put/get/close)
+│   ├── nvmpi_enc_output.cpp    # Encoder DQ-thread callback, output-plane DMA setup
+│   ├── nvmpi_enc_internal.h    # Encoder context struct, macros, forward decls
 │   └── NVMPI_frameBuf.cpp      # DMA buffer alloc/destroy
 ├── stubs/                      # Stub .so files for cross-compilation (aarch64)
 ├── ffmpeg/                     # FFmpeg integration layer
@@ -84,7 +89,7 @@ jetson-ffmpeg/
 
 The project has two distinct layers:
 
-```
+```text
 ┌─────────────────────────────────────────────────────┐
 │                    FFmpeg Process                     │
 │                                                       │
@@ -96,8 +101,8 @@ The project has two distinct layers:
 │                         │ calls libnvmpi C API        │
 │  ┌──────────────────────▼──────────────────────────┐ │
 │  │ libnvmpi (shared library, installed on system)  │ │
-│  │   nvmpi_dec.cpp   (V4L2 decoder)                │ │
-│  │   nvmpi_enc.cpp   (V4L2 encoder)                │ │
+│  │   nvmpi_dec_*.cpp (V4L2 decoder, modular)       │ │
+│  │   nvmpi_enc_*.cpp (V4L2 encoder, modular)       │ │
 │  │   NVMPI_frameBuf  (DMA buffer management)       │ │
 │  └──────────────────────┬──────────────────────────┘ │
 │                         │ V4L2 / NvBuffer API         │
@@ -121,12 +126,14 @@ The project has two distinct layers:
 The library exposes a pure C API:
 
 **Decoder:**
+
 - `nvmpi_create_decoder(nvDecParam*)` — Create decoder context
 - `nvmpi_decoder_put_packet(ctx, nvPacket*)` — Feed compressed packet
 - `nvmpi_decoder_get_frame(ctx, nvFrame*, wait)` — Retrieve decoded frame
 - `nvmpi_decoder_close(ctx)` — Destroy decoder
 
 **Encoder:**
+
 - `nvmpi_create_encoder(nvEncParam*)` — Create encoder context
 - `nvmpi_encoder_put_frame(ctx, nvFrame*)` — Feed raw frame
 - `nvmpi_encoder_get_packet(ctx, nvPacket**)` — Retrieve encoded packet
@@ -155,7 +162,7 @@ Source files follow `nvmpi_{codec}_{concern}.cpp` — see
 [ARCHITECTURE.md](ARCHITECTURE.md) for the full convention, include
 structure, and encoder migration path.
 
-Current decoder files:
+Decoder files:
 
 | File | Concern |
 |------|---------|
@@ -164,10 +171,19 @@ Current decoder files:
 | `src/nvmpi_dec_planes.cpp` | V4L2 CAPTURE-plane alloc/teardown, color format selection |
 | `src/nvmpi_dec_internal.h` | Context struct, macros, forward declarations |
 
+Encoder files:
+
+| File | Concern |
+|------|---------|
+| `src/nvmpi_enc_api.cpp` | Public API (`create`, `put_frame`, `get_packet`, `close`, packet pool ops) |
+| `src/nvmpi_enc_output.cpp` | DQ-thread callback, output-plane DMA buffer setup |
+| `src/nvmpi_enc_internal.h` | Context struct, macros (`TEST_ERROR`, `MAX_BUFFERS`, `OUTPLANE_MEMTYPE_*`) |
+
 When adding a new feature:
-1. Identify which concern it touches (API? capture loop? planes?).
+
+1. Identify which concern it touches (API? capture/output loop? planes?).
 2. Edit only that file. If it doesn't fit any existing concern, create a new
-   `nvmpi_dec_{concern}.cpp` and add it to `CMakeLists.txt`.
+   `nvmpi_{codec}_{concern}.cpp` and add it to `CMakeLists.txt`.
 3. Never put new public API signatures outside `include/nvmpi.h`.
 
 ### NvUtils vs nvbuf_utils
@@ -264,13 +280,14 @@ Both files use preprocessor version checks to handle FFmpeg API evolution:
 
 Each supported FFmpeg version has its own directory under `ffmpeg/dev/`:
 
-```
+```text
 ffmpeg/dev/4.2/    → configure, libavcodec/Makefile, libavcodec/allcodecs.c
 ffmpeg/dev/4.4/    → same files, adjusted for FFmpeg 4.4 differences
 ffmpeg/dev/6.0/    → same files, adjusted for FFmpeg 6.0 differences
 ```
 
 These differ because:
+
 - `configure`: help text, option lists, and codec dependency sections change between versions
 - `Makefile`: object file sections and ordering change
 - `allcodecs.c`: codec interface changed from `extern AVCodec` (< 60) to `extern const FFCodec` (>= 60)
@@ -313,6 +330,7 @@ The patch system converts the overlay files + common codec sources into standard
 ### Patch file content
 
 Each patch in `ffmpeg/patches/` is a complete `git diff` that modifies:
+
 - `configure` (nvmpi registration)
 - `libavcodec/Makefile` (build rules)
 - `libavcodec/allcodecs.c` (codec symbol registration)
@@ -330,6 +348,7 @@ When you need to modify the FFmpeg codec implementation or fix a bug in the inte
 **1. Edit the source files:**
 
 For changes common to all FFmpeg versions:
+
 ```bash
 # Edit the shared codec files
 vim ffmpeg/dev/common/libavcodec/nvmpi_enc.c
@@ -337,6 +356,7 @@ vim ffmpeg/dev/common/libavcodec/nvmpi_dec.c
 ```
 
 For version-specific changes (configure, Makefile, allcodecs.c):
+
 ```bash
 vim ffmpeg/dev/4.2/configure
 vim ffmpeg/dev/4.4/configure
@@ -352,6 +372,7 @@ cd ffmpeg/dev
 ```
 
 This will:
+
 - Clone fresh FFmpeg source trees (shallow, into gitignored dirs)
 - Apply `scripts/ffpatch.sh` to each
 - Copy your edited overlay/common files
@@ -410,6 +431,7 @@ The overlay files are essentially copies of the original FFmpeg files with nvmpi
 - Check if the codec interface changed (e.g., `AVCodec` → `FFCodec` transition happened at version 60)
 
 Key things to check:
+
 - Has `HWACCEL_LIBRARY_LIST` moved or been renamed in configure?
 - Has the `allcodecs.c` extern format changed?
 - Has the Makefile section where codec objects are listed been restructured?
@@ -432,6 +454,7 @@ Look at `ffmpeg/dev/common/libavcodec/nvmpi_enc.c` and `nvmpi_dec.c` for version
 The runtime patching script (`scripts/ffpatch.sh`) uses `sed` with anchors based on existing FFmpeg text. If FFmpeg 7.0 changed the text around insertion points (e.g., the line `--disable-videotoolbox` that anchors `--enable-nvmpi`), update the corresponding `sed` command.
 
 Check each `sed` anchor still exists in the new version:
+
 ```bash
 grep -n 'disable-videotoolbox' ffmpeg7.0/configure
 grep -n 'h264_nvenc_encoder_deps' ffmpeg7.0/configure
@@ -452,7 +475,7 @@ The scripts handle cloning, patching (via `scripts/ffpatch.sh`), copying
 overlays, and writing `ffmpeg/patches/ffmpeg7.0_nvmpi.patch` automatically —
 no per-version code to add.
 
-**Step 9 — (covered by Step 8)**
+#### Step 9 — (covered by Step 8)
 
 `try_build.sh` builds every version in the same `VERSIONS` list, so no extra
 change is needed.
@@ -512,6 +535,7 @@ The `stubs/` directory contains minimal aarch64 ELF shared objects that satisfy 
 | `libv4l2.so.0` | Symlink to `libnvv4l2.so` |
 
 Use stubs for:
+
 - CI/CD pipelines that verify the library compiles
 - Cross-compilation on x86 hosts
 - IDE indexing / code completion
@@ -540,6 +564,7 @@ Each nvmpi codec requires entries in three FFmpeg files. This table shows what e
 ### Makefile entries
 
 Each codec adds one object file rule:
+
 ```makefile
 OBJS-$(CONFIG_H264_NVMPI_ENCODER)      += nvmpi_enc.o
 OBJS-$(CONFIG_H264_NVMPI_DECODER)      += nvmpi_dec.o
@@ -549,12 +574,14 @@ OBJS-$(CONFIG_H264_NVMPI_DECODER)      += nvmpi_dec.o
 ### allcodecs.c entries
 
 FFmpeg < 60 (versions 4.2, 4.4):
+
 ```c
 extern AVCodec ff_h264_nvmpi_decoder;
 extern AVCodec ff_h264_nvmpi_encoder;
 ```
 
 FFmpeg >= 60 (version 6.0+):
+
 ```c
 extern const FFCodec ff_h264_nvmpi_decoder;
 extern const FFCodec ff_h264_nvmpi_encoder;

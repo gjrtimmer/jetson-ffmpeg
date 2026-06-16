@@ -32,11 +32,11 @@ long elapsed_ms(F&& fn) {
 static void test_dqFilledBuf_nonblocking_unchanged() {
     NVMPI_bufPool<int*> pool;
     auto ms = elapsed_ms([&]{ assert(pool.dqFilledBuf() == nullptr); });
-    assert(ms < 50);
+    assert(ms < 50); (void)ms;
     int val = 42;
     pool.qFilledBuf(&val);
     int* out = pool.dqFilledBuf();
-    assert(out == &val);
+    assert(out == &val); (void)out;
     assert(pool.dqFilledBuf() == nullptr);
 }
 
@@ -60,7 +60,7 @@ static void test_dqFilledBuf_blocking_returns_null_on_timeout() {
         result = pool.dqFilledBuf(Ms(200));
     });
     assert(result == nullptr);
-    assert(ms >= 150 && ms <= 400);
+    assert(ms >= 150 && ms <= 400); (void)ms;
 }
 
 static void test_dqFilledBuf_blocking_returns_null_on_shutdown() {
@@ -165,7 +165,7 @@ static void test_concurrent_push_pop_stress() {
 
     int total = NUM_PRODUCERS * ITEMS_PER_THREAD;
     assert(produced.load() == total);
-    assert(consumed.load() == total);
+    assert(consumed.load() == total); (void)total;
 }
 
 int main() {

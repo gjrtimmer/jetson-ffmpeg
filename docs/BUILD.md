@@ -24,6 +24,7 @@ Complete instructions for building and installing jetson-ffmpeg on NVIDIA Jetson
 - Git
 
 The Jetson Multimedia API headers and libraries are typically installed at:
+
 - Headers: `/usr/src/jetson_multimedia_api`
 - Libraries: `/usr/lib/aarch64-linux-gnu/tegra`
 
@@ -50,6 +51,7 @@ and accepts `--install`, `--clean`, `--stubs`, `-j`, etc. (see `docs/SCRIPTS.md`
 ```
 
 This installs:
+
 - `libnvmpi.so` (shared library) to `/usr/local/lib/`
 - `libnvmpi.a` (static library) to `/usr/local/lib/`
 - `nvmpi.h` (header) to `/usr/local/include/`
@@ -82,7 +84,7 @@ sudo make install
 ```
 
 > **Note:** The `scripts/ffpatch.sh` script auto-detects the FFmpeg version from its headers and applies the correct modifications. It works with any FFmpeg version from 4.2 onwards. Add your own `./configure` flags as needed (e.g., `--enable-gpl --enable-libx264`).
-
+>
 > **Optional test dependency — libx265:** hardware decode of 10-bit HEVC to `p010le` (decoder option `-output_format p010le`) needs only the NvUtils buffer API (JetPack 5+) at runtime — **not** libx265. `libx265` is used solely by the `test/hw-format-pixfmt.sh` suite to *generate* a 10-bit HEVC sample. `test/smoke-all.sh` enables `--enable-libx265` automatically when its dev headers are present and skips the P010 sample-generation case otherwise; the dev container ships `libx265-dev` so the full suite runs there.
 
 ---
