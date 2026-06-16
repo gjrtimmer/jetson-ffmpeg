@@ -27,7 +27,7 @@ Invoke: **`/retro`** or **`/retro <session-id-prefix>`** (target one session).
 
 ## Skill Version
 
-<!-- retro:version:7 -->
+<!-- retro:version:8 -->
 Track version here. Each self-improvement pass increments this counter and
 logs what changed in the commit message.
 
@@ -72,6 +72,7 @@ messages matching correction/feedback patterns. The script must:
 | `premature_action` | do not start, analyze only, just plan, prepare but don't | Jumped from analysis/planning to implementation without go |
 | `unrequested_addition` | why is this added, should not have been added, not asked for | Added CI jobs, features, or changes the user didn't request |
 | `cost_concern` | cheaper, waste tokens, subagent model, too expensive | User flagging token/cost waste — use cheaper models, fewer calls |
+| `pipeline_abort` | if not green stop/abort, if fail diagnose, abort release | Pipeline went red and assistant continued instead of stopping to diagnose |
 | `positive_signal` | yes exactly, perfect, good, correct, nice | Approach was validated — preserve what worked |
 
 5. For each correction, also extract the **preceding assistant message** (the
@@ -273,6 +274,13 @@ Never analyze several sessions before applying — a naive early version of the
 skill would read all of them with the same blind spots. Improving between
 sessions means session N+1 is read by a better skill than session N was.
 
+**Re-invoke the skill (fresh `Skill` tool call) for EACH session.** After a
+session's findings are applied and committed, the skill file on disk has
+changed (new patterns/filters/categories). Do NOT keep scanning with the
+skill text already loaded in context — that is the stale, pre-improvement
+version. Re-invoke `/retro` so the next session is read by the just-improved
+skill loaded fresh from disk. One invocation = one session.
+
 ### Second pass (mandatory after first pass completes)
 
 Once every session has been processed once, the skill is at its most mature.
@@ -338,6 +346,11 @@ const PATTERNS = {
   cost_concern: [
     /\bcheaper\b/i, /\bwaste.*token/i, /\bsubagent.*model\b/i,
     /\btoo.*expensive\b/i
+  ],
+  pipeline_abort: [
+    /\bif.*not.*green.*(stop|abort)\b/i, /\bstop and abort\b/i,
+    /\bif\b.*\bfail\b.*\b(stop|diagnose|abort)\b/i,
+    /\babort\b.*\b(release|tag|pipeline)\b/i
   ],
   positive_signal: [
     /\byes exactly\b/i, /\bperfect\b/i, /\bgood\b.*\bapproach\b/i,

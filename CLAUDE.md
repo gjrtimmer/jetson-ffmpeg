@@ -379,6 +379,15 @@ validates against the live GitLab instance (resolves YAML anchors, `extends`,
 - **Write specs, design docs, and implementation plans to `.work/`** in the
   repo root (create it if absent) — not `.claude/work/`, `docs/`, or a skill's
   default location. This overrides any skill's default spec path.
+- **On a red pipeline, stop and diagnose — never continue.** When monitoring a
+  pipeline (or smoke-all run) and it fails or doesn't go green, halt the
+  workflow and investigate; do not proceed to the next step. If a release/tag
+  pipeline fails, abort the release: delete the partial tag/release from both
+  GitLab and GitHub, cancel the pipeline, then investigate the root cause.
+- **Run the `/retro` skill before pushing a new branch.** When work is ready to
+  push, invoke `/retro` first to capture this session's lessons and improve the
+  rules/skills, THEN push. The pre-push gate order is: smoke-all green →
+  `/retro` → push.
 
 ## Upstream notification rule
 
