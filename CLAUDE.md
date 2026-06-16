@@ -61,6 +61,13 @@ There is no unit-test suite. Verification is layered: per-feature hardware suite
 **Never push code changes without a passing `./test/smoke-all.sh` run** (7/7
 matrix green). Docs-only changes are exempt and may push with `-o ci.skip`.
 
+**Skip the branch pipeline when opening an MR immediately.** Pushing a
+branch triggers a branch pipeline; creating an MR triggers a second
+(merge-request) pipeline. When the intent is to open an MR right after the
+push, use `-o ci.skip` on the first push to suppress the redundant branch
+pipeline — the MR pipeline is the one that matters:
+`git push -u origin <branch> -o ci.skip` → `glab mr create …`.
+
 **Always create MRs with auto-merge** (`glab mr create` then
 `glab mr merge <nr> --auto-merge`). Auto-merge waits for the pipeline to pass
 before merging — never force-merge or merge manually while a pipeline is
