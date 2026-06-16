@@ -284,6 +284,10 @@ for all issue operations — do not search for the remote or guess the repo slug
 - Issues fixed by code are closed **only through commits** — `Closes #N` /
   `Fixes #N` footers in the commit that lands on `main` — never by closing
   the issue by hand.
+- **Before pushing a feature/fix branch**, verify at least one commit
+  contains a `Fixes #N` or `Closes #N` footer. If none does, add an empty
+  commit: `git commit --allow-empty -m "<type>: <subject>" -m "Fixes #N"`.
+  This is a hard gate — no branch may be pushed without the closing footer.
 - Every closing issue also gets a **comment with details** before or at
   close: what was done, where (commits, files), and how it was validated
   (test suite, smoke matrix). A bare close or a naked commit link is not
