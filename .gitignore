@@ -33,3 +33,6 @@
 build
 _nvmpi/
 _ffmpeg/
+
+# Local working dir for specs/plans/design docs (not tracked)
+.work/

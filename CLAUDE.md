@@ -72,7 +72,11 @@ pipeline — the MR pipeline is the one that matters:
 `glab mr merge <nr> --auto-merge`). Auto-merge waits for the pipeline to pass
 before merging — never force-merge or merge manually while a pipeline is
 running. The GitLab project requires pipelines to succeed before merge
-(`only_allow_merge_if_pipeline_succeeds`).
+(`only_allow_merge_if_pipeline_succeeds`). **Wait for the pipeline to exist
+before setting auto-merge** — `glab mr merge --auto-merge` returns HTTP 405 if
+no pipeline has been created yet. Poll
+`glab api projects/.../merge_requests/<iid>` until `head_pipeline` is non-null
+(or `sleep 15`) before enabling auto-merge.
 
 **Never `rm -rf build`** — use `./scripts/build.sh --clean`; the build
 directory may be shared with a concurrent build. CI compiles libnvmpi + patches/builds all seven FFmpeg versions against `stubs/` on non-Jetson runners, and hw-tests each version on self-hosted Jetson runners. **GitLab** (`.gitlab-ci.yml`) is the active pipeline; **GitHub Actions** (`.github/workflows/ci.yml`) is manual-only (`workflow_dispatch`) because it needs self-hosted Jetson runners + arm64 containers.
@@ -343,6 +347,47 @@ validates against the live GitLab instance (resolves YAML anchors, `extends`,
   moot or materially different (e.g. an issue turns out already fixed and
   different work remains), stop and re-confirm the revised scope before
   writing new code. Read-only verification/triage may proceed.
+- **Analysis is not authorization.** "Analyze", "plan", "investigate",
+  "check", "assess" are read-only phases. Present findings, then wait for an
+  explicit "go" before writing code. The plan presentation is the gate.
+- **Continue autonomously after background jobs.** When a background task
+  (build, smoke-all, pipeline) finishes, proceed to the next planned step
+  without pausing for confirmation — unless the next step is destructive
+  (push, merge, MR) or the plan explicitly says "wait for OK."
+- **Follow explicit multi-step sequences in the exact order given.** When the
+  user lists steps (e.g. merge → switch → branch → implement), execute them
+  in order, verifying each before the next. Don't reorder, skip, or combine.
+- **Only change what was requested.** When editing CI (`.gitlab-ci.yml`),
+  skills, or config, every addition must trace to an explicit request. Don't
+  add extra jobs, stages, or features — unrequested CI jobs waste runner time
+  and can block pipelines. Surface good ideas as suggestions, don't apply them.
+- **Verify completeness against the source list.** When creating issues,
+  tasks, or artifacts from a reference list (fork analysis, upstream issues,
+  TODOs), cross-check count and contents back against the source. Watch items
+  the user explicitly called out. When in doubt, over-include.
+- **No premature resolution comments.** Never post "resolved"/"fixed" on a
+  GitHub issue until the pipeline is green and the user confirms. In-progress
+  comments describe findings and test results — not resolution. Match the
+  comment type to exactly what the user asked for.
+- **Always invoke the `fix-issue` skill when fixing an issue** — even if the
+  user just says "fix #N" or "highest prio issue." The skill encodes branch
+  naming, commit conventions, issue communication, and phase gates so they
+  aren't repeated by hand.
+- **Subagents default to the cheapest model that holds quality.** Use sonnet
+  for investigation, search, and simple edits; escalate to opus only when
+  reasoning depth demands it. Ladder: sonnet → opus 4.6 → latest opus → fable.
+- **Write specs, design docs, and implementation plans to `.work/`** in the
+  repo root (create it if absent) — not `.claude/work/`, `docs/`, or a skill's
+  default location. This overrides any skill's default spec path.
+- **On a red pipeline, stop and diagnose — never continue.** When monitoring a
+  pipeline (or smoke-all run) and it fails or doesn't go green, halt the
+  workflow and investigate; do not proceed to the next step. If a release/tag
+  pipeline fails, abort the release: delete the partial tag/release from both
+  GitLab and GitHub, cancel the pipeline, then investigate the root cause.
+- **Run the `/retro` skill before pushing a new branch.** When work is ready to
+  push, invoke `/retro` first to capture this session's lessons and improve the
+  rules/skills, THEN push. The pre-push gate order is: smoke-all green →
+  `/retro` → push.
 
 ## Upstream notification rule
 
