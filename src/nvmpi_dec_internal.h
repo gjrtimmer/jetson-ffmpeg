@@ -105,4 +105,4 @@ struct nvmpictx
 NvBufferColorFormat getNvColorFormatFromV4l2Format(v4l2_format &format, bool want_10bit);
 void dec_capture_loop_fcn(void *arg);
 void respondToResolutionEvent(v4l2_format &format, v4l2_crop &crop, nvmpictx* ctx);
-void copyNvBufToFrame(nvmpictx *ctx, int src_dma_fd, nvFrame *dst);
+int copyNvBufToFrame(nvmpictx* ctx, NVMPI_frameBuf *nvmpiBuf, nvFrame* frame);
