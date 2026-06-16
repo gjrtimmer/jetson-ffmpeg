@@ -249,13 +249,13 @@ gh pr create -R gjrtimmer/jetson-ffmpeg \
 ## Phase 6: Upstream & Fork Notification
 
 Our issue may reference issues on ANY fork in the network. The fork network
-includes dozens of repos (tracked in `docs/FORKS.md`).
+includes dozens of repos (tracked in the [Fork Network Overview](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Fork-Network-Overview)).
 
 ### 6a. Discover related upstream/fork issues
 
 1. Parse the issue body for references: `owner/repo#XX`, full GitHub URLs,
    or shorthand like `ForkOwner#XX`.
-2. Check `docs/FORKS_RESULT.md` for the cluster this issue belongs to —
+2. Check the [Fork Analysis Results](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Fork-Analysis-Results) for the cluster this issue belongs to —
    it maps fork commits to issue clusters and lists related repos.
 3. For each referenced issue on a different repo:
 

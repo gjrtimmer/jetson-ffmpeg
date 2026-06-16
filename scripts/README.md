@@ -15,4 +15,4 @@ Patch-development scripts live next to the data they operate on, under
 In the dev container these are exposed as the aliases `build`, `ffpatch`,
 `update-patch`, `try-build`, and `hw-test`/`test`.
 
-**Full reference (options, examples, aliases): [`../docs/SCRIPTS.md`](../docs/SCRIPTS.md).**
+**Full reference (options, examples, aliases): [Scripts and Commands](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Scripts-and-Commands).**

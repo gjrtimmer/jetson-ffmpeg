@@ -83,6 +83,28 @@ gh pr list -R gjrtimmer/jetson-ffmpeg --state open --json number,title,headRefNa
 gh pr create -R gjrtimmer/jetson-ffmpeg --title "…" --body "…"
 ```
 
+## wiki — GitHub wiki (all docs live here)
+**The wiki is a SEPARATE git repo, not a `gh` feature — `gh` has NO wiki content
+API.** Edit it like any git repo. The GitLab push-mirror does NOT sync wikis.
+```bash
+gh api repos/gjrtimmer/jetson-ffmpeg --jq .has_wiki          # is the wiki enabled?
+git ls-remote https://github.com/gjrtimmer/jetson-ffmpeg.wiki.git   # exists? (empty wiki = "Repository not found")
+git clone https://github.com/gjrtimmer/jetson-ffmpeg.wiki.git       # branch: master
+# …edit page files…
+git -C <clone> add -A && git -C <clone> commit -m "docs(wiki): …" && git -C <clone> push origin master
+```
+- **Init gotcha:** a brand-new wiki has no git repo until the **first page is
+  created via the web UI** (Wiki tab → *Create the first page*). Until then the
+  clone/push fails with "Repository not found" — ask the user to click it once.
+- **Page files:** filename = page title (`Build-and-Install.md` → "Build and
+  Install"); `Home.md` is the landing page; `_Sidebar.md` / `_Footer.md` render
+  on every page; subfolders (`Foo/Bar.md`) nest the URL.
+- **Anchors:** GitHub wiki uses GFM heading slugs (lowercase, punctuation
+  dropped, spaces→hyphens). It does **not** support `{#custom}` IAL anchors.
+- **Links:** prefer full URLs — `https://github.com/gjrtimmer/jetson-ffmpeg/wiki/<Page>#<anchor>` —
+  so they resolve from repo files, issues, and other wiki pages alike.
+- **Standing rule:** documentation changes go to the wiki, never back into `docs/`.
+
 If a documented flag is rejected, the CLI version changed: verify once with
 `<cmd> --help`, use the correct flag, and note it in your result so the caller
 can update this agent.
