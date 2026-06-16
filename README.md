@@ -40,9 +40,9 @@ through the Orin family (JetPack 5.x/6.x) and supports FFmpeg **4.2 up to
 8.0+**. Hardware testing currently covers Orin NX on JetPack 6; other
 platforms are expected to work but are untested.
 
-See **[docs/COMPATIBILITY.md](docs/COMPATIBILITY.md)** for the supported
-codecs, the full Jetson/JetPack support matrix, and the list of tested
-FFmpeg releases.
+See the **[Compatibility](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Compatibility)**
+wiki page for the supported codecs, the full Jetson/JetPack support matrix, and
+the list of tested FFmpeg releases.
 
 ## Quick Start
 
@@ -63,14 +63,18 @@ sudo make install
 ```
 
 For full build instructions, CMake options, cross-compilation, and usage
-examples see **[docs/BUILD.md](docs/BUILD.md)**.
+examples see the **[Build and Install](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Build-and-Install)**
+wiki page.
 
 ## Documentation
 
-- **[Build Guide](docs/BUILD.md)** — Complete build, installation, and usage instructions
-- **[Compatibility](docs/COMPATIBILITY.md)** — Supported codecs, Jetson/JetPack support matrix, FFmpeg versions
-- **[Scripts Reference](docs/SCRIPTS.md)** — Every script, command, and dev-container alias
-- **[Development Guide](docs/DEVELOPMENT.md)** — Architecture, patch system, and how to add new FFmpeg versions
+📖 **Full documentation lives in the [project wiki](https://github.com/gjrtimmer/jetson-ffmpeg/wiki).**
+
+- **[Build and Install](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Build-and-Install)** — Complete build, installation, and usage instructions
+- **[Compatibility](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Compatibility)** — Supported codecs, Jetson/JetPack support matrix, FFmpeg versions
+- **[Scripts and Commands](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Scripts-and-Commands)** — Every script, command, and dev-container alias
+- **[FAQ & Known Limitations](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/FAQ)** — HEVC/RTMP, 4K encode cap, Orin Nano NVENC, mod-16, pkg-config, performance
+- **[Development Guide](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Development-Guide)** — Architecture, patch system, and how to add new FFmpeg versions
 
 ## Support This Project
 
