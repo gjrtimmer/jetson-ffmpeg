@@ -49,8 +49,13 @@ jetson-ffmpeg/
 │   ├── NVMPI_frameBuf.hpp      # DMA frame buffer wrapper
 │   └── nvUtils2NvBuf.h         # Compatibility shim: NvUtils API ↔ legacy nvbuf_utils
 ├── src/
-│   ├── nvmpi_dec.cpp           # Decoder: V4L2 → DMA → frame pool → user
-│   ├── nvmpi_enc.cpp           # Encoder: frame → V4L2 → packet pool → user
+│   ├── nvmpi_dec_api.cpp       # Decoder public API (create/put/get/flush/close)
+│   ├── nvmpi_dec_capture.cpp   # Decoder capture thread loop, resolution-change
+│   ├── nvmpi_dec_planes.cpp    # Decoder V4L2 CAPTURE-plane alloc/teardown
+│   ├── nvmpi_dec_internal.h    # Decoder context struct, macros, forward decls
+│   ├── nvmpi_enc_api.cpp       # Encoder public API (create/put/get/close)
+│   ├── nvmpi_enc_output.cpp    # Encoder DQ-thread callback, output-plane DMA setup
+│   ├── nvmpi_enc_internal.h    # Encoder context struct, macros, forward decls
 │   └── NVMPI_frameBuf.cpp      # DMA buffer alloc/destroy
 ├── stubs/                      # Stub .so files for cross-compilation (aarch64)
 ├── ffmpeg/                     # FFmpeg integration layer
@@ -96,8 +101,8 @@ The project has two distinct layers:
 │                         │ calls libnvmpi C API        │
 │  ┌──────────────────────▼──────────────────────────┐ │
 │  │ libnvmpi (shared library, installed on system)  │ │
-│  │   nvmpi_dec.cpp   (V4L2 decoder)                │ │
-│  │   nvmpi_enc.cpp   (V4L2 encoder)                │ │
+│  │   nvmpi_dec_*.cpp (V4L2 decoder, modular)       │ │
+│  │   nvmpi_enc_*.cpp (V4L2 encoder, modular)       │ │
 │  │   NVMPI_frameBuf  (DMA buffer management)       │ │
 │  └──────────────────────┬──────────────────────────┘ │
 │                         │ V4L2 / NvBuffer API         │
@@ -155,7 +160,7 @@ Source files follow `nvmpi_{codec}_{concern}.cpp` — see
 [ARCHITECTURE.md](ARCHITECTURE.md) for the full convention, include
 structure, and encoder migration path.
 
-Current decoder files:
+Decoder files:
 
 | File | Concern |
 |------|---------|
@@ -164,10 +169,18 @@ Current decoder files:
 | `src/nvmpi_dec_planes.cpp` | V4L2 CAPTURE-plane alloc/teardown, color format selection |
 | `src/nvmpi_dec_internal.h` | Context struct, macros, forward declarations |
 
+Encoder files:
+
+| File | Concern |
+|------|---------|
+| `src/nvmpi_enc_api.cpp` | Public API (`create`, `put_frame`, `get_packet`, `close`, packet pool ops) |
+| `src/nvmpi_enc_output.cpp` | DQ-thread callback, output-plane DMA buffer setup |
+| `src/nvmpi_enc_internal.h` | Context struct, macros (`TEST_ERROR`, `MAX_BUFFERS`, `OUTPLANE_MEMTYPE_*`) |
+
 When adding a new feature:
-1. Identify which concern it touches (API? capture loop? planes?).
+1. Identify which concern it touches (API? capture/output loop? planes?).
 2. Edit only that file. If it doesn't fit any existing concern, create a new
-   `nvmpi_dec_{concern}.cpp` and add it to `CMakeLists.txt`.
+   `nvmpi_{codec}_{concern}.cpp` and add it to `CMakeLists.txt`.
 3. Never put new public API signatures outside `include/nvmpi.h`.
 
 ### NvUtils vs nvbuf_utils

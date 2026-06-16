@@ -1,26 +1,23 @@
 # TODO
 
-## ~~Implement blocking `wait` in `nvmpi_decoder_get_frame()`~~ (Done)
+## ~~Encoder modular split~~ (Done)
 
-Completed in [#10](https://github.com/gjrtimmer/jetson-ffmpeg/issues/10).
-Condition-variable blocking dequeue in `NVMPI_bufPool`, atomic `eos`, shutdown
-wiring, configurable `wait_timeout` AVOption (50–5000ms, default 500ms).
+Completed in [#29](https://github.com/gjrtimmer/jetson-ffmpeg/issues/29).
+Mirrors decoder pattern: `nvmpi_enc_internal.h`, `nvmpi_enc_output.cpp`,
+`nvmpi_enc_api.cpp`.
 
-See [docs/THREAD_SAFETY.md](docs/THREAD_SAFETY.md) and
-[docs/API_REFERENCE.md](docs/API_REFERENCE.md).
+## Refactor: `NVMPI_frameBuf` naming consistency
 
----
+Two naming issues in the frame-buffer component:
 
-## Encoder modular split
+1. **Case**: `NVMPI_frameBuf` uses mixed case while all other types use
+   `NVMPI_` prefix with lowercase (`nvmpictx`, `NVMPI_bufPool`).
+   Rename to `nvmpi_framebuf` or similar.
+2. **Abbreviation**: `frameBuf` is abbreviated; consider `frameBuffer` for
+   clarity and consistency with the full-word style used elsewhere.
 
-Apply the same modular file pattern from the decoder refactor to the encoder:
-
-- Extract encoder struct to `nvmpi_enc_internal.h`
-- Extract capture callback to `nvmpi_enc_output.cpp`
-- Rename `nvmpi_enc.cpp` to `nvmpi_enc_api.cpp`
-- Update CMakeLists.txt, ARCHITECTURE.md, DEVELOPMENT.md
-
-Tracked in a separate issue (TBD).
+Affects: `src/NVMPI_frameBuf.hpp`, `src/NVMPI_frameBuf.cpp`, all include
+sites in decoder/encoder source files.
 
 ## Encoder blocking wait (future)
 
