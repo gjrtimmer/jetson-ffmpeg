@@ -12,7 +12,7 @@ Invoke: **`/retro`** or **`/retro <session-id-prefix>`** (target one session).
 
 ## Skill Version
 
-<!-- retro:version:3 -->
+<!-- retro:version:4 -->
 Track version here. Each self-improvement pass increments this counter and
 logs what changed in the commit message.
 
@@ -54,6 +54,7 @@ messages matching correction/feedback patterns. The script must:
 | `scope_drift` | not what I said, I said, I didn't ask, not what I asked | Assistant did something different from what was requested |
 | `rule_violation` | never, already told you, we agreed, don't again | Violated an established rule or repeated a known mistake |
 | `missed_instruction` | missed, forgot, didn't, should have | Failed to follow an explicit instruction |
+| `premature_action` | do not start, analyze only, just plan, prepare but don't | Jumped from analysis/planning to implementation without go |
 | `cost_concern` | cheaper, waste tokens, subagent model, too expensive | User flagging token/cost waste — use cheaper models, fewer calls |
 | `positive_signal` | yes exactly, perfect, good, correct, nice | Approach was validated — preserve what worked |
 
@@ -271,6 +272,11 @@ const PATTERNS = {
     /\byou need to\b/i, /\bwas supposed to\b/i,
     /\bdo not forget\b/i, /\bensure that\b.*\bshould\b/i,
     /\bensure.*all\b/i, /\bcover all\b/i, /\bat least cover\b/i
+  ],
+  premature_action: [
+    /\bdo not\s+start\b/i, /\bjust\s+(analyze|plan|check)\b/i,
+    /\bprepare.*don'?t\b/i, /\banalyze.*not.*implement\b/i,
+    /\bplan.*wait\b/i, /\bpresent.*wait\b/i
   ],
   cost_concern: [
     /\bcheaper\b/i, /\bwaste.*token/i, /\bsubagent.*model\b/i,
