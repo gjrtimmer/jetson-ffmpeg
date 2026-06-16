@@ -17,7 +17,7 @@
 
 - [ ] NVIDIA Container Runtime is installed and working
 - [ ] I have verified GPU access (`nvidia-smi` or `tegrastats` works)
-- [ ] I have read the runner setup guide ([Kubernetes](docs/GITLAB_RUNNER_K8S.md) or [Manual](docs/GITLAB_RUNNER_MANUAL.md))
+- [ ] I have read the runner setup guide ([Kubernetes](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/GitLab-Runner-Kubernetes) or [Manual](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/GitLab-Runner-Manual))
 
 ### Additional context
 

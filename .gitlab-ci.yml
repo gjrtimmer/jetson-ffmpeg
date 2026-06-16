@@ -51,7 +51,7 @@ include:
 #     patch   - apply ffpatch.sh to each supported ffmpeg version, build ffmpeg
 #     test    - all HW test suites (test/hw-all.sh) on each Jetson variant
 #
-#   Tag pipelines (v<X.Y.Z>):  -> see docs/RELEASE.md
+#   Tag pipelines (v<X.Y.Z>):  -> see https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Release-Process
 #     package - build REAL libnvmpi + ffmpeg per version in a plain container
 #               (the stub builds above are NOT runnable, so releases rebuild
 #               against the real tegra libs, pulled from NVIDIA's apt repo)
@@ -201,7 +201,7 @@ patch:ffmpeg-8.0:
 # artifact (installed ffmpeg + libnvmpi) — no rebuild on the Jetson runner.
 #
 # The nvmpi FFmpeg wrapper compiles into a few DISTINCT builds by libavcodec
-# version (see "Wrapper code paths by FFmpeg version" in docs/DEVELOPMENT.md):
+# version (see "Wrapper code paths by FFmpeg version" in https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Development-Guide#wrapper-code-paths-by-ffmpeg-version):
 #
 #   4.2           -> path A (old AVCodec, old encode API)
 #   4.4           -> path B (old AVCodec, new receive_packet API)

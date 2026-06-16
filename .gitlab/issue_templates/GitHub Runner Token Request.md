@@ -17,7 +17,7 @@
 
 - [ ] NVIDIA Container Runtime / Docker with nvidia runtime is installed
 - [ ] I have verified GPU access (`nvidia-smi` or `tegrastats` works)
-- [ ] I have read the runner setup guide ([Kubernetes](docs/GITHUB_RUNNER_K8S.md) or [Manual](docs/GITHUB_RUNNER_MANUAL.md))
+- [ ] I have read the runner setup guide ([Kubernetes](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/GitHub-Runner-Kubernetes) or [Manual](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/GitHub-Runner-Manual))
 
 ### GitHub username
 
