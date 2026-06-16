@@ -119,16 +119,16 @@ void dec_capture_loop_fcn(void *arg)
             else
             {
                ERROR_MSG("Error in dequeueing decoder event");
-               ctx->eos=true;
+               ctx->eos.store(true);
             }
         }
     }
-    while ((v4l2Event.type != V4L2_EVENT_RESOLUTION_CHANGE) && !ctx->eos);
+    while ((v4l2Event.type != V4L2_EVENT_RESOLUTION_CHANGE) && !ctx->eos.load());
 
     /* Received the resolution change event, now can do respondToResolutionEvent. */
-    if (!ctx->eos) respondToResolutionEvent(v4l2Format, v4l2Crop, ctx);
+    if (!ctx->eos.load()) respondToResolutionEvent(v4l2Format, v4l2Crop, ctx);
 
-	while (!(ctx->eos || dec->isInError()))
+	while (!(ctx->eos.load() || dec->isInError()))
 	{
 		NvBuffer *dec_buffer;
 
@@ -145,7 +145,7 @@ void dec_capture_loop_fcn(void *arg)
 		}
 
 		/* Decoder capture loop */
-		while(!ctx->eos)
+		while(!ctx->eos.load())
 		{
 			struct v4l2_buffer v4l2_buf;
 			struct v4l2_plane planes[MAX_PLANES];
@@ -161,14 +161,14 @@ void dec_capture_loop_fcn(void *arg)
 					if (v4l2_buf.flags & V4L2_BUF_FLAG_LAST)
 					{
 						ERROR_MSG("Got EoS at capture plane");
-						ctx->eos=true;
+						ctx->eos.store(true);
 					}
 					usleep(1000);
 				}
 				else
 				{
 					ERROR_MSG("Error while calling dequeue at capture plane");
-					ctx->eos=true;
+					ctx->eos.store(true);
 				}
 				break;
 			}
@@ -202,7 +202,7 @@ void dec_capture_loop_fcn(void *arg)
 				//buffer via nvmpi_decoder_get_frame(), then do the same
 				//transform/publish as above. The V4L2 buffer is held back
 				//meanwhile, eventually stalling the decoder.
-				while(!ctx->eos)
+				while(!ctx->eos.load())
 				{
 					std::this_thread::sleep_for(std::chrono::microseconds(500));
 					fb = ctx->framePool->dqEmptyBuf();
@@ -230,5 +230,8 @@ void dec_capture_loop_fcn(void *arg)
 			}
 		}
 	}
+	/* Unblock any consumer waiting in dqFilledBuf(timeout) — all exit
+	 * paths converge here, so one shutdown() call covers every case. */
+	ctx->framePool->shutdown();
 	return;
 }

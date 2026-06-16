@@ -246,7 +246,7 @@ nvmpictx* nvmpi_create_decoder(nvDecParam* param)
 	ctx->out_pixfmt=param->pixFormat;
 	ctx->resized = param->resized;
 	ctx->framePool = new NVMPI_bufPool<NVMPI_frameBuf*>();
-	ctx->eos=false;
+	ctx->eos.store(false);
 	ctx->index=0;
 	for(int index=0;index<MAX_BUFFERS;index++)
 		ctx->dmaBufferFileDescriptor[index]=-1;
@@ -323,7 +323,7 @@ int nvmpi_decoder_put_packet(nvmpictx* ctx,nvPacket* packet)
 
 	if (v4l2_buf.m.planes[0].bytesused == 0)
 	{
-		ctx->eos=true;
+		ctx->eos.store(true);
 		//std::cout << "Input file read complete" << std::endl; //TODO log it
 	}
 
@@ -425,7 +425,7 @@ int nvmpi_decoder_get_frame(nvmpictx* ctx,nvFrame* frame,bool wait)
 //decoder can reconfigure its capture plane (same path as initial setup).
 int nvmpi_decoder_flush(nvmpictx* ctx)
 {
-	ctx->eos = true;
+	ctx->eos.store(true);
 	ctx->dec->capture_plane.setStreamStatus(false);
 	if (ctx->dec_capture_loop.joinable())
 		ctx->dec_capture_loop.join();
@@ -436,7 +436,9 @@ int nvmpi_decoder_flush(nvmpictx* ctx)
 	while ((fb = ctx->framePool->dqFilledBuf()))
 		ctx->framePool->qEmptyBuf(fb);
 
-	ctx->eos = false;
+	ctx->eos.store(false);
+	/* Clear shutdown so the pool blocks again after flush/restart. */
+	ctx->framePool->reset();
 	ctx->index = 0;
 
 	ctx->dec->output_plane.setStreamStatus(true);
@@ -460,7 +462,7 @@ int nvmpi_decoder_flush(nvmpictx* ctx)
 //The handle is invalid after this call.
 int nvmpi_decoder_close(nvmpictx* ctx)
 {
-	ctx->eos=true;
+	ctx->eos.store(true);
 	ctx->dec->capture_plane.setStreamStatus(false);
 	if (ctx->dec_capture_loop.joinable())
 	{
