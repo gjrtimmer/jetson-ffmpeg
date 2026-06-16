@@ -180,6 +180,13 @@ nvmpictx* nvmpi_create_decoder(nvDecParam* param)
 	ctx->max_perf = param->max_perf;
 	ctx->disable_dpb = param->disable_dpb;
 
+	/* 0 = use default (500ms); valid range [50, 5000]; anything else = warn + default. */
+	if (param->wait_timeout >= 50 && param->wait_timeout <= 5000)
+		ctx->wait_timeout_ms = param->wait_timeout;
+	else if (param->wait_timeout != 0)
+		std::cerr << "[libnvmpi][W]: wait_timeout " << param->wait_timeout
+		          << " out of range [50, 5000]; using default " << ctx->wait_timeout_ms << std::endl;
+
 	//0 keeps the default; out-of-range values (including garbage from
 	//callers built against an older nvDecParam layout) fall back too.
 	if(param->chunk_size >= 65536 && param->chunk_size <= 64u*1024*1024)
@@ -385,23 +392,28 @@ int copyNvBufToFrame(nvmpictx* ctx, NVMPI_frameBuf *nvmpiBuf, nvFrame* frame)
 
 //Public API: fetch the next decoded frame.
 //Non-blocking: returns -1 immediately when no filled frame is queued (the
-//'wait' parameter is currently unused). On success the frame data is
-//copied into the caller's buffers, the pts is set, and the pool buffer is
-//immediately recycled to the "empty" queue — nothing internal is exposed
-//to the caller, so there is no lifetime to manage.
-int nvmpi_decoder_get_frame(nvmpictx* ctx,nvFrame* frame,bool wait)
+//When wait=false: non-blocking, returns -1 immediately if no frame ready.
+//When wait=true: blocks up to wait_timeout_ms using the pool's CV-based
+//tiered wait. Returns -1 on timeout or shutdown.
+//On success the frame data is copied into the caller's buffers, the pts
+//is set, and the pool buffer is immediately recycled to the "empty" queue.
+int nvmpi_decoder_get_frame(nvmpictx* ctx, nvFrame* frame, bool wait)
 {
-	(void)wait; //blocking mode not implemented yet — see TODO.md
 	int ret;
-	NVMPI_frameBuf* fb = ctx->framePool->dqFilledBuf();
-	if(!fb) return -1;
-	
+	NVMPI_frameBuf* fb;
+
+	if (wait)
+		fb = ctx->framePool->dqFilledBuf(
+			std::chrono::milliseconds(ctx->wait_timeout_ms));
+	else
+		fb = ctx->framePool->dqFilledBuf();
+
+	if (!fb) return -1;
+
 	ret = copyNvBufToFrame(ctx, fb, frame);
-	frame->timestamp=fb->timestamp;
-	
-	//return buffer to pool
+	frame->timestamp = fb->timestamp;
 	ctx->framePool->qEmptyBuf(fb);
-	
+
 	return ret;
 }
 
@@ -463,6 +475,10 @@ int nvmpi_decoder_flush(nvmpictx* ctx)
 int nvmpi_decoder_close(nvmpictx* ctx)
 {
 	ctx->eos.store(true);
+	/* Unblock any get_frame() caller blocked in dqFilledBuf(timeout)
+	 * before STREAMOFF — otherwise the consumer hangs until its timeout
+	 * expires while we wait for the capture thread to join. */
+	ctx->framePool->shutdown();
 	ctx->dec->capture_plane.setStreamStatus(false);
 	if (ctx->dec_capture_loop.joinable())
 	{
