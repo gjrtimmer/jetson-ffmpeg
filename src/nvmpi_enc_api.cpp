@@ -1,5 +1,5 @@
 /*
- * nvmpi_enc.cpp — hardware video encoder pipeline of libnvmpi (layer 1).
+ * nvmpi_enc_api.cpp — public encoder API of libnvmpi (layer 1).
  *
  * Implements the encoder half of the public C API in include/nvmpi.h on top
  * of NVIDIA's V4L2 NvVideoEncoder sample class. Consumed by the FFmpeg
@@ -25,234 +25,14 @@
  * The nvPacket pool itself is filled by the caller (the FFmpeg wrapper
  * allocates packets backed by AVPacket buffers) — libnvmpi never allocates
  * or frees packet memory.
+ *
+ * Companion files:
+ *   nvmpi_enc_internal.h  — shared includes, defines, nvmpictx struct,
+ *                           and forward declarations.
+ *   nvmpi_enc_output.cpp  — encoder_capture_plane_dq_callback and
+ *                           setup_output_dmabuf (OUTPUT-plane DMA path).
  */
-#include "nvmpi.h"
-#include "NvVideoEncoder.h"
-#include "nvUtils2NvBuf.h"
-#include "NVMPI_bufPool.hpp"
-#include <fcntl.h>
-#include <malloc.h>
-#include <vector>
-#include <iostream>
-#include <thread>
-#include <unistd.h>
-
-#define MAX_BUFFERS 32
-//Error reporting helper: logs to stderr but does NOT abort or return;
-//setup continues best-effort (errorCode is unused).
-#define TEST_ERROR(condition, message, errorCode)    \
-	if (condition)                               \
-{                                                    \
-	std::cerr<< message;                         \
-}
-
-//Compile-time choice of OUTPUT-plane (raw input) memory type:
-//MMAP = driver-allocated buffers mapped into userspace (current default),
-//DMA  = self-allocated NvBufSurface dmabufs (alternate path, NvUtils only).
-#define OUTPLANE_MEMTYPE_MMAP 0
-#define OUTPLANE_MEMTYPE_DMA 1
-#define OUTPLANE_MEMTYPE OUTPLANE_MEMTYPE_MMAP
-
-using namespace std;
-
-//Encoder context behind the opaque nvmpictx* handle of the public API
-//(a different struct than the decoder's nvmpictx in nvmpi_dec_internal.h — the
-//two are never mixed). Most fields mirror nvEncParam after translation to
-//V4L2 enums; shared between the user thread and the capture DQ thread.
-struct nvmpictx
-{
-	uint32_t index;                //next OUTPUT-plane buffer index until all used once
-	uint32_t width;
-	uint32_t height;
-	uint32_t profile;              //V4L2 H.264/H.265 profile enum value
-	uint32_t bitrate;              //target bitrate (bit/s)
-	uint32_t peak_bitrate;         //VBR peak bitrate (bit/s)
-	uint32_t raw_pixfmt;           //V4L2 fourcc of the raw input frames
-	uint32_t encoder_pixfmt;       //V4L2 fourcc of the compressed output (H264/H265)
-	uint32_t iframe_interval;
-	uint32_t idr_interval;
-	uint32_t fps_n;
-	uint32_t fps_d;
-	uint32_t qmax;
-	uint32_t qmin;
-	uint32_t num_b_frames;
-	uint32_t num_reference_frames;
-	uint32_t vbv_buffer_size; //virtual buffer size of the encoder
-	uint32_t packets_num;          //V4L2 buffer count per plane (param->capture_num)
-
-	bool insert_sps_pps_at_idr;
-	bool insert_vui;               //embed VUI timing_info (fps) in the bitstream
-	bool max_perf;                 //enable max performance mode
-	uint32_t poc_type;             //H.264 picture order count type (0=default, 2=low-latency)
-	bool enable_extended_colorformat;
-	bool enableLossless;           //constant QP 0 + High 4:4:4 profile (H.264)
-	bool blocking_mode;            //true: use NvVideoEncoder's DQ thread (only mode implemented)
-	bool capPlaneGotEOS;           //set by the DQ callback on the zero-byte EOS buffer
-	bool flushing;                 //set once a NULL frame (EOS) was submitted
-
-	enum v4l2_mpeg_video_bitrate_mode ratecontrol; //CBR or VBR
-	enum v4l2_mpeg_video_h264_level level;
-	enum v4l2_enc_hw_preset_type hw_preset_type;   //speed/quality preset
-
-	NvVideoEncoder *enc;           //NVIDIA V4L2 encoder device wrapper
-	//producer/consumer pool of caller-allocated packets: DQ thread fills,
-	//user thread consumes and recycles
-	NVMPI_bufPool<nvPacket*>* pktPool;
-	int *output_plane_fd; //array to store dmabuf fd's
-};
-
-
-//Callback run on NvVideoEncoder's capture-plane DQ thread for every
-//dequeued (encoded) buffer. Contract: return true to keep the thread
-//running, false to stop it (EOS or fatal error).
-//Steps: detect the zero-byte EOS buffer; fetch encode metadata (keyframe
-//flag); take an "empty" nvPacket from the pool and memcpy the bitstream
-//into it, then publish it "filled" for nvmpi_encoder_get_packet(); finally
-//re-queue the V4L2 buffer so the encoder can reuse it. If the pool is
-//empty the encoded data is DROPPED (warning printed) — the FFmpeg wrapper
-//sizes the pool via the packet_pool_size option to avoid this.
-static bool encoder_capture_plane_dq_callback(struct v4l2_buffer *v4l2_buf, NvBuffer * buffer, NvBuffer * shared_buffer __attribute__((unused)), void *arg)
-{
-	nvmpictx *ctx = (nvmpictx*)arg;
-
-	if (v4l2_buf == NULL)
-	{
-		cerr << "Error while dequeing buffer from output plane" << endl;
-		return false;
-	}
-
-	if (buffer->planes[0].bytesused == 0)
-	{
-		ctx->capPlaneGotEOS = true;
-		//cout << "Got 0 size buffer in capture \n"; //TODO  log it
-		return false;
-	}
-	
-	v4l2_ctrl_videoenc_outputbuf_metadata enc_metadata;
-	ctx->enc->getMetadata(v4l2_buf->index, enc_metadata);
-	
-	//nvPacket.payload --> AVPacket->data
-	//nvPacket.privData --> AVPacket
-	nvPacket* pkt = ctx->pktPool->dqEmptyBuf();
-	if(!pkt)
-	{
-		//TODO wait for user to read buffer. make send_frame return AVERROR(EAGAIN) until avcodec_receive_packet() is called
-		//TODO pass warning to avlog
-		fprintf(stderr, "[libnvmpi][W]: EAGAIN. User must read output. nvmpi encoder packet memory pool is empty! Packet will be dropped. There may be artifacts in the output video.\n");
-	}
-	else if (buffer->planes[0].bytesused > NVMPI_ENC_CHUNK_SIZE)
-	{
-		//pool packet buffers are NVMPI_ENC_CHUNK_SIZE bytes; copying a
-		//larger encoded frame would overflow them
-		fprintf(stderr, "[libnvmpi][E]: encoded frame (%u bytes) exceeds packet buffer (%u); frame dropped. There will be artifacts in the output video.\n",
-			buffer->planes[0].bytesused, (unsigned)(NVMPI_ENC_CHUNK_SIZE));
-		ctx->pktPool->qEmptyBuf(pkt);
-	}
-	else
-	{
-		pkt->pts = (v4l2_buf->timestamp.tv_usec % 1000000) + (v4l2_buf->timestamp.tv_sec * 1000000UL);
-		//AV_PKT_FLAG_KEY 0x0001. if current packet is keyframe then enc_metadata.KeyFrame should be 0x1, so it should be OK to just assign value
-		pkt->flags = enc_metadata.KeyFrame;
-		pkt->payload_size = buffer->planes[0].bytesused;
-		memcpy(pkt->payload, buffer->planes[0].data, pkt->payload_size);
-
-		ctx->pktPool->qFilledBuf(pkt);
-	}
-	
-	if (ctx->enc->capture_plane.qBuffer(*v4l2_buf, NULL) < 0)
-	{
-		//TODO error handling
-		ERROR_MSG("Error while Qing buffer at capture plane");
-		return false;
-	}
-
-	return true;
-}
-
-//Alternate OUTPUT-plane setup used only when OUTPLANE_MEMTYPE_DMA is
-//selected: REQBUFS as V4L2_MEMORY_DMABUF and self-allocate one pitch-linear
-//YUV420 NvBufSurface per buffer, storing the fds in ctx->output_plane_fd
-//(freed in nvmpi_encoder_close). NvUtils-only code path.
-#if (OUTPLANE_MEMTYPE == OUTPLANE_MEMTYPE_DMA)
-static int setup_output_dmabuf(nvmpictx *ctx, uint32_t num_buffers )
-{
-    int ret=0;
-    NvBufSurf::NvCommonAllocateParams cParams;
-    int fd;
-    ret = ctx->enc->output_plane.reqbufs(V4L2_MEMORY_DMABUF,num_buffers);
-    if(ret)
-    {
-        cerr << "reqbufs failed for output plane V4L2_MEMORY_DMABUF" << endl;
-        return ret;
-    }
-    for (uint32_t i = 0; i < ctx->enc->output_plane.getNumBuffers(); i++)
-    {
-        cParams.width = ctx->width;
-        cParams.height = ctx->height;
-        cParams.layout = NVBUF_LAYOUT_PITCH;
-        
-        /*
-        switch (ctx->cs)
-        {
-            case V4L2_COLORSPACE_REC709:
-                cParams.colorFormat = ctx->enable_extended_colorformat ?
-                    NVBUF_COLOR_FORMAT_YUV420_709_ER : NVBUF_COLOR_FORMAT_YUV420_709;
-                break;
-            case V4L2_COLORSPACE_SMPTE170M:
-            default:
-                cParams.colorFormat = ctx->enable_extended_colorformat ?
-                    NVBUF_COLOR_FORMAT_YUV420_ER : NVBUF_COLOR_FORMAT_YUV420;
-        }
-        if (ctx->is_semiplanar)
-        {
-            cParams.colorFormat = NVBUF_COLOR_FORMAT_NV12;
-        }
-        if (ctx->encoder_pixfmt == V4L2_PIX_FMT_H264)
-        {
-            if (ctx->enableLossless)
-            {
-                if (ctx->is_semiplanar)
-                    cParams.colorFormat = NVBUF_COLOR_FORMAT_NV24;
-                else
-                    cParams.colorFormat = NVBUF_COLOR_FORMAT_YUV444;
-            }
-        }
-        
-        
-        else if (ctx->encoder_pixfmt == V4L2_PIX_FMT_H265)
-        {
-            if (ctx->chroma_format_idc == 3)
-            {
-                if (ctx->is_semiplanar)
-                    cParams.colorFormat = NVBUF_COLOR_FORMAT_NV24;
-                else
-                    cParams.colorFormat = NVBUF_COLOR_FORMAT_YUV444;
-
-                if (ctx->bit_depth == 10)
-                    cParams.colorFormat = NVBUF_COLOR_FORMAT_NV24_10LE;
-            }
-            if (ctx->profile == V4L2_MPEG_VIDEO_H265_PROFILE_MAIN10 && (ctx->bit_depth == 10))
-            {
-                cParams.colorFormat = NVBUF_COLOR_FORMAT_NV12_10LE;
-            }
-        }
-        */
-        
-        cParams.colorFormat = NVBUF_COLOR_FORMAT_YUV420;
-        cParams.memtag = NvBufSurfaceTag_VIDEO_ENC;
-        cParams.memType = NVBUF_MEM_SURFACE_ARRAY;
-        // Create output plane fd for DMABUF io-mode
-        ret = NvBufSurf::NvAllocate(&cParams, 1, &fd);
-        if(ret < 0)
-        {
-            cerr << "Failed to create NvBuffer" << endl;
-            return ret;
-        }
-        ctx->output_plane_fd[i]=fd;
-    }
-    return ret;
-}
-#endif
+#include "nvmpi_enc_internal.h"
 
 //Public API: create and start an encoder.
 //Copies/translates all nvEncParam settings into the context, then programs
@@ -272,7 +52,7 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 	ctx->height=param->height;
 	ctx->enableLossless=false;
 	ctx->bitrate=param->bitrate;
-	ctx->ratecontrol = V4L2_MPEG_VIDEO_BITRATE_MODE_CBR;	
+	ctx->ratecontrol = V4L2_MPEG_VIDEO_BITRATE_MODE_CBR;
 	ctx->idr_interval = param->idr_interval;
 	ctx->fps_n = param->fps_n;
 	ctx->fps_d = param->fps_d;
@@ -295,7 +75,7 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 	ctx->max_perf = param->max_perf;
 	ctx->poc_type = param->poc_type;
 	ctx->vbv_buffer_size = param->vbv_buffer_size;
-	
+
 	//Profile mapping: the caller passes FFmpeg-style H.264 profile ids
 	//(numeric values of FF_PROFILE_H264_*); translate to V4L2 enums.
 	//Unknown/unset values fall back to Main.
@@ -367,7 +147,7 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 			break;
 		default:
 			ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_5_1;
-			break;	
+			break;
 	}
 
 	//HW preset mapping: 1=ultrafast .. 4=slow (default medium); trades
@@ -520,11 +300,11 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 
 	//same QP range applied to I, P and B frames
 	if(ctx->qmax>0 ||ctx->qmin >0){
-		ctx->enc->setQpRange(ctx->qmin, ctx->qmax, ctx->qmin,ctx->qmax, ctx->qmin, ctx->qmax);	
+		ctx->enc->setQpRange(ctx->qmin, ctx->qmax, ctx->qmin,ctx->qmax, ctx->qmin, ctx->qmax);
 	}
 	ret = ctx->enc->setIFrameInterval(ctx->iframe_interval);
 	TEST_ERROR(ret < 0, "Could not set encoder I-Frame interval", ret);
-	
+
 	if(ctx->max_perf)
 	{
 		ret = ctx->enc->setMaxPerfMode(1);
@@ -536,7 +316,7 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 		ret = ctx->enc->setPocType(ctx->poc_type);
 		TEST_ERROR(ret < 0, "Error while setting encoder poc_type", ret);
 	}
-	
+
 	if(ctx->insert_sps_pps_at_idr){
 		ret = ctx->enc->setInsertSpsPpsAtIdrEnabled(true);
 		TEST_ERROR(ret < 0, "Could not set insertSPSPPSAtIDR", ret);
@@ -553,7 +333,7 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 
 	ret = ctx->enc->setFrameRate(ctx->fps_n, ctx->fps_d);
 	TEST_ERROR(ret < 0, "Could not set framerate", ret);
-	
+
 	//ret = ctx->enc->output_plane.setupPlane(V4L2_MEMORY_USERPTR, ctx->packets_num, false, true);
 #if (OUTPLANE_MEMTYPE == OUTPLANE_MEMTYPE_MMAP)
 	ret = ctx->enc->output_plane.setupPlane(V4L2_MEMORY_MMAP, ctx->packets_num, true, false);
@@ -648,7 +428,7 @@ int copyFrameToNvBuf(nvFrame* frame, NvBuffer& buffer)
 int nvmpi_encoder_put_frame(nvmpictx* ctx,nvFrame* frame)
 {
 	if(ctx->flushing) return -2;
-	
+
 	int ret;
 	struct v4l2_buffer v4l2_buf;
 	struct v4l2_plane planes[MAX_PLANES];
@@ -667,7 +447,7 @@ int nvmpi_encoder_put_frame(nvmpictx* ctx,nvFrame* frame)
 		nvBuffer=ctx->enc->output_plane.getNthBuffer(ctx->index);
 		v4l2_buf.index = ctx->index;
 		ctx->index++;
-		
+
 #if (OUTPLANE_MEMTYPE == OUTPLANE_MEMTYPE_DMA)
 		v4l2_buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
 		v4l2_buf.memory = V4L2_MEMORY_DMABUF;
@@ -692,7 +472,7 @@ int nvmpi_encoder_put_frame(nvmpictx* ctx,nvFrame* frame)
 			return false;
 		}
 	}
-	
+
 	if(frame)
 	{
 		//normal frame: copy planes in and carry the pts on the buffer
@@ -734,7 +514,7 @@ int nvmpi_encoder_put_frame(nvmpictx* ctx,nvFrame* frame)
 		}
 #endif
 	}
-	
+
 	//for V4L2_MEMORY_DMABUF only
 #if (OUTPLANE_MEMTYPE == OUTPLANE_MEMTYPE_DMA)
 	for (uint32_t j = 0; j < nvBuffer->n_planes; j++)
@@ -813,8 +593,8 @@ int nvmpi_encoder_close(nvmpictx* ctx)
 		//sem_destroy(&ctx.pollthread_sema);
 		//sem_destroy(&ctx.encoderthread_sema);
 	}
-	
-#if (OUTPLANE_MEMTYPE == OUTPLANE_MEMTYPE_DMA)	
+
+#if (OUTPLANE_MEMTYPE == OUTPLANE_MEMTYPE_DMA)
 	int ret;
     if(ctx->enc)
     {
@@ -838,10 +618,9 @@ int nvmpi_encoder_close(nvmpictx* ctx)
     }
     delete[] ctx->output_plane_fd;
     #endif
-	
+
 	delete ctx->enc;
 	delete ctx->pktPool;
 	delete ctx;
 	return 0;
 }
-
