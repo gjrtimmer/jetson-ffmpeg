@@ -21,7 +21,7 @@ Shared infrastructure:
 | File | Contents |
 |------|----------|
 | `NVMPI_bufPool.hpp` | Generic thread-safe producer/consumer buffer pool (header-only template) |
-| `NVMPI_frameBuf.hpp` / `.cpp` | DMA buffer allocation and destruction |
+| `nvmpi_frame_buffer.hpp` / `.cpp` | DMA buffer allocation and destruction |
 
 ### Rules
 
@@ -39,7 +39,7 @@ Shared infrastructure:
 ```text
 include/nvmpi.h          <- public, installed
 include/NVMPI_bufPool.hpp <- public (used by both dec and enc)
-include/NVMPI_frameBuf.hpp
+include/nvmpi_frame_buffer.hpp
 src/nvmpi_dec_internal.h  <- private, includes all of the above + NVIDIA headers
 src/nvmpi_dec_api.cpp     <- includes nvmpi_dec_internal.h
 src/nvmpi_dec_capture.cpp <- includes nvmpi_dec_internal.h

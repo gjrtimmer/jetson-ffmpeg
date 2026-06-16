@@ -96,7 +96,7 @@ When adding a new FFmpeg version or handling a new API change, see the step-by-s
 
 - `nvmpi_dec.cpp` / `nvmpi_enc.cpp` — V4L2 decode/encode pipelines exposed through the C API in `include/nvmpi.h` (`nvmpi_create_*`, `put`/`get`, `close`).
 - `NVMPI_bufPool.hpp` — thread-safe producer/consumer pool used for both decoded-frame and encoded-packet buffers.
-- `NVMPI_frameBuf.{hpp,cpp}` — DMA buffer alloc/destroy, abstracting NvUtils vs nvbuf_utils.
+- `nvmpi_frame_buffer.{hpp,cpp}` — DMA buffer alloc/destroy, abstracting NvUtils vs nvbuf_utils.
 
 The CMake build also pulls NVIDIA sample classes (`NvVideoDecoder`, `NvVideoEncoder`, etc.) from `${JETSON_MULTIMEDIA_API_DIR}/samples/common/classes` — these are not vendored in this repo and must exist on the build host (or via the devcontainer mounts).
 
@@ -148,7 +148,7 @@ cleanup:
 | `NvVideoDecoder*` | `NvVideoDecoder::createVideoDecoder()` | `delete ctx->dec` | After `STREAMOFF`, after thread join |
 | `NvVideoEncoder*` | `NvVideoEncoder::createVideoEncoder()` | `delete ctx->enc` | After `stopDQThread` + `waitForDQThread` |
 | DMA buffer FDs (capture) | `NvBufSurf::NvAllocate` / `NvBufferCreateEx` | `NvBufferDestroy` / `NvBufSurf::NvDestroy` | Batch-allocated, individually destroyed |
-| `NVMPI_frameBuf` | `new NVMPI_frameBuf()` + `alloc()` | `destroy()` + pool teardown | `destroy()` is idempotent (checks `fd >= 0`, nulls after) |
+| `nvmpi_frame_buffer` | `new nvmpi_frame_buffer()` + `alloc()` | `destroy()` + pool teardown | `destroy()` is idempotent (checks `fd >= 0`, nulls after) |
 | `NVMPI_bufPool` | `new NVMPI_bufPool<T>()` | Caller drains both queues, then `delete pool` | Pool delete does NOT free contents — caller responsibility |
 | `nvPacket` (enc wrapper) | `nvmpienc_nvPacket_alloc` → `malloc` + `av_packet_alloc` | `av_packet_free` + `free(nPkt)` | Must drain both empty and filled queues |
 | Encoder output_plane FDs | `NvBufSurf::NvAllocate` (DMA mode) | `NvBufSurf::NvDestroy` per FD, `delete[]` array | Only in `OUTPLANE_MEMTYPE_DMA` mode |
@@ -164,7 +164,7 @@ cleanup:
 - **Check-and-Null pattern:** After every `free`/`delete`/`av_freep`/`NvBufferDestroy`:
   - Set pointers to `NULL`/`nullptr`
   - Set file descriptors to `-1`
-  - This project already does this in `NVMPI_frameBuf::destroy()` (`dst_dma_fd = -1; dst_dma_surface = NULL`) — apply the same discipline everywhere.
+  - This project already does this in `nvmpi_frame_buffer::destroy()` (`dst_dma_fd = -1; dst_dma_surface = NULL`) — apply the same discipline everywhere.
 - **No dangling references in pools:** When draining `NVMPI_bufPool`, free each item as it is dequeued — never delete the pool while items remain inside.
 
 ### 3. Defensive media parsing
@@ -187,7 +187,7 @@ All media bytes entering `nvmpi_decoder_put_packet`, `nvmpi_encoder_put_frame`, 
 
   ```c
   /* Allocated here; freed in nvmpi_decoder_close() via deinitFramePool() */
-  fb = new NVMPI_frameBuf();
+  fb = new nvmpi_frame_buffer();
   ```
 
 - **Thread safety assumptions:** Document which lock protects which data, what the expected lock-hold duration is, and any lock ordering requirements.
