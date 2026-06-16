@@ -3,7 +3,7 @@
  * (libnvmpi layer; implementation in src/NVMPI_frameBuf.cpp).
  *
  * The decoder allocates a pool of these (see nvmpictx::initFramePool in
- * src/nvmpi_dec.cpp) as the pitch-linear destination buffers of the
+ * src/nvmpi_dec_api.cpp) as the pitch-linear destination buffers of the
  * VIC transform that converts/scales the decoder's block-linear output.
  * Instances circulate through NVMPI_bufPool<NVMPI_frameBuf*> between the
  * capture thread (fills them) and the user thread (copies them out).

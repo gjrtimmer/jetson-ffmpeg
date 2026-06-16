@@ -149,6 +149,27 @@ The library exposes a pure C API:
 
 - **`nvUtils2NvBuf.h`** (`include/nvUtils2NvBuf.h`): Compile-time compatibility layer. When `WITH_NVUTILS` is defined, maps legacy `NvBuffer*` names to `NvBufSurf*` equivalents. This is what enables support across JetPack versions without `#ifdef` in every function.
 
+### Modular File Structure
+
+Source files follow `nvmpi_{codec}_{concern}.cpp` — see
+[ARCHITECTURE.md](ARCHITECTURE.md) for the full convention, include
+structure, and encoder migration path.
+
+Current decoder files:
+
+| File | Concern |
+|------|---------|
+| `src/nvmpi_dec_api.cpp` | Public API (`create`, `put_packet`, `get_frame`, `flush`, `close`) |
+| `src/nvmpi_dec_capture.cpp` | Capture thread loop, resolution-change handler |
+| `src/nvmpi_dec_planes.cpp` | V4L2 CAPTURE-plane alloc/teardown, color format selection |
+| `src/nvmpi_dec_internal.h` | Context struct, macros, forward declarations |
+
+When adding a new feature:
+1. Identify which concern it touches (API? capture loop? planes?).
+2. Edit only that file. If it doesn't fit any existing concern, create a new
+   `nvmpi_dec_{concern}.cpp` and add it to `CMakeLists.txt`.
+3. Never put new public API signatures outside `include/nvmpi.h`.
+
 ### NvUtils vs nvbuf_utils
 
 The codebase supports two NVIDIA buffer management APIs:
