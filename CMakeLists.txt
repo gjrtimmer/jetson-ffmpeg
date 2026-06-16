@@ -88,7 +88,7 @@ set(NVMPI_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_dec_planes.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_enc_api.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_enc_output.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/NVMPI_frameBuf.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_frame_buffer.cpp)
     
 set(NVMPI_DEP_LIBS ${CMAKE_THREAD_LIBS_INIT} ${LIB_V4L2} ${LIB_NVJPEG})
 

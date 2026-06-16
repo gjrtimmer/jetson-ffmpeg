@@ -4,7 +4,7 @@
 #include "NvVideoDecoder.h"
 #include "nvUtils2NvBuf.h"
 #include "NVMPI_bufPool.hpp"
-#include "NVMPI_frameBuf.hpp"
+#include "nvmpi_frame_buffer.hpp"
 #include <vector>
 #include <iostream>
 #include <thread>
@@ -69,16 +69,16 @@ struct nvmpictx
 	unsigned int decoder_pixfmt{0};     //V4L2 fourcc of the compressed input
 	std::thread dec_capture_loop;       //runs dec_capture_loop_fcn()
 
-	int frame_pool_size{12};            //number of NVMPI_frameBuf's to allocate
+	int frame_pool_size{12};            //number of nvmpi_frame_buffer's to allocate
 	uint32_t chunk_size{CHUNK_SIZE_DEFAULT}; //bytes per compressed-input OUTPUT-plane buffer
 	bool max_perf{true};                //lift NVDEC clock governor for max throughput
 	bool disable_dpb{false};            //skip DPB reordering (low-latency, B-frame-free only)
 	int wait_timeout_ms{500};           //blocking dequeue ceiling (ms); set via AVOption
 	//producer/consumer pool: capture thread fills, user thread consumes
-	NVMPI_bufPool<NVMPI_frameBuf*>* framePool;
+	NVMPI_bufPool<nvmpi_frame_buffer*>* framePool;
 	//all frame bufs ever allocated by initFramePool — ensures deinitFramePool
 	//can destroy every buffer even if one is temporarily outside both queues
-	std::vector<NVMPI_frameBuf*> allocatedFrameBufs;
+	std::vector<nvmpi_frame_buffer*> allocatedFrameBufs;
 
 	//output frame size params
 	//(describes the pitch-linear dst_dma buffers; filled by
@@ -108,4 +108,4 @@ struct nvmpictx
 NvBufferColorFormat getNvColorFormatFromV4l2Format(v4l2_format &format, bool want_10bit);
 void dec_capture_loop_fcn(void *arg);
 void respondToResolutionEvent(v4l2_format &format, v4l2_crop &crop, nvmpictx* ctx);
-int copyNvBufToFrame(nvmpictx* ctx, NVMPI_frameBuf *nvmpiBuf, nvFrame* frame);
+int copyNvBufToFrame(nvmpictx* ctx, nvmpi_frame_buffer *nvmpiBuf, nvFrame* frame);

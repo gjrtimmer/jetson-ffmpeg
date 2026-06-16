@@ -1,12 +1,12 @@
 /*
- * NVMPI_frameBuf.cpp — DMA frame buffer allocation/destruction
- * (libnvmpi layer; see NVMPI_frameBuf.hpp for the role of this struct).
+ * nvmpi_frame_buffer.cpp — DMA frame buffer allocation/destruction
+ * (libnvmpi layer; see nvmpi_frame_buffer.hpp for the role of this struct).
  *
  * Encapsulates the only place where the decoder's destination DMA buffers
  * are created and freed, with one branch per NVIDIA buffer API:
  * NvUtils/NvBufSurface (WITH_NVUTILS, JetPack 5+) vs legacy nvbuf_utils.
  */
-#include "NVMPI_frameBuf.hpp"
+#include "nvmpi_frame_buffer.hpp"
 #include <iostream> //LOG. TODO: add some LOG() define
 
 //Allocate one hardware DMA buffer according to input_params and take
@@ -14,7 +14,7 @@
 //NvBufSurface view of the new fd is also resolved (needed later by
 //NvBufSurfTransform and the CPU map/sync helpers); if that fails the fd is
 //destroyed again so no partially-initialized state remains.
-bool NVMPI_frameBuf::alloc(NvBufferCreateParams& input_params)
+bool nvmpi_frame_buffer::alloc(NvBufferCreateParams& input_params)
 {
 	int ret = 0;
 #ifdef WITH_NVUTILS
@@ -56,7 +56,7 @@ bool NVMPI_frameBuf::alloc(NvBufferCreateParams& input_params)
 //build the cached surface pointer is cleared as well, since it became
 //dangling when the fd was destroyed. NvBufferDestroy maps to
 //NvBufSurf::NvDestroy under WITH_NVUTILS (see nvUtils2NvBuf.h).
-bool NVMPI_frameBuf::destroy()
+bool nvmpi_frame_buffer::destroy()
 {
 	int ret = 0;
 	if(dst_dma_fd >= 0)
