@@ -120,6 +120,7 @@ You are an expert system-level engineer with deep specialization in:
 Every resource must have a guaranteed, single-point deallocation path. No early returns that bypass cleanup.
 
 **In C code (FFmpeg wrappers):** use the structured single-exit `goto cleanup;` pattern:
+
 ```c
 int fn(AVCodecContext *avctx) {
     int ret = 0;
@@ -183,27 +184,35 @@ All media bytes entering `nvmpi_decoder_put_packet`, `nvmpi_encoder_put_frame`, 
 **What to comment:**
 
 - **Resource lifecycle boundaries:** Mark every allocation with a comment naming its deallocation site. Mark every deallocation with a comment confirming what it frees and that it is the single deallocation point.
+
   ```c
   /* Allocated here; freed in nvmpi_decoder_close() via deinitFramePool() */
   fb = new NVMPI_frameBuf();
   ```
+
 - **Thread safety assumptions:** Document which lock protects which data, what the expected lock-hold duration is, and any lock ordering requirements.
+
   ```cpp
   /* m_emptyBuf mutex: guards the empty-buffer queue.
    * Never hold both m_emptyBuf and m_filledBuf simultaneously. */
   ```
+
 - **Defensive checks:** Explain WHY each validation exists — what attack or corruption scenario it prevents.
+
   ```c
   /* Prevent integer overflow: attacker-controlled width*height could wrap
    * size_t on 32-bit, causing undersized allocation then heap overflow. */
   if (width > MAX_DIM || height > MAX_DIM) return AVERROR(EINVAL);
   ```
+
 - **V4L2/hardware interaction sequences:** Comment each ioctl call, STREAMOFF/STREAMON transition, and buffer queue/dequeue with the expected device state.
 - **Version-gated code:** Every `#if LIBAVCODEC_VERSION_MAJOR` or `#ifdef WITH_NVUTILS` block must have a comment explaining which API change it handles and which FFmpeg/JetPack versions are affected.
+
   ```c
   #if LIBAVCODEC_VERSION_MAJOR >= 60
   /* FFCodec replaced AVCodec in libavcodec 60 (FFmpeg 6.0+) */
   ```
+
 - **Non-obvious control flow:** `goto cleanup`, fall-through in switch, early-exit conditions, EOS signal propagation.
 - **Known limitations and TODOs:** Mark incomplete error handling or known gaps with `/* TODO: */` and a description of the risk.
 

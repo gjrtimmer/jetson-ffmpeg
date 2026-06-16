@@ -4,7 +4,7 @@ This guide covers running the jetson-ffmpeg development environment inside a con
 
 ## Architecture
 
-```
+```text
 ┌──────────────┐      SSH       ┌───────────────────────────────────────┐
 │  Local PC    │ ──────────────▸│  Jetson Device                        │
 │  (VS Code)   │                │  ┌─────────────────────────────────┐  │
@@ -193,7 +193,7 @@ After changing, rebuild the container: `Ctrl+Shift+P` → **Dev Containers: Rebu
 
 To build FFmpeg inside the container, install additional packages. Add to the `Dockerfile` `apt-get install` line:
 
-```
+```text
 libass-dev libfreetype-dev libgnutls28-dev libsdl2-dev libtool \
 libva-dev libvdpau-dev libvorbis-dev libxcb1-dev libxcb-shm0-dev \
 libxcb-xfixes0-dev texinfo wget zlib1g-dev

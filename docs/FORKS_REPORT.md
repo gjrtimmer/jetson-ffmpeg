@@ -36,8 +36,7 @@ This document preserves all agent findings so nothing is lost between sessions.
 
 ---
 
-<a id="upstream-jocover"></a>
-## 1. Upstream: jocover/jetson-ffmpeg
+## 1. Upstream: jocover/jetson-ffmpeg {#upstream-jocover}
 
 **Total issues:** 119 (80 open, 39 closed) — repo effectively abandoned since ~2022
 **Total PRs:** 20 (11 open, 7 merged, 2 closed-unmerged)
@@ -45,111 +44,140 @@ This document preserves all agent findings so nothing is lost between sessions.
 ### Issue Clusters
 
 **1. nvbuf_utils removal / JetPack 5.1.2+ build failure** — #115, #120, #123, #126, #134, #136
+
 - CMake `find_library(LIB_NVBUF nvbuf_utils)` fails on JP 5.1.2+
 - Unresolved upstream; PR #125 (douo) migrates decoder only
-- Migration guide: https://developer.nvidia.com/sites/default/files/akamai/embedded/nvbuf_utils_to_nvutils_migration_guide.pdf
+- Migration guide: <https://developer.nvidia.com/sites/default/files/akamai/embedded/nvbuf_utils_to_nvutils_migration_guide.pdf>
 
 **2. FFmpeg version support 5.x/6.x/7.x** — #129, #138
+
 - Upstream patch only supports 4.2; API changed (AVCodec→FFCodec v60, encode2→receive_packet)
 - PR #132 (bmegli) adds new encode API
 
 **3. Encoder latency (old encode2 API)** — #131, #7
+
 - encode2 callback blocks synchronously; 2-5 frame latency
 - PR #132 implements send_frame/receive_packet
 
 **4. Encoder thread race condition** — #130
+
 - `packet_pools` accessed by DQ callback + FFmpeg thread without synchronization
 - Identified by bmegli; no fix exists
 
 **5. Missing return statement UB** — #127, #98
+
 - Encoder/decoder capture callbacks declared void* but no return
 - GCC on newer L4T → segfault
-- Fix: https://github.com/Extend-Robotics/jetson-ffmpeg/commit/0229e5ba (encoder)
-- Fix: https://github.com/Extend-Robotics/jetson-ffmpeg/commit/6d327624 (decoder)
+- Fix: <https://github.com/Extend-Robotics/jetson-ffmpeg/commit/0229e5ba> (encoder)
+- Fix: <https://github.com/Extend-Robotics/jetson-ffmpeg/commit/6d327624> (decoder)
 
 **6. Encoder PTS truncation + circular buffer** — #41, #48, #100
+
 - PTS % 1000000 causes non-monotonic DTS in FLV/RTMP
 - Old packets re-queued with stale timestamps
-- Patches: https://github.com/jocover/jetson-ffmpeg/files/4803889/patches.zip
+- Patches: <https://github.com/jocover/jetson-ffmpeg/files/4803889/patches.zip>
 
 **7. YUVJ420P / pixel format issues** — #20, #60, #66, #68, #73, #83, #116
+
 - Decoder hardcodes yuv420p; yuvj420p (JPEG range) causes crashes
 - PR #74 (open): treat YUVJ420P same as YUV420P
 
 **8. Linesize/stride mismatch crash** — #64, #80
+
 - Hardware stride ≠ FFmpeg linesize at 4K; image_copy_plane asserts
 - PR #79 (vietnx) MERGED — the critical fix
 
 **9. Decoder hangs with IP cameras** — #111, #1, #5, #13
+
 - Certain RTSP streams cause capture loop hang
 - PR #22 (cgutman, Moonlight fixes) MERGED; PR #70 (pix_fmt default) MERGED
 
 **10. NV12 pixel format support** — #11, #73, #133
+
 - Only yuv420p exposed; NV12 is native HW format but not available
 - PR #25, #26, #27 (xsacha) open+unmerged
 
 **11. Decoder performance — setMaxPerfMode missing** — #120, PR #125
+
 - 4K HEVC: 28fps → 64fps with one line `setMaxPerfMode(1)`
 - 720p H264: 46fps → 290fps
 - Not merged upstream; implemented in Keylost
 
 **12. Decode in child process** — PR #99
+
 - V4L2 fd inheritance after fork() breaks decoder
 - Keylost PR open+unmerged upstream
 
 **13. Memory leaks** — PR #15 (merged), #16 (merged), #82 (open)
+
 - Decoder leaks fixed; encoder leaks unfixed since 2021
 
 **14. Encoder quality control** — #50, #52, #7, #93
+
 - No CRF; bitrate settings misapplied; lossless requires hardcode
 
 **15. Wrong encoder output size / green line** — #8, #101, #51
+
 - Dimensions must be divisible by 16; encoder pads silently
 
 **16. CUDA / zero-copy** — #62, #67, #92, #93, #121
+
 - Decoded frames always copied to CPU; no `-hwaccel cuda` support
-- https://docs.nvidia.com/jetson/l4t-multimedia/l4t_mm_02_video_dec_cuda.html
+- <https://docs.nvidia.com/jetson/l4t-multimedia/l4t_mm_02_video_dec_cuda.html>
 
 **17. Non-monotonic DTS** — #76, #110
+
 - Related to PTS truncation cluster
 
 **18. RTSP looping stream failure** — #113
+
 - Decoder fails on RTSP stream restart; NVIDIA V4L2 limitation
 
 **19. Build issues** — #2, #37, #47, #56, #109
+
 - Various pkg-config / cmake path / patch application problems
 
 **20. VP8 missing definition** — #71, #72
+
 - VP8 codec registration omitted from allcodecs.c
 
 **21. MPEG2 decoder segfault** — #38
+
 - Unresolved; multiple users confirmed crash
 
 **22. High CPU with low GPU utilization** — #18, #35, #42, #93
+
 - NVENC/NVDEC appear in separate jtop counters, not GPU meter
 - setMaxPerfMode is real perf fix
 
 **23. Encoder extradata/SPS-PPS issues** — #3, #45
+
 - extradata_size absurdly large sometimes
-- teplofizik patch: https://github.com/jocover/jetson-ffmpeg/files/4804050/ffmpeg_nvmpi_v2.zip
+- teplofizik patch: <https://github.com/jocover/jetson-ffmpeg/files/4804050/ffmpeg_nvmpi_v2.zip>
 
 **24. DMA buffer encode** — #117, #118
+
 - Feature request for direct DMA-buffer-fd encode; unresolved
 
 **25. Thread lifecycle / Moonlight** — #10, #104
+
 - Rapid open/close crashes; GCC >7.3.x thread-join hang
 - PR #22, #23 (cgutman) MERGED
 
 **26. NvBuf header version mismatch** — #31, #32
+
 - Repo-vendored nvbuf_utils.h differs from system version
 
 **27. 10-bit video** — #75, #80
+
 - HW supports 10-bit but nvmpi doesn't expose it
 
 **28. License** — #30
+
 - MIT license added by jocover after cgutman request
 
 ### Merged PRs
+
 - PR #15: memory leak fixes in decoder
 - PR #16: additional memory leak fix
 - PR #22: cgutman Moonlight fixes (thread lifecycle, double-free, frame race)
@@ -159,22 +187,22 @@ This document preserves all agent findings so nothing is lost between sessions.
 - PR #79: vietnx linesize/stride fix
 
 ### Key External Links
-- NVIDIA NvUtils migration guide: https://developer.nvidia.com/sites/default/files/akamai/embedded/nvbuf_utils_to_nvutils_migration_guide.pdf
-- NVIDIA setMaxPerfMode docs: https://docs.nvidia.com/jetson/l4t-multimedia/classNvVideoDecoder.html#a3334a8ebb14385f42dabc62a7dbdadb2
-- NVIDIA decoded frames to CUDA: https://docs.nvidia.com/jetson/l4t-multimedia/l4t_mm_02_video_dec_cuda.html
-- NVIDIA unified memory on Tegra: https://docs.nvidia.com/cuda/archive/10.2/cuda-for-tegra-appnote/index.html#memory-selection
-- teplofizik encoder patches: https://github.com/jocover/jetson-ffmpeg/files/4803889/patches.zip
-- teplofizik extradata fix: https://github.com/jocover/jetson-ffmpeg/files/4804050/ffmpeg_nvmpi_v2.zip
+
+- NVIDIA NvUtils migration guide: <https://developer.nvidia.com/sites/default/files/akamai/embedded/nvbuf_utils_to_nvutils_migration_guide.pdf>
+- NVIDIA setMaxPerfMode docs: <https://docs.nvidia.com/jetson/l4t-multimedia/classNvVideoDecoder.html#a3334a8ebb14385f42dabc62a7dbdadb2>
+- NVIDIA decoded frames to CUDA: <https://docs.nvidia.com/jetson/l4t-multimedia/l4t_mm_02_video_dec_cuda.html>
+- NVIDIA unified memory on Tegra: <https://docs.nvidia.com/cuda/archive/10.2/cuda-for-tegra-appnote/index.html#memory-selection>
+- teplofizik encoder patches: <https://github.com/jocover/jetson-ffmpeg/files/4803889/patches.zip>
+- teplofizik extradata fix: <https://github.com/jocover/jetson-ffmpeg/files/4804050/ffmpeg_nvmpi_v2.zip>
 - Extend-Robotics missing return fixes: commits 0229e5ba, 6d327624
 - LinusCDE/mad-jetson-ffmpeg: combines NVIDIA official decode + jetson-ffmpeg encode
-- NVIDIA official decode-only patch: http://ffmpeg.org/pipermail/ffmpeg-devel/2020-June/263746.html
-- Pre-built Jetson packages: https://jetson.repo.azka.li
+- NVIDIA official decode-only patch: <http://ffmpeg.org/pipermail/ffmpeg-devel/2020-June/263746.html>
+- Pre-built Jetson packages: <https://jetson.repo.azka.li>
 - Performance: 4K HEVC 28→64fps, 720p H264 46→290fps with setMaxPerfMode
 
 ---
 
-<a id="upstream-keylost"></a>
-## 2. Upstream: Keylost/jetson-ffmpeg
+## 2. Upstream: Keylost/jetson-ffmpeg {#upstream-keylost}
 
 **Total issues:** 40 (18 open, 22 closed)
 **Total PRs:** 21 (12 open, 5 merged, 4 closed-unmerged)
@@ -207,6 +235,7 @@ This document preserves all agent findings so nothing is lost between sessions.
 24. **pkg-config nvmpi not found** — #22, #36 — User error; documented
 
 ### Key Links
+
 - gjrtimmer/jetson-ffmpeg@08e32c15 — RTSP fix
 - w3sip/jetson-ffmpeg@de0b039 — Partial RTSP fix
 - jellyfin/jellyfin-ffmpeg#653 — Jellyfin Jetson support
@@ -215,12 +244,12 @@ This document preserves all agent findings so nothing is lost between sessions.
 
 ---
 
-<a id="dsleep"></a>
-## 3. dsleep/jetson-ffmpeg (32 ahead, jocover fork)
+## 3. dsleep/jetson-ffmpeg (32 ahead, jocover fork) {#dsleep}
 
 Issues: disabled | PRs: none | Branches: master only
 
 ### Commits (32)
+
 - Vendor all NVIDIA multimedia API sample classes in-repo (~7000 lines)
 - JetPack 4/5 dual-path encoder via `#if JETPACK_VER` (auto-detect via lsb_release)
 - Wrong color format fix: `V4L2_PIX_FMT_ABGR32` → `V4L2_PIX_FMT_XRGB32` (`018e6e2e`)
@@ -230,18 +259,19 @@ Issues: disabled | PRs: none | Branches: master only
 - Separate `nvmpiJP4.pc.in` for JetPack 4
 
 ### Value: MEDIUM
+
 - Color format fix and encoder hang fix are portworthy
 - Vendoring NVIDIA classes is a different approach than our devcontainer mount
 - JP4/5 dual-path is reference material
 
 ---
 
-<a id="muxable"></a>
-## 4. muxable/jetson-ffmpeg (28 ahead, jocover fork)
+## 4. muxable/jetson-ffmpeg (28 ahead, jocover fork) {#muxable}
 
 Issues: disabled | PRs: 1 merged (#1 version from env var) | Branches: master only
 
 ### Key Features
+
 - **Dynamic bitrate control**: `nvmpi_encoder_set_bitrate(ctx, bitrate)` — change bitrate mid-stream
 - **Force IDR**: `nvmpi_encoder_force_idr(ctx)` — on-demand keyframe insertion
 - `nvFrame.flags` → `nvFrame.idr` (bool) — cleaner IDR signalling
@@ -252,23 +282,25 @@ Issues: disabled | PRs: 1 merged (#1 version from env var) | Branches: master on
 - `ffmpeg_nvmpi.patch` DELETED — treats libnvmpi as standalone distributable
 
 ### Value: HIGH
+
 - Dynamic bitrate + force IDR are essential for real-time streaming
 - Expanded encoder params expose hardware capabilities we're missing
 
 ---
 
-<a id="yuriiholiuk"></a>
-## 5. YuriiHoliuk/jetson-ffmpeg (26 ahead of Keylost)
+## 5. YuriiHoliuk/jetson-ffmpeg (26 ahead of Keylost) {#yuriiholiuk}
 
 Issues: 0 | PRs: 0 | Branches: same as Keylost (no extra work on branches)
 
 ### THIS IS THE MOST ARCHITECTURALLY SIGNIFICANT FORK
 
 **Phase 1 — dlopen lazy-loading:**
+
 - `b4ede2c9`: dlopen `libnvmpi.so` to prevent EGL crash at startup
 - `dynlink_nvmpi.h` header (+186 lines)
 
 **Phase 2 — Zero-copy DMA-BUF pipeline:**
+
 - `nvmpi_decoder_get_frame_fd()` — zero-copy DMA-BUF fd export from decoder
 - `nvmpi_encoder_put_frame_fd()` — zero-copy DMA-BUF fd import to encoder
 - FFmpeg DRM_PRIME decode output + DMA-BUF encode input
@@ -277,15 +309,18 @@ Issues: 0 | PRs: 0 | Branches: same as Keylost (no extra work on branches)
 - Multiple iterations fixing fd sync, temp encoder segfault
 
 **Phase 2.3 — VIC hardware scale filter:**
+
 - `vf_scale_vic.c` (+468 lines) — FFmpeg filter using `NvBufSurfTransform` zero-copy
 - DRM_PRIME in/out, dlopen `libnvbufsurface.so`
 - Usage: `-vf "scale_vic=w=1280:h=720"`
 
 **Phase 3 — P010 10-bit decode:**
+
 - P010 pixel format support in decoder
 - `-p010 1` decoder option
 
 ### Files Changed (11)
+
 - `dynlink_nvmpi.h` (NEW), `nvmpi_dec.c` (+224/-56), `nvmpi_enc.c` (+68/-26)
 - `vf_scale_vic.c` (NEW +468), `ffpatch.sh` (+33/-2)
 - `nvmpi.h` (+33/-1), `nvmpi_dec.cpp` (+101/-21), `nvmpi_enc.cpp` (+106/-3)
@@ -295,12 +330,12 @@ Issues: 0 | PRs: 0 | Branches: same as Keylost (no extra work on branches)
 
 ---
 
-<a id="xia-chu"></a>
-## 6. xia-chu/jetson-ffmpeg (16 ahead, jocover fork)
+## 6. xia-chu/jetson-ffmpeg (16 ahead, jocover fork) {#xia-chu}
 
 Issues: disabled | PRs: none | Branches: master only
 
 ### Key Changes
+
 - **Child process decoder fix** (`fd0900d7`): `NvBufferSession` create/destroy around transform — fixes decoder in forked processes. Via Keylost `fork_fix` branch.
 - FFmpeg 4.3 patch compatibility
 - Reverted jocover PR#78 (CMake/pc changes considered problematic)
@@ -311,12 +346,12 @@ Issues: disabled | PRs: none | Branches: master only
 
 ---
 
-<a id="mattangus"></a>
-## 7. mattangus/jetson-ffmpeg (14 ahead, jocover fork)
+## 7. mattangus/jetson-ffmpeg (14 ahead, jocover fork) {#mattangus}
 
 Issues: disabled | PRs: none | Branches: master, feature/docker
 
 ### Key Changes
+
 - Cross-compilation Dockerfile (QEMU `multiarch/qemu-user-static`, L4T r32.5.0)
 - LF line ending fixes, patch line fix
 - 6 upstream merge commits
@@ -325,12 +360,12 @@ Issues: disabled | PRs: none | Branches: master, feature/docker
 
 ---
 
-<a id="jeanpaulsb"></a>
-## 8. JeanPaulSB/jetson-ffmpeg (11 ahead, jocover fork)
+## 8. JeanPaulSB/jetson-ffmpeg (11 ahead, jocover fork) {#jeanpaulsb}
 
 Issues: disabled | PRs: none | Branches: master only
 
 ### Key Changes
+
 - Remove `-lnvbufsurface` from `nvmpi.pc.in` Libs line
 - 7 commits iterating on patch whitespace/formatting (churn)
 
@@ -338,12 +373,12 @@ Issues: disabled | PRs: none | Branches: master only
 
 ---
 
-<a id="hunterap23"></a>
-## 9. HunterAP23/jetson-ffmpeg (10 ahead, jocover fork)
+## 9. HunterAP23/jetson-ffmpeg (10 ahead, jocover fork) {#hunterap23}
 
 Issues: disabled | PRs: none | Branches: master only
 
 ### Key Changes
+
 - Missing `new file mode 100644` for nvmpi_enc.c in patch — caused `git apply` to fail
 - CRLF→LF conversion
 - 6 upstream merges
@@ -352,12 +387,12 @@ Issues: disabled | PRs: none | Branches: master only
 
 ---
 
-<a id="wangxiaoshuang"></a>
-## 10. wangxiaoshuang/jetson-ffmpeg (9 ahead, 6 behind Keylost)
+## 10. wangxiaoshuang/jetson-ffmpeg (9 ahead, 6 behind Keylost) {#wangxiaoshuang}
 
 Issues: disabled | PRs: none | Branches: master only
 
 ### Key Changes
+
 - dlopen `libnvmpi.so` (independent from YuriiHoliuk)
 - Major decoder rewrite in `nvmpi_dec.cpp` (+138/-209)
 - API surface reduction in `nvmpi.h` (+11/-44)
@@ -367,12 +402,12 @@ Issues: disabled | PRs: none | Branches: master only
 
 ---
 
-<a id="hsuanguo"></a>
-## 11. hsuanguo/jetson-ffmpeg (8 ahead, 25 behind Keylost)
+## 11. hsuanguo/jetson-ffmpeg (8 ahead, 25 behind Keylost) {#hsuanguo}
 
 Issues: disabled | PRs: 4 merged
 
 ### Key Changes
+
 - **RTSP stream stuck fix** (PR#3, co-authored with w3sip): Feed SPS/PPS extradata to decoder
 - **JetPack 5.1.2 build fix** (PR#1): CMakeLists + framebuf fixes
 - **nvjpeg removal** (PR#2): Drops unused dependency, adds GPL flag
@@ -383,16 +418,17 @@ Issues: disabled | PRs: 4 merged
 
 ---
 
-<a id="bradcagle"></a>
-## 12. bradcagle/jetson-ffmpeg (7 ahead, jocover fork)
+## 12. bradcagle/jetson-ffmpeg (7 ahead, jocover fork) {#bradcagle}
 
 Issues: disabled | PRs: none | Branches: master, nvutils
 
 ### Key Changes (master)
+
 - **JPEG decode prototype** (`cd9bf72e`): NvJPEGDecoder C API (`nvmpi_create_jpeg_decoder`, `nvmpi_decode_jpeg`, `nvmpi_close_jpeg_decoder`). Incomplete implementation.
 - **YUVJ420P→YUV420P remapping** (`67e7bbcd`): Forces YUVJ to YUV in decoder
 
 ### Key Changes (nvutils branch)
+
 - Full NvBufSurface/NvUtils migration: decoder + CMake done, encoder partial
 - Dynamic library detection for tegra libs
 - `setMaxPerfMode(1)` enabled
@@ -401,12 +437,12 @@ Issues: disabled | PRs: none | Branches: master, nvutils
 
 ---
 
-<a id="fingul"></a>
-## 13. fingul/jetson-ffmpeg (7 ahead, 25 behind Keylost)
+## 13. fingul/jetson-ffmpeg (7 ahead, 25 behind Keylost) {#fingul}
 
 Issues: disabled | PRs: none | Branches: master only
 
 ### Key Changes
+
 - JetPack 6.2 / Ubuntu 22.04 / NX Orin one-shot install script (37 lines)
 - sed-patches CMakeLists.txt to skip nvbuf_utils
 
@@ -414,12 +450,12 @@ Issues: disabled | PRs: none | Branches: master only
 
 ---
 
-<a id="mguzzina"></a>
-## 14. mguzzina/jetson-ffmpeg (6 ahead of Keylost)
+## 14. mguzzina/jetson-ffmpeg (6 ahead of Keylost) {#mguzzina}
 
 Issues: disabled | PRs: none | Branches: master only
 
 ### Key Changes — WIP `hwcontext_nvmpi` implementation
+
 - `hwcontext_nvmpi.c` (NEW +77): registers `ff_hwcontext_type_nvmpi` with YUV420P/NV12/DRM_PRIME
 - `hwcontext_nvmpi.h` (NEW +60): `AVNVMPIDRMFrameDescriptor`, `AVNVMPIFramesContext`
 - `ffpatch.sh` (+110): integration hooks
@@ -429,12 +465,12 @@ Issues: disabled | PRs: none | Branches: master only
 
 ---
 
-<a id="v-faeez-kadiri"></a>
-## 15. v-faeez-kadiri/jetson-ffmpeg (5 ahead, 25 behind Keylost)
+## 15. v-faeez-kadiri/jetson-ffmpeg (5 ahead, 25 behind Keylost) {#v-faeez-kadiri}
 
 Issues: none | PRs: 1 merged
 
 ### Key Changes
+
 - JetPack 6 library path: `/tegra` → `/nvidia` in all find_library and rpath
 - aarch64 include path addition
 - nvbuf_utils removal for JP6
@@ -443,12 +479,12 @@ Issues: none | PRs: 1 merged
 
 ---
 
-<a id="spotai"></a>
-## 16. spotai/jetson-ffmpeg (ffmpeg-8-support branch)
+## 16. spotai/jetson-ffmpeg (ffmpeg-8-support branch) {#spotai}
 
 Issues: disabled | PRs: none | Master: identical to v-faeez-kadiri
 
 ### Key Changes (ffmpeg-8-support branch — 20+ commits)
+
 - **KEY FRAME FLAG FIX** (`1324d7d6`): Was `pkt->flags |= 0x0001` on every packet; now uses `enc_metadata.KeyFrame` — **CRITICAL BUG FIX**
 - **H.265 encoder header fix** (`2b715e81`): Extended GLOBAL_HEADER to H.265; bounded IDR NAL scan loop (was unbounded → could scan past buffer)
 - **frame_pool_size / packet_pool_size** (`cf0560b5`): Configurable pool sizes + decoder no-skip-frames fix
@@ -461,12 +497,12 @@ Issues: disabled | PRs: none | Master: identical to v-faeez-kadiri
 
 ---
 
-<a id="izdeveloper"></a>
-## 17. izdeveloper/jetson-ffmpeg (3 ahead, 25 behind Keylost)
+## 17. izdeveloper/jetson-ffmpeg (3 ahead, 25 behind Keylost) {#izdeveloper}
 
 Issues: disabled | PRs: none | Branches: master, jetpack-6.2.1 (identical)
 
 ### Key Changes
+
 - JetPack version-gated nvbuf_utils via `apt show nvidia-jetpack` at cmake time
 - Tegra path fix in nvmpi.pc.in
 
@@ -474,12 +510,12 @@ Issues: disabled | PRs: none | Branches: master, jetpack-6.2.1 (identical)
 
 ---
 
-<a id="madsciencetist"></a>
-## 18. madsciencetist/jetson-ffmpeg (3 ahead, 21 behind Keylost)
+## 18. madsciencetist/jetson-ffmpeg (3 ahead, 21 behind Keylost) {#madsciencetist}
 
 Issues: disabled | PRs: 3 merged
 
 ### Key Changes
+
 - **stderr redirect** (PR#1): All libnvmpi prints → stderr (correctness for piped video)
 - **Decoder thread naming**: pthread name for debugging
 - **FFmpeg 6.1 support** (PR#2): Patch + missing `unistd.h` in nvmpi_enc.c
@@ -490,12 +526,12 @@ Issues: disabled | PRs: 3 merged
 
 ---
 
-<a id="w3sip"></a>
-## 19. w3sip/jetson-ffmpeg (0 ahead, all work on branches)
+## 19. w3sip/jetson-ffmpeg (0 ahead, all work on branches) {#w3sip}
 
 Issues: disabled | PRs: 6 (4 merged internally)
 
 ### Branches
+
 - **feat/dq** (19 commits): Major decoder refactor + RTSP fix + crash-on-exit fix
 - **feat/fix** (1 commit): RTSP extradata fix (isolated)
 - **feat/jp5.1** (1 commit): JP 5.1 build fix
@@ -505,6 +541,7 @@ Issues: disabled | PRs: 6 (4 merged internally)
 - **release/0.9.1** (3 commits): Clean cherry-pick of critical fixes
 
 ### Key Changes
+
 - **RTSP/extradata fix** (`0d320fe5`): Prime decoder with SPS/PPS — **the original implementation**
 - **Decoder crash-on-exit** (`49039f81`): Cleanup queued buffers in destructor
 - **Decoder code quality refactor**: Class scoping, private members, mutex automation, error handling
@@ -516,46 +553,50 @@ Issues: disabled | PRs: 6 (4 merged internally)
 
 ---
 
-<a id="cybernhl"></a>
-## 20. cybernhl/jetson-ffmpeg (cgutman grandchild)
+## 20. cybernhl/jetson-ffmpeg (cgutman grandchild) {#cybernhl}
 
 Issues: disabled | PRs: none | Branches: master, low_latency, moonlight_fixes, nvmpi_optional
 
 ### moonlight_fixes branch (4 commits by cgutman)
+
 - **Mutex deadlock on EOS** (`58a977d4`): unlock before EOS return check — **CRITICAL**
 - **delete vs delete[]** (`ff8fd95a`): Correct array delete in decoder+encoder — **CRITICAL**
 - **Uninitialized pointer deletion** (`49d55d10`): nullptr init for all bufptr arrays — **CRITICAL**
 - **Hang on close without data** (`00455615`): Adaptive poll timeout for resolution event — **HIGH**
 
 ### low_latency branch (moonlight_fixes + 1)
+
 - **condition_variable blocking wait** (`caac9899`): True blocking in `nvmpi_decoder_get_frame` when `AV_CODEC_FLAG_LOW_DELAY` set — **HIGH**
 
 ### nvmpi_optional branch (low_latency + 1)
+
 - **Optional NVMPI build** (`b015913a`): `#if CONFIG_NVMPI` guards in FFmpeg
 
 ### Value: **CRITICAL** — the 4 safety fixes are must-port; low_latency is must-port
 
 ---
 
-<a id="small-forks"></a>
-## 21. Small Forks + Branch-Only
+## 21. Small Forks + Branch-Only {#small-forks}
 
 ### HIGH VALUE
 
 **nhahn** (1 ahead of Keylost): JetPack 6 path auto-detection — `/tegra` vs `/nvidia` conditional in CMake. Simple, correct, important.
 
 **LanderN** (optimize/jetson branch, 6 commits):
+
 - `setMaxPerfMode(1)` + disable DPB
 - Camera extradata fix (cites w3sip)
 - **glibc 2.34+ pthread_join segfault** (3 commits): Fixes crashes on Ubuntu 22.04+ from uninitialized `dq_thread`, double-free in teardown, vendors patched `NvV4l2ElementPlane.cpp`
 - **CRITICAL** for modern distros
 
 **GlassBil** (cuda_buffers branch, 4 commits):
+
 - **CUDA buffer return API** via FFmpeg C API — decoded frames stay on GPU
 - **4K I-frame buffer overflow fix**: CHUNK_SIZE 4MB → 10MB + bounds check + configurable `chunk_size`
 - Cleanup fixes
 
 **peters** (issue-ffmpeg-6.1 branch, 1 commit):
+
 - Complete FFmpeg 6.1 dev-tree overlay following standard pattern
 
 ### MEDIUM VALUE
@@ -582,14 +623,14 @@ moss-robot, nulijiabei, SynclairVision, AustinTodd-eng, sonnyhe, lyfpeter, timon
 
 ---
 
-<a id="hidden-branch-forks"></a>
-## 21b. Hidden Branch Forks (found during mirror verification)
+## 21b. Hidden Branch Forks (found during mirror verification) {#hidden-branch-forks}
 
 These 8 forks appeared as mirrors (0 ahead on master) but had unique work on non-default branches.
 
 ### NEW FINDINGS
 
 **bmegli/jetson-ffmpeg** (`new-ffmpeg-api` branch, 1 commit)
+
 - `437f8c55` POC for new FFmpeg nvmpi API implementation
 - Implements modern `send_frame`/`receive_packet` encoder API alongside legacy `encode2`
 - Adds `ff_nvmpi_send_frame()` + `ff_nvmpi_receive_packet()` as separate entry points
@@ -599,12 +640,14 @@ These 8 forks appeared as mirrors (0 ahead on master) but had unique work on non
 - Value: **HIGH** — reference for modern FFmpeg encode API
 
 **tmm1/jetson-ffmpeg** (`fancybits` = `patch-1` branch, 1 commit)
+
 - `428edfec` Fix cflags — CMakeLists.txt variable expansion bug
 - Original: literal `$ {CMAKE_C_FLAGS}` (broken expansion)
 - Fixed: `"${CMAKE_C_FLAGS} -fPIC"` (properly quoted)
 - Value: MEDIUM — real build failure on strict CMake versions
 
 **kazuki0824/jetson-ffmpeg** (`resolve-missing-dep-on-pkgconfig` branch, 4 commits)
+
 - Replaces `find_library(LIB_V4L2 nvv4l2 ...)` with `pkg_check_modules(LIB_V4L2 REQUIRED libv4l2)`
 - Introduces `BITBAKE_SYSROOT` variable for Yocto cross-compilation via sysroot injection
 - Moves `.pc` install from `share/pkgconfig` to `lib/pkgconfig`
@@ -614,25 +657,29 @@ These 8 forks appeared as mirrors (0 ahead on master) but had unique work on non
 ### KNOWN / DUPLICATE FINDINGS
 
 **cgutman/jetson-ffmpeg** (`moonlight_fixes`, `low_latency`, `nvmpi_optional` branches)
+
 - Same code as cybernhl/jetson-ffmpeg (already analyzed in section 20). cgutman is the original author; cybernhl inherited all branches. 0 ahead on master.
 - All 4 safety fixes + low_latency + nvmpi_optional already cataloged.
 
 **uschen-thirdparty/jetson-ffmpeg** (`max_perf_mode` branch, 2 ahead)
+
 - `991f2296` Adds `setMaxPerfMode(1)` in encoder. Known finding (douo, LanderN, bradcagle).
 
 **koenvandesande/jetson-ffmpeg** (`loosen_pixfmt_check` branch, 1 ahead)
+
 - `3c3f608f` YUVJ420P acceptance alongside YUV420P. Known finding (bradcagle `67e7bbcd`).
 
 **gvsyn/jetson-ffmpeg** (`n4.4.1` branch, 2 ahead)
+
 - Patch rebase for FFmpeg n4.4.1 point release. No logic changes. Superseded.
 
 **coupdair/jetson-ffmpeg** (`dev_use` branch, 2 ahead)
+
 - README-only: parallel FFmpeg throughput benchmarks (1-4 instances). Zero code.
 
 ---
 
-<a id="mirror-verification"></a>
-## 21c. Verified Mirrors (164 forks, no unique work)
+## 21c. Verified Mirrors (164 forks, no unique work) {#mirror-verification}
 
 All 164 forks below were verified via GitHub API: 0 commits ahead on all branches, no extra branches beyond master, 0 issues, 0 PRs.
 
@@ -642,21 +689,23 @@ All 164 forks below were verified via GitHub API: 0 commits ahead on all branche
 
 ---
 
-<a id="subtrees"></a>
-## 22. Fork Subtrees
+## 22. Fork Subtrees {#subtrees}
 
 ### douo Subtree
 
 **douo/jetson-ffmpeg** (2 ahead of jocover)
+
 - `d9856840` NvUtils migration (nvbuf_utils → NvBufSurface)
 - `e96d1ace` setMaxPerfMode(1) for decoder
 - Value: MEDIUM — foundational NvUtils migration + perf
 
 **Tantael/jetson-ffmpeg-fixed** (child of douo, +5 ahead)
+
 - All commits are README edits only. patch-1 branch: 1 unique commit (also README).
 - Value: NONE
 
 **Extend-Robotics/jetson-ffmpeg** (child of douo, +8 ahead) — **Stars: 1**
+
 - `57f3f6c3` setMaxPerfMode for encoder AND decoder
 - `96803164` H.264 poc-type=2 (display order = decode order; zerolatency-style). Refs: NVIDIA forums, Extend-Robotics/gst-nvvideo4linux2#1
 - `0229e5ba` **BUG FIX:** Missing return value in encoder close callback (UB → segfault on L4T 5.1)
@@ -666,15 +715,18 @@ All 164 forks below were verified via GitHub API: 0 commits ahead on all branche
 - Value: **HIGH** — two critical UB fixes are must-port; POC new API is reference; Debian packaging reusable
 
 **ReAlexLiu/jetson-ffmpeg** (child of douo, +4 ahead)
+
 - `07e106eb` "兼容jetpack5.0" (JetPack 5.0 compat): massive rewrite of CMakeLists.txt (+90/-65), adds complete ffmpeg_dev/ structure (4.2, 4.4, 6.0 overlays + common codec files), restructures to src/+include/ layout, adds nvUtils2NvBuf.h, NVMPI_bufPool.hpp, NVMPI_frameBuf.hpp
 - Value: LOW — reference for repo structure; similar to our current layout
 
 **rai-opensource/jetson-ffmpeg** (child of douo)
+
 - EXACT DUPLICATE of douo/master. 0 unique commits.
 
 ### vietnx Subtree
 
 **vietnx/jetson-ffmpeg** (4 ahead, 2 behind jocover; fix-compatible-issue branch)
+
 - `a8edb1c1` Memory leak fix in nvmpi_enc + cleanup in dec/enc
 - `fdbb815a` Enable insert_vui to add FPS info to video stream
 - `e9568cd1` Fix compatible issue with JetPack 4.4 and 4.5
@@ -684,33 +736,40 @@ All 164 forks below were verified via GitHub API: 0 commits ahead on all branche
 - Value: MEDIUM — memory leak fix + insert_vui portworthy; JP4 compat is obsolete
 
 **dlavrantonis/jetson-ffmpeg** (child of vietnx, +5 ahead jocover)
+
 - Carries only 2 of vietnx's 5 code commits (a8edb1c1, fdbb815a). Issue #1 (closed): "pull latest from owner". PR #1 (closed): synced jocover:master. Two README edits.
 - Value: NONE — no new code
 
 ### aveao Subtree
 
 **aveao/jetson-ffmpeg** (1 ahead of jocover)
+
 - `144f96ed` Port to FFmpeg 4.4 (patch + configuration)
 - Value: LOW — superseded by our multi-version support
 
 **jamitupya/jetson-ffmpeg** (child of aveao)
+
 - EXACT DUPLICATE of aveao/master. 0 unique commits.
 
 **EliteScientist/jetson-ffmpeg** (child of aveao)
+
 - EXACT DUPLICATE of aveao/master. 0 unique commits.
 
 **dbussert/jetson-ffmpeg** (child of aveao, +2 ahead)
+
 - `9318e2de` Fix patch for latest FFmpeg 4.4.2 point release
 - Value: LOW — superseded
 
 ### madsciencetist Grandchildren
 
 **AndBobsYourUncle/jetson-ffmpeg** (child of madsciencetist, +2 ahead, 2 behind — diverged)
+
 - `b8fb1ee3` Remove nvbuf_utils from CMakeLists.txt link deps
 - `9c17b09f` CMake install target: don't overwrite, use plain library names for stubbing
 - Value: LOW — CMake cleanup
 
 **traversaro/jetson-ffmpeg** (child of madsciencetist, addffmpeg61 branch)
+
 - `c83482ed` Full FFmpeg 6.1 overlay: configure (8153 lines), Makefile (1396 lines), allcodecs.c (1014 lines), ffmpeg6.1_nvmpi.patch (987 lines)
 - `9148a0f0` Missing `unistd.h` in nvmpi_enc.c for `usleep()` — 1-line fix propagated to all 4 patch files (4.2, 4.4, 6.0, 6.1)
 - Value: LOW — we have 6.1 support; unistd.h fix worth verifying
@@ -718,6 +777,7 @@ All 164 forks below were verified via GitHub API: 0 commits ahead on all branche
 ### izdeveloper Grandchild
 
 **Ledrego/jetson-ffmpeg** (child of izdeveloper)
+
 - Stated "+2 ahead" but actually 0 ahead and 1 BEHIND izdeveloper/master
 - Value: NONE — behind parent
 
@@ -731,8 +791,7 @@ All 164 forks below were verified via GitHub API: 0 commits ahead on all branche
 
 ---
 
-<a id="priority-list"></a>
-## 23. Master Priority List — What to Port
+## 23. Master Priority List — What to Port {#priority-list}
 
 ### CRITICAL (port immediately)
 

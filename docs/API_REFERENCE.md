@@ -174,6 +174,7 @@ for a free V4L2 OUTPUT-plane buffer once all buffers are in flight.
 A packet with `payload_size == 0` signals end-of-stream (starts flushing).
 
 **Returns:**
+
 | Code | Meaning |
 |------|---------|
 | `0` | Success. |

@@ -36,7 +36,7 @@ Shared infrastructure:
 
 ### Include structure
 
-```
+```text
 include/nvmpi.h          <- public, installed
 include/NVMPI_bufPool.hpp <- public (used by both dec and enc)
 include/NVMPI_frameBuf.hpp
