@@ -404,6 +404,9 @@ validates against the live GitLab instance (resolves YAML anchors, `extends`,
 - **Check IDE/editor config on renames.** When renaming files or symbols, also
   check `.vscode/` (e.g. `c_cpp_properties.json`), `.idea/`, and similar IDE
   config for stale references. Don't wait for the user to remind you.
+- **Prefer linear git history.** When a branch depends on changes from an
+  in-flight MR, wait for that MR to merge into main, then rebase on updated
+  main before pushing. Avoids merge commits and keeps the log linear.
 - **Run the `/retro` skill before pushing a new branch.** When work is ready to
   push, invoke `/retro` first to capture this session's lessons and improve the
   rules/skills, THEN push. The pre-push gate order is: smoke-all green →

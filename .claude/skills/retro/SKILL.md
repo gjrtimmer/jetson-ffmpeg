@@ -26,7 +26,7 @@ Invoke: **`/retro`** or **`/retro <session-id-prefix>`** (target one session).
 
 ## Skill Version
 
-<!-- retro:version:12 -->
+<!-- retro:version:13 -->
 Track version here. Each self-improvement pass increments this counter and
 logs what changed in the commit message.
 
@@ -79,6 +79,7 @@ messages matching correction/feedback patterns. The script must:
 | `cost_concern` | cheaper, waste tokens, subagent model, too expensive | User flagging token/cost waste — use cheaper models, fewer calls |
 | `pipeline_abort` | if not green stop/abort, if fail diagnose, abort release | Pipeline went red and assistant continued instead of stopping to diagnose |
 | `positive_signal` | yes exactly, perfect, good, correct, nice | Approach was validated — preserve what worked |
+| `preference_signal` | might be better, prefer to, should we, what if we, let's try | User suggesting an improvement or expressing a preference — validated when assistant agrees |
 | `frustration` | idiot, moron, stupid, wtf, ffs, profanity | Strong negative signal — the preceding action was seriously wrong; always pair with another category from context |
 
 5. For each correction, also extract the **preceding assistant message** (the
@@ -361,6 +362,11 @@ const PATTERNS = {
     /\byes exactly\b/i, /\bperfect\b/i, /\bgood\b.*\bapproach\b/i,
     /\bcorrect\b/i, /\bthat'?s right\b/i,
     /\byes,?\s*(go|do|proceed|continue)\b/i, /\bapproved\b/i
+  ],
+  preference_signal: [
+    /\bmight be better\b/i, /\bprefer\b.*\b(to|if|that)\b/i,
+    /\bshould we\b/i, /\bwhat if we\b/i, /\bwhat about\b/i,
+    /\blet'?s\s+(try|do|use|go with)\b/i, /\bcan we\b.*\binstead\b/i
   ],
   frustration: [
     /\bidiot\b/i, /\bmoron\b/i, /\bstupid\b/i, /\bdumb\b/i,
