@@ -12,7 +12,7 @@ Invoke: **`/retro`** or **`/retro <session-id-prefix>`** (target one session).
 
 ## Skill Version
 
-<!-- retro:version:1 -->
+<!-- retro:version:2 -->
 Track version here. Each self-improvement pass increments this counter and
 logs what changed in the commit message.
 
@@ -54,6 +54,7 @@ messages matching correction/feedback patterns. The script must:
 | `scope_drift` | not what I said, I said, I didn't ask, not what I asked | Assistant did something different from what was requested |
 | `rule_violation` | never, already told you, we agreed, don't again | Violated an established rule or repeated a known mistake |
 | `missed_instruction` | missed, forgot, didn't, should have | Failed to follow an explicit instruction |
+| `cost_concern` | cheaper, waste tokens, subagent model, too expensive | User flagging token/cost waste — use cheaper models, fewer calls |
 | `positive_signal` | yes exactly, perfect, good, correct, nice | Approach was validated — preserve what worked |
 
 5. For each correction, also extract the **preceding assistant message** (the
@@ -244,33 +245,39 @@ self-improvement may add/refine entries.
 ```javascript
 const PATTERNS = {
   workflow_order: [
-    /\bwait\b/i, /\bstop\b/i, /\bnot yet\b/i, /\bhold\b/i,
-    /\bdo not.*yet\b/i, /\bbefore I\b/i, /\btill I\b/i,
-    /\blet me\b.*\bfirst\b/i, /\bpause\b/i
+    /\bwait\s+(for|till|until)\b/i, /\bstop\b/i, /\bnot yet\b/i,
+    /\bhold\b/i, /\bdo not.*yet\b/i, /\bbefore I\b/i, /\btill I\b/i,
+    /\blet me\b.*\bfirst\b/i, /\bpause\b/i,
+    /\bdo not\s+(start|create|push|merge)\b/i
   ],
   tool_misuse: [
-    /\binstead\b/i, /\bshould.*use\b/i, /\bwrong tool\b/i,
-    /\buse.*not\b/i, /\bwhy.*that tool\b/i, /\bdon'?t use\b/i,
-    /\bnot.*right tool\b/i
+    /\byou\b.*\binstead\b/i, /\bshould.*use\b/i, /\bwrong\b/i,
+    /\bdon'?t use\b/i, /\bnot\s+correct\b/i,
+    /\bdoes not seem\b/i, /\bnot.*right\b/i
   ],
   scope_drift: [
     /\bnot what I\b/i, /\bI said\b/i, /\bI didn'?t say\b/i,
     /\bI asked\b/i, /\bnot what I asked\b/i, /\bthat'?s not what\b/i,
-    /\bI did not say\b/i, /\bI meant\b/i, /\byou added.*not.*ask/i
+    /\bI did not say\b/i, /\bI meant\b/i, /\byou added.*not.*ask/i,
+    /\bnot.*respect.*what I\b/i
   ],
   rule_violation: [
-    /\bnever\b/i, /\balready told\b/i, /\bwe agreed\b/i,
-    /\bwe said\b/i, /\bdon'?t.*again\b/i, /\brule\b/i,
-    /\bCLAUDE\.md\b/i, /\bmake this a rule\b/i
+    /\balready told\b/i, /\bwe agreed\b/i,
+    /\bwe said\b/i, /\bdon'?t.*again\b/i,
+    /\bmake this a rule\b/i, /\byou include.*auto.*generat/i
   ],
   missed_instruction: [
-    /\bmissed\b/i, /\bforgot\b/i, /\bdidn'?t\b/i,
-    /\bshould have\b/i, /\byou need to\b/i, /\bwas supposed to\b/i,
-    /\bfailed to\b/i
+    /\bforgot\b/i, /\bshould have\b/i,
+    /\byou need to\b/i, /\bwas supposed to\b/i,
+    /\bdo not forget\b/i, /\bensure that\b.*\bshould\b/i
+  ],
+  cost_concern: [
+    /\bcheaper\b/i, /\bwaste.*token/i, /\bsubagent.*model\b/i,
+    /\btoo.*expensive\b/i
   ],
   positive_signal: [
     /\byes exactly\b/i, /\bperfect\b/i, /\bgood\b.*\bapproach\b/i,
-    /\bcorrect\b/i, /\bnice\b/i, /\bthat'?s right\b/i,
+    /\bcorrect\b/i, /\bthat'?s right\b/i,
     /\byes,?\s*(go|do|proceed|continue)\b/i, /\bapproved\b/i
   ]
 };
@@ -289,6 +296,17 @@ Skip messages that match correction patterns but are NOT user feedback:
 - Messages that are just "yes" / "go" / "continue" (approval, not correction)
 - Messages referencing upstream/fork issues (user describing external bugs,
   not correcting the assistant)
+- Session resume context ("This session is being continued from a previous")
+- Skill loading preambles ("Base directory for this skill:")
+- Code-context "wait" (e.g. `void(wait(`) — not a workflow gate
+- Terminal output pastes (lines starting with `$` or `jetson:`)
+- "I will wait" — user declaring patience, not a correction
+- "waiting for X to be merged" without "wait for me/till/until" — context
+- Bare `\bnever\b` in instructional context (CLAUDE.md rules inject "never"
+  into session context, producing false positives; require `already told` or
+  `make this a rule` instead)
+- Bare `\bmissed\b` or `\bdidn't\b` without subject "you" nearby (user
+  describing external bugs, not correcting assistant)
 
 ---
 
