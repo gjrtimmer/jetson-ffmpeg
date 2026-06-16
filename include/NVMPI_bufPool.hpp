@@ -3,7 +3,7 @@
  * (libnvmpi layer, header-only template).
  *
  * Both pipelines in libnvmpi recycle buffers through one of these pools:
- *   - decoder (nvmpi_dec.cpp): NVMPI_bufPool<NVMPI_frameBuf*> — the capture
+ *   - decoder (nvmpi_dec_capture.cpp): NVMPI_bufPool<NVMPI_frameBuf*> — the capture
  *     thread takes "empty" DMA frame buffers, fills them via hw transform
  *     and queues them "filled"; the user thread consumes filled frames and
  *     returns them to the empty queue.

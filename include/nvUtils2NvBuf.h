@@ -12,7 +12,7 @@
  * written once against the legacy spelling and compile against either API.
  * Calls with genuinely different signatures (e.g. NvBufferTransform vs
  * NvBufSurfTransform, memory map/sync) still need explicit #ifdef
- * WITH_NVUTILS branches at the call sites in nvmpi_dec.cpp / nvmpi_enc.cpp
+ * WITH_NVUTILS branches at the call sites in nvmpi_dec_api.cpp / nvmpi_enc.cpp
  * and NVMPI_frameBuf.cpp — this shim only covers 1:1 renames.
  */
 #if defined(WITH_NVUTILS)

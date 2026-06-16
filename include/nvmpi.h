@@ -4,7 +4,8 @@
  * libnvmpi wraps NVIDIA's Jetson V4L2/NvBuffer multimedia API behind a small,
  * plain-C encode/decode interface. This header is the ONLY contract between
  * the two layers of the project:
- *   - implemented by src/nvmpi_dec.cpp and src/nvmpi_enc.cpp (built into
+ *   - implemented by src/nvmpi_dec_api.cpp (and its siblings nvmpi_dec_capture.cpp,
+ *     nvmpi_dec_planes.cpp, nvmpi_dec_internal.h) and src/nvmpi_enc.cpp (built into
  *     libnvmpi.so, installed system-wide), and
  *   - consumed by the FFmpeg integration layer
  *     (ffmpeg/dev/common/libavcodec/nvmpi_{enc,dec}.c), which is patched

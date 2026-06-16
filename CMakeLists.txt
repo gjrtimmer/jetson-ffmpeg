@@ -83,7 +83,7 @@ set(JETSON_MULTIMEDIA_API_SRC
     ${JETSON_MULTIMEDIA_API_SRC_DIR}/NvVideoEncoder.cpp)
 
 set(NVMPI_SRC
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_dec.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_dec_api.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_dec_capture.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_dec_planes.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_enc.cpp

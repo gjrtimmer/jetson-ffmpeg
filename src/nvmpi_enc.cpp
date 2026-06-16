@@ -56,7 +56,7 @@
 using namespace std;
 
 //Encoder context behind the opaque nvmpictx* handle of the public API
-//(a different struct than the decoder's nvmpictx in nvmpi_dec.cpp — the
+//(a different struct than the decoder's nvmpictx in nvmpi_dec_internal.h — the
 //two are never mixed). Most fields mirror nvEncParam after translation to
 //V4L2 enums; shared between the user thread and the capture DQ thread.
 struct nvmpictx
