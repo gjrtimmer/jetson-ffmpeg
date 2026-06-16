@@ -84,6 +84,7 @@ set(JETSON_MULTIMEDIA_API_SRC
 
 set(NVMPI_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_dec.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_dec_capture.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_enc.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/NVMPI_frameBuf.cpp)
     
