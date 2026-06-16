@@ -325,6 +325,11 @@ with the implementation plan — what will change, which files, how it will be
 tested. This creates a public record, invites early feedback, and prevents
 duplicate effort when multiple sessions or contributors are active.
 
+**Update the issue at every milestone — don't wait to be asked.** Post a
+status comment after: (a) implementation is complete (commits, what changed),
+(b) MR/PR is created (link to MR), (c) pipeline result (pass/fail). Each
+milestone gets its own comment so the issue trail is a complete timeline.
+
 ## Interacting with GitLab and GitHub
 
 Use the official CLIs — **`glab`** for GitLab (`gitlab.timmertech.nl`) and **`gh`**
@@ -386,6 +391,9 @@ validates against the live GitLab instance (resolves YAML anchors, `extends`,
   workflow and investigate; do not proceed to the next step. If a release/tag
   pipeline fails, abort the release: delete the partial tag/release from both
   GitLab and GitHub, cancel the pipeline, then investigate the root cause.
+- **Check IDE/editor config on renames.** When renaming files or symbols, also
+  check `.vscode/` (e.g. `c_cpp_properties.json`), `.idea/`, and similar IDE
+  config for stale references. Don't wait for the user to remind you.
 - **Run the `/retro` skill before pushing a new branch.** When work is ready to
   push, invoke `/retro` first to capture this session's lessons and improve the
   rules/skills, THEN push. The pre-push gate order is: smoke-all green →
