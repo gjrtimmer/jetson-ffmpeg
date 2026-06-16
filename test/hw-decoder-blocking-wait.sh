@@ -55,7 +55,7 @@ measure_first_frame() {
   start_ns=$(date +%s%N)
   timeout -k 5 15 ffmpeg -y -hide_banner $flags \
     -c:v h264_nvmpi -i "${SAMPLE_H264_720P}" \
-    -frames:v 1 -f null - 2>/dev/null || true
+    -frames:v 1 -f null - >/dev/null 2>&1 || true
   end_ns=$(date +%s%N)
   echo $(( (end_ns - start_ns) / 1000000 ))
 }
