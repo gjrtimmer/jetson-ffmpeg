@@ -46,7 +46,7 @@ jetson-ffmpeg/
 ├── include/
 │   ├── nvmpi.h                 # Public C API (encoder/decoder create/put/get/close)
 │   ├── NVMPI_bufPool.hpp       # Thread-safe buffer pool (template)
-│   ├── NVMPI_frameBuf.hpp      # DMA frame buffer wrapper
+│   ├── nvmpi_frame_buffer.hpp      # DMA frame buffer wrapper
 │   └── nvUtils2NvBuf.h         # Compatibility shim: NvUtils API ↔ legacy nvbuf_utils
 ├── src/
 │   ├── nvmpi_dec_api.cpp       # Decoder public API (create/put/get/flush/close)
@@ -56,7 +56,7 @@ jetson-ffmpeg/
 │   ├── nvmpi_enc_api.cpp       # Encoder public API (create/put/get/close)
 │   ├── nvmpi_enc_output.cpp    # Encoder DQ-thread callback, output-plane DMA setup
 │   ├── nvmpi_enc_internal.h    # Encoder context struct, macros, forward decls
-│   └── NVMPI_frameBuf.cpp      # DMA buffer alloc/destroy
+│   └── nvmpi_frame_buffer.cpp      # DMA buffer alloc/destroy
 ├── stubs/                      # Stub .so files for cross-compilation (aarch64)
 ├── ffmpeg/                     # FFmpeg integration layer
 │   ├── dev/                    # Patch development environment
@@ -103,7 +103,7 @@ The project has two distinct layers:
 │  │ libnvmpi (shared library, installed on system)  │ │
 │  │   nvmpi_dec_*.cpp (V4L2 decoder, modular)       │ │
 │  │   nvmpi_enc_*.cpp (V4L2 encoder, modular)       │ │
-│  │   NVMPI_frameBuf  (DMA buffer management)       │ │
+│  │   nvmpi_frame_buffer  (DMA buffer management)       │ │
 │  └──────────────────────┬──────────────────────────┘ │
 │                         │ V4L2 / NvBuffer API         │
 │  ┌──────────────────────▼──────────────────────────┐ │
@@ -152,7 +152,7 @@ The library exposes a pure C API:
 
 - **`NVMPI_bufPool<T>`** (`include/NVMPI_bufPool.hpp`): Thread-safe producer/consumer buffer pool using mutex-guarded queues. Used for both frame buffers (decoder) and packet buffers (encoder).
 
-- **`NVMPI_frameBuf`** (`include/NVMPI_frameBuf.hpp`, `src/NVMPI_frameBuf.cpp`): Wraps DMA buffer allocation/destruction. Abstracts the difference between NvUtils API (JetPack 5+) and legacy nvbuf_utils API.
+- **`nvmpi_frame_buffer`** (`include/nvmpi_frame_buffer.hpp`, `src/nvmpi_frame_buffer.cpp`): Wraps DMA buffer allocation/destruction. Abstracts the difference between NvUtils API (JetPack 5+) and legacy nvbuf_utils API.
 
 - **`nvUtils2NvBuf.h`** (`include/nvUtils2NvBuf.h`): Compile-time compatibility layer. When `WITH_NVUTILS` is defined, maps legacy `NvBuffer*` names to `NvBufSurf*` equivalents. This is what enables support across JetPack versions without `#ifdef` in every function.
 

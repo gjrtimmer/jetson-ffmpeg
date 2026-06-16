@@ -1,11 +1,11 @@
 /*
- * NVMPI_frameBuf.hpp — wrapper for one hardware DMA frame buffer
- * (libnvmpi layer; implementation in src/NVMPI_frameBuf.cpp).
+ * nvmpi_frame_buffer.hpp — wrapper for one hardware DMA frame buffer
+ * (libnvmpi layer; implementation in src/nvmpi_frame_buffer.cpp).
  *
  * The decoder allocates a pool of these (see nvmpictx::initFramePool in
  * src/nvmpi_dec_api.cpp) as the pitch-linear destination buffers of the
  * VIC transform that converts/scales the decoder's block-linear output.
- * Instances circulate through NVMPI_bufPool<NVMPI_frameBuf*> between the
+ * Instances circulate through NVMPI_bufPool<nvmpi_frame_buffer*> between the
  * capture thread (fills them) and the user thread (copies them out).
  *
  * Works with both NVIDIA buffer APIs via nvUtils2NvBuf.h:
@@ -17,7 +17,7 @@
 #pragma once
 #include "nvUtils2NvBuf.h"
 
-struct NVMPI_frameBuf
+struct nvmpi_frame_buffer
 {
 #ifdef WITH_NVUTILS
 	//Surface view of dst_dma_fd (not separately allocated; owned by the

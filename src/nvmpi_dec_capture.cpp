@@ -86,7 +86,7 @@ void transFormWorker::workerFnc()
 //  1. block until the first resolution-change event so buffer sizes are
 //     known, then set up the CAPTURE plane and frame pool;
 //  2. loop: dequeue decoded CAPTURE buffers, VIC-transform each into an
-//     "empty" NVMPI_frameBuf from the pool (format convert + optional
+//     "empty" nvmpi_frame_buffer from the pool (format convert + optional
 //     scale), stamp the pts, publish it as "filled", and re-queue the V4L2
 //     buffer to the decoder;
 //  3. handle mid-stream resolution changes and EOS/error shutdown.
@@ -100,7 +100,7 @@ void dec_capture_loop_fcn(void *arg)
 	struct v4l2_crop v4l2Crop;
 	struct v4l2_event v4l2Event;
 	int ret;
-	NVMPI_frameBuf* fb = NULL;
+	nvmpi_frame_buffer* fb = NULL;
 	//std::thread transformWorkersPool[3];
 
     /* Need to wait for the first Resolution change event, so that

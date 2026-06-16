@@ -13,7 +13,7 @@
  * Calls with genuinely different signatures (e.g. NvBufferTransform vs
  * NvBufSurfTransform, memory map/sync) still need explicit #ifdef
  * WITH_NVUTILS branches at the call sites in nvmpi_dec_api.cpp / nvmpi_enc.cpp
- * and NVMPI_frameBuf.cpp — this shim only covers 1:1 renames.
+ * and nvmpi_frame_buffer.cpp — this shim only covers 1:1 renames.
  */
 #if defined(WITH_NVUTILS)
 /* NvUtils / NvBufSurface path (JetPack 5+) */

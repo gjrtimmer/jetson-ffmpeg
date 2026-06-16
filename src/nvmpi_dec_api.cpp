@@ -8,7 +8,7 @@
 void nvmpictx::updateFrameSizeParams()
 {
 	//it's safe when called from respondToResolutionEvent() after initFramePool()
-	NVMPI_frameBuf* fb = framePool->peekEmptyBuf();
+	nvmpi_frame_buffer* fb = framePool->peekEmptyBuf();
 #ifdef WITH_NVUTILS
 	NvBufSurfacePlaneParams parm;
 	NvBufSurfaceParams dst_dma_surface_params;
@@ -131,7 +131,7 @@ void nvmpictx::initFramePool()
 	
 	for(int i=0;i<frame_pool_size;i++)
 	{
-		NVMPI_frameBuf* fb = new NVMPI_frameBuf();
+		nvmpi_frame_buffer* fb = new nvmpi_frame_buffer();
 		if(!fb->alloc(input_params)) { delete fb; break; }
 		allocatedFrameBufs.push_back(fb);
 		framePool->qEmptyBuf(fb);
@@ -252,7 +252,7 @@ nvmpictx* nvmpi_create_decoder(nvDecParam* param)
 
 	ctx->out_pixfmt=param->pixFormat;
 	ctx->resized = param->resized;
-	ctx->framePool = new NVMPI_bufPool<NVMPI_frameBuf*>();
+	ctx->framePool = new NVMPI_bufPool<nvmpi_frame_buffer*>();
 	ctx->eos.store(false);
 	ctx->index=0;
 	for(int index=0;index<MAX_BUFFERS;index++)
@@ -343,7 +343,7 @@ int nvmpi_decoder_put_packet(nvmpictx* ctx,nvPacket* packet)
 //destination linesize (caller-chosen) usually differ; only
 //frame_linedatasize valid bytes per line are copied. Unmaps when done.
 //frame->payload[] must point at sufficiently large caller-owned memory.
-int copyNvBufToFrame(nvmpictx* ctx, NVMPI_frameBuf *nvmpiBuf, nvFrame* frame)
+int copyNvBufToFrame(nvmpictx* ctx, nvmpi_frame_buffer *nvmpiBuf, nvFrame* frame)
 {
 	int ret;
 	char *dataDst;
@@ -400,7 +400,7 @@ int copyNvBufToFrame(nvmpictx* ctx, NVMPI_frameBuf *nvmpiBuf, nvFrame* frame)
 int nvmpi_decoder_get_frame(nvmpictx* ctx, nvFrame* frame, bool wait)
 {
 	int ret;
-	NVMPI_frameBuf* fb;
+	nvmpi_frame_buffer* fb;
 
 	if (wait)
 		fb = ctx->framePool->dqFilledBuf(
@@ -444,7 +444,7 @@ int nvmpi_decoder_flush(nvmpictx* ctx)
 
 	ctx->dec->output_plane.setStreamStatus(false);
 
-	NVMPI_frameBuf* fb;
+	nvmpi_frame_buffer* fb;
 	while ((fb = ctx->framePool->dqFilledBuf()))
 		ctx->framePool->qEmptyBuf(fb);
 
