@@ -11,7 +11,7 @@
  *
  * One source file supports FFmpeg 4.2 through 8.0+: API differences are
  * handled with LIBAVCODEC_VERSION_MAJOR preprocessor guards (see
- * docs/DEVELOPMENT.md "Wrapper code paths by FFmpeg version"). For the
+ * https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Development-Guide "Wrapper code paths by FFmpeg version"). For the
  * decoder the only breakpoint is the AVCodec -> FFCodec registration
  * change in libavcodec 60 (FFmpeg 6.0).
  */
@@ -421,7 +421,7 @@ static const AVOption options[] = {
 //FFCodec fields, and replaced the bare .decode pointer with the
 //FF_CODEC_DECODE_CB() wrapper. The matching extern declaration patched
 //into allcodecs.c differs likewise ("extern AVCodec" vs "extern const
-//FFCodec") — that is why version overlay files exist (docs/DEVELOPMENT.md).
+//FFCodec") — that is why version overlay files exist (https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Development-Guide).
 //Shared semantics of both variants:
 //  - name "<codec>_nvmpi", wrapper_name "nvmpi" (how FFmpeg knows this is
 //    a hw wrapper around an external implementation);

@@ -20,7 +20,7 @@
  *  - LIBAVCODEC_VERSION_MAJOR >= 60: FFCodec registration +
  *    ff_get_encode_buffer replaces ff_alloc_packet2.
  *  - lavc >= 62.11 (FFmpeg 8.0): FF_PROFILE_* renamed to AV_PROFILE_*.
- * See docs/DEVELOPMENT.md "Wrapper code paths by FFmpeg version".
+ * See https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Development-Guide "Wrapper code paths by FFmpeg version".
  */
 #include <nvmpi.h>
 #include "avcodec.h"
@@ -683,7 +683,7 @@ static const AVOption options[] = {
 
 
 //Codec registration, stamped out per codec by NVMPI_ENC(). Three encoder
-//API eras are covered (paths A/B/C-D in docs/DEVELOPMENT.md):
+//API eras are covered (paths A/B/C-D in https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Development-Guide):
 //  - lavc >= 60 (FFmpeg 6.0+): FFCodec struct; public fields moved into
 //    the .p sub-struct and the callback is wired through
 //    FF_CODEC_RECEIVE_PACKET_CB(). Matching allcodecs.c extern is

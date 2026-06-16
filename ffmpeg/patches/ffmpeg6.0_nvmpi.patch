@@ -178,7 +178,7 @@ index e593ad1..a667192 100644
  extern const FFCodec ff_vqa_decoder;
 diff --git a/libavcodec/nvmpi_dec.c b/libavcodec/nvmpi_dec.c
 new file mode 100644
-index 0000000..83b3822
+index 0000000..9ec6e9f
 --- /dev/null
 +++ b/libavcodec/nvmpi_dec.c
 @@ -0,0 +1,484 @@
@@ -195,7 +195,7 @@ index 0000000..83b3822
 + *
 + * One source file supports FFmpeg 4.2 through 8.0+: API differences are
 + * handled with LIBAVCODEC_VERSION_MAJOR preprocessor guards (see
-+ * docs/DEVELOPMENT.md "Wrapper code paths by FFmpeg version"). For the
++ * https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Development-Guide "Wrapper code paths by FFmpeg version"). For the
 + * decoder the only breakpoint is the AVCodec -> FFCodec registration
 + * change in libavcodec 60 (FFmpeg 6.0).
 + */
@@ -605,7 +605,7 @@ index 0000000..83b3822
 +//FFCodec fields, and replaced the bare .decode pointer with the
 +//FF_CODEC_DECODE_CB() wrapper. The matching extern declaration patched
 +//into allcodecs.c differs likewise ("extern AVCodec" vs "extern const
-+//FFCodec") — that is why version overlay files exist (docs/DEVELOPMENT.md).
++//FFCodec") — that is why version overlay files exist (https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Development-Guide).
 +//Shared semantics of both variants:
 +//  - name "<codec>_nvmpi", wrapper_name "nvmpi" (how FFmpeg knows this is
 +//    a hw wrapper around an external implementation);
@@ -668,7 +668,7 @@ index 0000000..83b3822
 +
 diff --git a/libavcodec/nvmpi_enc.c b/libavcodec/nvmpi_enc.c
 new file mode 100644
-index 0000000..063f885
+index 0000000..ca8be1e
 --- /dev/null
 +++ b/libavcodec/nvmpi_enc.c
 @@ -0,0 +1,752 @@
@@ -694,7 +694,7 @@ index 0000000..063f885
 + *  - LIBAVCODEC_VERSION_MAJOR >= 60: FFCodec registration +
 + *    ff_get_encode_buffer replaces ff_alloc_packet2.
 + *  - lavc >= 62.11 (FFmpeg 8.0): FF_PROFILE_* renamed to AV_PROFILE_*.
-+ * See docs/DEVELOPMENT.md "Wrapper code paths by FFmpeg version".
++ * See https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Development-Guide "Wrapper code paths by FFmpeg version".
 + */
 +#include <nvmpi.h>
 +#include "avcodec.h"
@@ -1357,7 +1357,7 @@ index 0000000..063f885
 +
 +
 +//Codec registration, stamped out per codec by NVMPI_ENC(). Three encoder
-+//API eras are covered (paths A/B/C-D in docs/DEVELOPMENT.md):
++//API eras are covered (paths A/B/C-D in https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Development-Guide):
 +//  - lavc >= 60 (FFmpeg 6.0+): FFCodec struct; public fields moved into
 +//    the .p sub-struct and the callback is wired through
 +//    FF_CODEC_RECEIVE_PACKET_CB(). Matching allcodecs.c extern is

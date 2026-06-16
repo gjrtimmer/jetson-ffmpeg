@@ -42,7 +42,7 @@ typedef enum {
 }nvPixFormat;
 
 //Compressed bitstream codec selector. Decode supports all entries;
-//encode supports only H.264 and HEVC (see docs/DEVELOPMENT.md).
+//encode supports only H.264 and HEVC (see https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Development-Guide).
 typedef enum {
 	NV_VIDEO_CodingUnused,
 	NV_VIDEO_CodingH264,             /**< H.264 */
