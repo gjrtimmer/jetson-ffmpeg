@@ -17,17 +17,16 @@ Invoke: **`/retro`** or **`/retro <session-id-prefix>`** (target one session).
    NOT create auto-memory files. The auto-memory directory is audited (read +
    migrate-to-CLAUDE.md + delete), never written to as a fact store. Every
    learning, preference, or rule lands in `/workspace/CLAUDE.md`.
-2. **Process ONE session at a time, in chronological order.** After each
-   session: apply its findings to CLAUDE.md, improve this skill (patterns,
-   filters, categories), commit, THEN move to the next session. The skill must
-   get smarter between sessions — never batch multiple sessions into one pass.
-   When the run finishes all sessions, do a **second full pass** (see
-   "Iteration Protocol") so the matured skill re-examines early sessions it was
-   too naive to read correctly the first time.
+2. **Scan the CURRENT session by default — one session per invocation.** Run
+   this right after a session completes: capture that session's corrections,
+   apply them to CLAUDE.md, improve this skill, commit. Re-invoke `/retro`
+   fresh next time a session ends. The `--all` historical sweep (one session
+   at a time, with a mandatory second pass) is an opt-in backfill for building
+   the initial rule set — not the normal mode. See "Iteration Protocol".
 
 ## Skill Version
 
-<!-- retro:version:8 -->
+<!-- retro:version:9 -->
 Track version here. Each self-improvement pass increments this counter and
 logs what changed in the commit message.
 
@@ -45,10 +44,16 @@ logs what changed in the commit message.
 
 ### 0a. Determine scope
 
-- No argument → analyze ALL sessions in the project workspace.
-- Session-id prefix → filter to matching JSONL files.
-- `--current` → analyze only the current session (use context-mode
-  auto-memory search with `sort: "timeline"`).
+**Default = the current session only.** This skill is meant to run right after
+a session completes: scan THAT session's corrections and fold them into
+CLAUDE.md. Do NOT batch-scan the whole transcript history by default.
+
+- No argument → analyze **only the current session** (the conversation that
+  just finished). Use the live conversation's corrections directly, or
+  context-mode auto-memory search with `sort: "timeline"`.
+- Session-id prefix → analyze that one historical session.
+- `--all` → opt-in full historical sweep (one session at a time; rarely
+  needed — only for a first-time backfill of the initial rule set).
 
 ### 0b. Extract correction signals
 
@@ -258,42 +263,38 @@ After committing:
 
 ---
 
-## Iteration Protocol (per-session + second pass)
+## Iteration Protocol
 
-This skill improves itself as it works, so the ORDER and GRANULARITY matter:
+### Normal mode — current session only (the standing rule)
 
-### One session at a time
+When invoked after a session completes (or on demand), scan **only that one
+session**: extract its corrections, fold them into CLAUDE.md, improve this
+skill if a pattern was missed, commit. Re-invoke `/retro` fresh the next time
+a session ends — one invocation = one session, loaded fresh from disk so the
+just-improved version reads the next session.
+
+This is the skill's permanent behavior. Do NOT scan historical sessions in
+normal mode.
+
+**Re-invokable within the same session — idempotent.** The skill can be run
+many times in one session (after each milestone, not just at the very end).
+Every run MUST dedup against the current CLAUDE.md and apply only findings not
+already captured, so re-running never duplicates a rule. A run that finds
+nothing new makes no changes and no commit — it just reports "0 new findings."
+Each invocation re-reads CLAUDE.md fresh and picks up corrections that arrived
+since the last run.
+
+### One-time backfill — `--all` (not a recurring rule)
+
+The full historical sweep exists ONLY to seed a rich initial CLAUDE.md the
+first time the skill is set up. It is a one-off, not a standing behavior:
 
 1. List sessions chronologically (oldest first).
-2. For the next unprocessed session: run Phases 0-5 on **that session only**.
-3. Apply findings to CLAUDE.md, improve this skill, commit. The skill is now
-   smarter.
-4. Move to the next session. Repeat.
+2. Scan all of them, extract every distinct durable lesson.
+3. Fold each NEW lesson (not already in CLAUDE.md) into the right section.
+4. Commit. Done — the backfill is complete and not repeated.
 
-Never analyze several sessions before applying — a naive early version of the
-skill would read all of them with the same blind spots. Improving between
-sessions means session N+1 is read by a better skill than session N was.
-
-**Re-invoke the skill (fresh `Skill` tool call) for EACH session.** After a
-session's findings are applied and committed, the skill file on disk has
-changed (new patterns/filters/categories). Do NOT keep scanning with the
-skill text already loaded in context — that is the stale, pre-improvement
-version. Re-invoke `/retro` so the next session is read by the just-improved
-skill loaded fresh from disk. One invocation = one session.
-
-### Second pass (mandatory after first pass completes)
-
-Once every session has been processed once, the skill is at its most mature.
-Early sessions were read by immature versions that missed things. So:
-
-1. Re-run the full chronological sweep, one session at a time, with the now-
-   matured skill.
-2. Only NEW findings (not already in CLAUDE.md) produce changes.
-3. Stop when a full pass yields zero new findings (convergence). In practice
-   two passes suffice; a third is only needed if pass 2 changed the patterns
-   materially.
-
-Log each pass: `pass N — session <id> — X new findings`.
+After backfill, only the normal current-session mode runs going forward.
 
 ---
 
@@ -406,9 +407,9 @@ When this skill updates itself (Phase 2c):
 
 ## TodoWrite Checklist
 
-Create on invocation (per session, in chronological order):
+Create on invocation (normal mode = current session only):
 
-1. Scan ONE session's transcript — extract corrections + errors
+1. Scan the CURRENT session's transcript — extract corrections + errors
 2. Audit auto-memories — migrate durable rules to CLAUDE.md, delete the rest
 3. Analyze CLAUDE.md rules — gaps, weak rules
 4. Analyze skills — workflow gaps, missed gates
@@ -417,4 +418,5 @@ Create on invocation (per session, in chronological order):
 7. Apply approved changes — CLAUDE.md rules + skill improvements (NO memory creation)
 8. Commit with `[ci skip]` (CLAUDE.md + skills only; memory ops are not git)
 9. Verify — empty memory dir, rules landed, valid markdown, version bumped
-10. Move to next session; after all sessions, run the mandatory second pass
+
+(`--all` backfill only: loop the above over every session once, then stop.)
