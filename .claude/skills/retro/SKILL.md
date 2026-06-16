@@ -5,14 +5,29 @@ user-invocable: true
 ---
 # retro — Session Retrospective & Self-Improvement
 
-Post-session analysis skill. Scans all project session transcripts, existing
-memories, CLAUDE.md rules, and other skills for gaps — then patches them.
+Post-session analysis skill. Scans project session transcripts, **audits**
+existing auto-memories, reads CLAUDE.md rules and other skills for gaps — then
+records findings **as rules in `/workspace/CLAUDE.md`**.
 
 Invoke: **`/retro`** or **`/retro <session-id-prefix>`** (target one session).
 
+## Two hard rules
+
+1. **CLAUDE.md is the only destination for durable rules.** This skill does
+   NOT create auto-memory files. The auto-memory directory is audited (read +
+   migrate-to-CLAUDE.md + delete), never written to as a fact store. Every
+   learning, preference, or rule lands in `/workspace/CLAUDE.md`.
+2. **Process ONE session at a time, in chronological order.** After each
+   session: apply its findings to CLAUDE.md, improve this skill (patterns,
+   filters, categories), commit, THEN move to the next session. The skill must
+   get smarter between sessions — never batch multiple sessions into one pass.
+   When the run finishes all sessions, do a **second full pass** (see
+   "Iteration Protocol") so the matured skill re-examines early sessions it was
+   too naive to read correctly the first time.
+
 ## Skill Version
 
-<!-- retro:version:6 -->
+<!-- retro:version:7 -->
 Track version here. Each self-improvement pass increments this counter and
 logs what changed in the commit message.
 
@@ -91,18 +106,18 @@ For each memory file:
 4. **Accuracy check**: Does the memory match current CLAUDE.md rules? If a
    rule was added to CLAUDE.md but the memory still says the old behavior,
    the memory is outdated.
-5. **Evaluate recently created memories**: Check memories created in the
-   session(s) being analyzed. Are they well-formed? Do they follow the
-   memory format (frontmatter + Why + How to apply)? Are they too specific
-   (ephemeral task detail) or too vague (not actionable)?
+5. **Migrate to CLAUDE.md**: Any memory file that still carries a durable rule
+   or preference NOT yet in CLAUDE.md is migrated — fold its content into the
+   correct CLAUDE.md section, then delete the memory file. The auto-memory
+   directory must end empty of fact files (only `MEMORY.md` remains, noting
+   that CLAUDE.md is the source of truth). **Never create new memory files.**
 
 Produce a memory audit report:
 ```
-STALE: [filename] — reason
-REDUNDANT: [file1] + [file2] — overlap
-GAP: [correction pattern] — no memory covers this
-OUTDATED: [filename] — conflicts with current CLAUDE.md
-MALFORMED: [filename] — missing Why/How to apply/wrong type
+MIGRATE: [filename] — rule to fold into CLAUDE.md §<section>
+STALE: [filename] — closed issue / dead reference → delete
+REDUNDANT: [filename] — already in CLAUDE.md → delete
+KEEP: MEMORY.md — pointer to CLAUDE.md only
 ```
 
 ---
@@ -156,18 +171,18 @@ patterns didn't catch:
 | 1 | scope_drift | 4e1f... | "I did not say put resolution..." | Put wrong content in issue comment |
 
 ### Memory Audit
-- STALE: [list]
-- GAPS: [list]
-- REDUNDANT: [list]
+- MIGRATE: [list — memory → CLAUDE.md section]
+- STALE/REDUNDANT (delete): [list]
 
 ### Proposed Changes
-1. **New memory**: [name] — [what it captures]
-2. **Update memory**: [name] — [what changes]
-3. **Remove memory**: [name] — [why]
-4. **New CLAUDE.md rule**: [section] — [rule text]
-5. **Update CLAUDE.md rule**: [section] — [change]
-6. **Update skill**: [skill name] — [what changes]
-7. **Update retro skill**: [self-change description]
+1. **New CLAUDE.md rule**: [section] — [rule text]
+2. **Update CLAUDE.md rule**: [section] — [strengthened text]
+3. **Migrate memory → CLAUDE.md**: [filename] → [section], then delete file
+4. **Delete stale memory**: [filename] — [why]
+5. **Update skill**: [skill name] — [what changes]
+6. **Update retro skill**: [self-change description]
+
+> There is no "new memory" option — findings become CLAUDE.md rules.
 
 ### Skipped (noise)
 [Corrections that were false positives or already addressed]
@@ -182,20 +197,22 @@ a subset (`apply 1,3,5`) or `apply all`.
 
 For each approved change:
 
-### 4a. Memory changes
+### 4a. CLAUDE.md changes (the destination for ALL findings)
 
-- **New memory**: Write file to memory directory with proper frontmatter
-  (name, description, metadata.type). Body follows the format: rule/fact,
-  then `**Why:**` and `**How to apply:**` lines. Add entry to MEMORY.md.
-- **Update memory**: Edit existing file. Update description if needed.
-- **Remove memory**: Delete file and remove MEMORY.md entry.
-- **Stale memory**: Update or remove based on current state.
+- Read the target section.
+- Add new rules / strengthen existing ones with minimal, targeted edits.
+- Match existing style: imperative, concise, with a short rationale.
+- Pick the right section (Working agreements, Commit conventions, Build &
+  test, Issue workflow, etc.) — don't invent a new section unless none fits.
 
-### 4b. CLAUDE.md changes
+### 4b. Memory audit actions (read + migrate + delete — NEVER create)
 
-- Read the section to edit.
-- Apply minimal, targeted edits.
-- Keep existing style and structure.
+- **Migrate**: fold the memory's durable content into the correct CLAUDE.md
+  section, then `rm` the memory file.
+- **Delete stale/redundant**: `rm` the file (it's a closed issue or already
+  in CLAUDE.md).
+- Leave `MEMORY.md` as a pointer that says CLAUDE.md is the source of truth.
+- **Do not write new memory fact files. Ever.**
 
 ### 4c. Skill changes
 
@@ -203,24 +220,26 @@ For each approved change:
 - Apply targeted improvements.
 - For self-updates: increment the version counter in this file.
 
-### 4d. Commit
-
-All changes in a single commit:
+### 4d. Commit (one commit per session in iterative mode)
 
 ```bash
 git add -A .claude/skills/ CLAUDE.md
-git add -A /home/vscode/.claude/projects/-workspace/memory/
-git commit -m "chore(retro): apply session retrospective findings
+git commit -m "chore(retro): <session-id> findings, skill vN→vN+1
 
-- [summary of what changed]
-- retro skill v[N] → v[N+1] (if self-updated)
+- [findings applied to CLAUDE.md]
+- [pattern/filter/category improvements]
 
 [ci skip]"
 ```
 
+Note: auto-memory files live OUTSIDE the repo
+(`/home/vscode/.claude/projects/-workspace/memory/`) and are not git-tracked —
+deleting/migrating them is a filesystem op, not a commit.
+
 Key commit rules:
-- **Always include `[ci skip]`** in the commit message — retro changes are
-  rules/memory/skills only, never code that needs a pipeline.
+- **Always include `[ci skip]`** — retro changes are rules/skills only, never
+  code that needs a pipeline. (Note: this repo's CI also honors `-o ci.skip`
+  on push; the `[ci skip]` in the message is the in-commit equivalent.)
 - No AI attribution (per project rules).
 - Conventional commit format: `chore(retro): <description>`.
 
@@ -230,11 +249,43 @@ Key commit rules:
 
 After committing:
 
-1. Confirm all memory files parse correctly (valid frontmatter).
-2. Confirm MEMORY.md index matches actual files.
+1. Confirm the auto-memory directory holds no fact files (only `MEMORY.md`).
+2. Confirm every migrated rule actually landed in CLAUDE.md.
 3. Confirm CLAUDE.md has no broken markdown.
-4. Confirm skill files have valid frontmatter.
-5. Report summary of changes applied.
+4. Confirm the skill file has valid frontmatter and a bumped version counter.
+5. Report summary of changes applied for this session.
+
+---
+
+## Iteration Protocol (per-session + second pass)
+
+This skill improves itself as it works, so the ORDER and GRANULARITY matter:
+
+### One session at a time
+
+1. List sessions chronologically (oldest first).
+2. For the next unprocessed session: run Phases 0-5 on **that session only**.
+3. Apply findings to CLAUDE.md, improve this skill, commit. The skill is now
+   smarter.
+4. Move to the next session. Repeat.
+
+Never analyze several sessions before applying — a naive early version of the
+skill would read all of them with the same blind spots. Improving between
+sessions means session N+1 is read by a better skill than session N was.
+
+### Second pass (mandatory after first pass completes)
+
+Once every session has been processed once, the skill is at its most mature.
+Early sessions were read by immature versions that missed things. So:
+
+1. Re-run the full chronological sweep, one session at a time, with the now-
+   matured skill.
+2. Only NEW findings (not already in CLAUDE.md) produce changes.
+3. Stop when a full pass yields zero new findings (convergence). In practice
+   two passes suffice; a third is only needed if pass 2 changed the patterns
+   materially.
+
+Log each pass: `pass N — session <id> — X new findings`.
 
 ---
 
@@ -334,21 +385,23 @@ When this skill updates itself (Phase 2c):
    - Category definitions (add new categories if recurring corrections don't
      fit existing ones)
 2. Never remove core phases (0-5) or the gating requirement (Phase 3).
-3. Always increment the version counter.
-4. Log what changed in the commit message body.
+3. Never reintroduce memory-file creation — CLAUDE.md is the only destination.
+4. Always increment the version counter.
+5. Log what changed in the commit message body.
 
 ---
 
 ## TodoWrite Checklist
 
-Create on invocation:
+Create on invocation (per session, in chronological order):
 
-1. Scan session transcripts — extract corrections + errors
-2. Audit existing memories — staleness, gaps, redundancy, accuracy
+1. Scan ONE session's transcript — extract corrections + errors
+2. Audit auto-memories — migrate durable rules to CLAUDE.md, delete the rest
 3. Analyze CLAUDE.md rules — gaps, weak rules
 4. Analyze skills — workflow gaps, missed gates
 5. Self-analyze — pattern gaps, false positives
 6. Present findings report — get user approval
-7. Apply approved changes — memories, rules, skills
-8. Commit with `[ci skip]`
-9. Verify — frontmatter, index, markdown
+7. Apply approved changes — CLAUDE.md rules + skill improvements (NO memory creation)
+8. Commit with `[ci skip]` (CLAUDE.md + skills only; memory ops are not git)
+9. Verify — empty memory dir, rules landed, valid markdown, version bumped
+10. Move to next session; after all sessions, run the mandatory second pass
