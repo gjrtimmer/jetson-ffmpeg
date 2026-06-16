@@ -18,14 +18,14 @@ FFmpeg does not depend on this repo at runtime beyond `libnvmpi.so`; the integra
 - `ffmpeg/patches/` — generated `ffmpeg<ver>_nvmpi.patch` files (artifacts; never hand-edit).
 - `scripts/` — operator scripts: `build.sh` (build libnvmpi) and `ffpatch.sh` (runtime FFmpeg patcher). All scripts resolve the repo root from their own location, so they run from any working directory.
 - `test/` — per-feature hardware suites (`hw-*.sh`) run by `hw-all.sh` (auto-discovery; see `test/README.md`), `gen-samples.sh` (shared sample generators), and `smoke-all.sh` (full cross-version build + hw-all). FFmpeg sources are fetched by `scripts/clone-ffmpeg.sh`.
-- `docs/SCRIPTS.md` — reference for every script, command, and dev-container alias.
+- Prose documentation lives in the **[project wiki](https://github.com/gjrtimmer/jetson-ffmpeg/wiki)** (`jetson-ffmpeg.wiki.git`), not in-repo — the `docs/` folder has been retired. Script/alias reference: [Scripts and Commands](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Scripts-and-Commands).
 
 Supported FFmpeg versions: 4.2, 4.4, 6.0, 6.1, 7.0, 7.1, 8.0 (libavcodec 58→62).
 
 ## Build & test commands
 
 In the dev container these are also exposed as aliases (`build`, `ffpatch`,
-`update-patch`, `try-build`, `hw-all`) — see `docs/SCRIPTS.md`. There is
+`update-patch`, `try-build`, `hw-all`) — see [Scripts and Commands](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Scripts-and-Commands). There is
 deliberately no `test` alias (it would shadow the shell builtin).
 
 ```bash
@@ -103,7 +103,7 @@ The codebase supports a wide matrix without per-call `#ifdef` sprawl by concentr
 - **FFmpeg API drift** (4.2 → 8.0+): handled with `LIBAVCODEC_VERSION_MAJOR/MINOR` preprocessor guards inside `ffmpeg/dev/common/libavcodec/nvmpi_{enc,dec}.c`. Key breakpoints: `AVCodec`→`FFCodec` (v60), new encode API `receive_packet` (`NVMPI_FF_NEW_API`), `FF_PROFILE_*`→`AV_PROFILE_*` (v62.11). The `allcodecs.c` overlay differs between <60 (`extern AVCodec`) and ≥60 (`extern const FFCodec`) — this is why version overlays exist.
 - **JetPack buffer API drift**: legacy `nvbuf_utils` vs newer `NvBufSurface`/NvUtils (JetPack 5+). `CMakeLists.txt` auto-detects by probing for `nvbufsurface.h`; if present it defines `-DWITH_NVUTILS` and links the surface libs. `include/nvUtils2NvBuf.h` is a compile-time shim that maps legacy `NvBuffer*` names to `NvBufSurf*` so the rest of `src/` stays API-agnostic.
 
-When adding a new FFmpeg version or handling a new API change, see the step-by-step guide in `docs/DEVELOPMENT.md` ("Adding Support for a New FFmpeg Version") — it must touch overlays, the common codec files, `scripts/ffpatch.sh` anchors, `update_patch.sh`, and `try_build.sh` together.
+When adding a new FFmpeg version or handling a new API change, see the step-by-step guide in the [Development Guide](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Development-Guide#adding-support-for-a-new-ffmpeg-version) ("Adding Support for a New FFmpeg Version") — it must touch overlays, the common codec files, `scripts/ffpatch.sh` anchors, `update_patch.sh`, and `try_build.sh` together.
 
 ## libnvmpi internals (`src/`)
 
@@ -431,10 +431,24 @@ Do not include AI attribution in any output. This includes:
 
 No exceptions.
 
-## Further docs
+## Documentation lives in the wiki
 
-- `docs/BUILD.md` — full build/install, CMake options, verification.
-- `docs/SCRIPTS.md` — every script, command, and dev-container alias.
-- `docs/RELEASE.md` — tag-driven release process (GitLab + GitHub releases, per-version archives).
-- `docs/DEVELOPMENT.md` — architecture deep-dive, patch system, adding FFmpeg versions, codec registration reference, troubleshooting.
-- `docs/DEVCONTAINER.md` — VS Code dev container on Jetson hardware (`.devcontainer/` mounts the host's tegra libs, multimedia API, and CUDA read-only).
+All prose documentation lives in the **[project wiki](https://github.com/gjrtimmer/jetson-ffmpeg/wiki)**
+(`jetson-ffmpeg.wiki.git`), not in the repo. Only `README.md`, `CHANGELOG.md`,
+`CLAUDE.md`, and `test/README.md` remain in-tree.
+
+**Standing rule — documentation changes target the wiki.** When work calls for
+documentation (a new feature, behavior change, troubleshooting entry, or FAQ),
+**update or create the relevant wiki page** — clone `jetson-ffmpeg.wiki.git`,
+edit the page, commit, push. Do **not** recreate files under `docs/`. The `gh`
+CLI has no wiki API; the wiki is a plain git repo — see the `vcs-cli` agent for
+the clone/page-naming/push commands. Keep `README.md` documentation links
+pointing at the wiki, and add a matching FAQ entry when a change resolves a
+recurring user question.
+
+- [Build and Install](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Build-and-Install) — full build/install, CMake options, verification.
+- [Scripts and Commands](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Scripts-and-Commands) — every script, command, and dev-container alias.
+- [Release Process](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Release-Process) — tag-driven release process (GitLab + GitHub releases, per-version archives).
+- [Development Guide](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Development-Guide) — architecture deep-dive, patch system, adding FFmpeg versions, codec registration reference, troubleshooting.
+- [Dev Container](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Dev-Container) — VS Code dev container on Jetson hardware (`.devcontainer/` mounts the host's tegra libs, multimedia API, and CUDA read-only).
+- [FAQ & Known Limitations](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/FAQ) — recurring questions, hardware limits, and fork differences.
