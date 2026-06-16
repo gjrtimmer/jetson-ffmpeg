@@ -26,7 +26,7 @@ Invoke: **`/retro`** or **`/retro <session-id-prefix>`** (target one session).
 
 ## Skill Version
 
-<!-- retro:version:11 -->
+<!-- retro:version:12 -->
 Track version here. Each self-improvement pass increments this counter and
 logs what changed in the commit message.
 
@@ -322,7 +322,8 @@ const PATTERNS = {
     /\bnot what I\b/i, /\bI said\b/i, /\bI didn'?t say\b/i,
     /\bI asked\b/i, /\bnot what I asked\b/i, /\bthat'?s not what\b/i,
     /\bI did not say\b/i, /\bI meant\b/i, /\byou added.*not.*ask/i,
-    /\bnot.*respect.*what I\b/i
+    /\bnot.*respect.*what I\b/i,
+    /\bjust\s+continue\b.*\b(on|this|one)\b/i, /\bONLY\s+#?\d/i
   ],
   rule_violation: [
     /\balready told\b/i, /\bwe agreed\b/i,

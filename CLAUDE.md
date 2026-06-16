@@ -371,18 +371,21 @@ validates against the live GitLab instance (resolves YAML anchors, `extends`,
 - **Follow explicit multi-step sequences in the exact order given.** When the
   user lists steps (e.g. merge → switch → branch → implement), execute them
   in order, verifying each before the next. Don't reorder, skip, or combine.
-- **Only change what was requested.** When editing CI (`.gitlab-ci.yml`),
-  skills, or config, every addition must trace to an explicit request. Don't
-  add extra jobs, stages, or features — unrequested CI jobs waste runner time
-  and can block pipelines. Surface good ideas as suggestions, don't apply them.
+- **Only do what was requested.** Every action must trace to an explicit
+  request — editing CI, posting issue comments, adding features, all of it.
+  "Post this analysis" means post that analysis, not a full resolution comment.
+  "Add libx265" means add libx265, not also refactor the build. Surface good
+  ideas as suggestions, don't apply them.
 - **Verify completeness against the source list.** When creating issues,
   tasks, or artifacts from a reference list (fork analysis, upstream issues,
   TODOs), cross-check count and contents back against the source. Watch items
   the user explicitly called out. When in doubt, over-include.
 - **No premature resolution comments.** Never post "resolved"/"fixed" on a
-  GitHub issue until the pipeline is green and the user confirms. In-progress
-  comments describe findings and test results — not resolution. Match the
-  comment type to exactly what the user asked for.
+  GitHub issue until the pipeline is green and the user confirms. Non-resolution
+  comments (findings, test analysis, investigation notes) can be posted anytime
+  the user requests — these are not gated. When the user says "post X on the
+  issue", post exactly X — not a resolution-shaped superset that bundles
+  commits, validation status, and performance notes the user didn't ask for.
 - **Always invoke the `fix-issue` skill when fixing an issue** — even if the
   user just says "fix #N" or "highest prio issue." The skill encodes branch
   naming, commit conventions, issue communication, and phase gates so they
