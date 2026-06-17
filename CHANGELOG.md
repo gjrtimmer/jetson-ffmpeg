@@ -1,5 +1,118 @@
 # Changelog
 
+## 2.8.0 - 2026-06-17
+
+### Bug Fixes
+
+- Suppress NVIDIA stdout in latency measurement functions (test)
+- Replace flawed latency comparison with completion check (test)
+- Suppress unused variable warnings in test_bufpool (test)
+- Lower decoder-flush seek-to-4s threshold from 10 to 5 frames (test)
+- Guard nvmpi_create_decoder against NULL deref on V4L2 failure (nvmpi)
+
+### Build
+
+- Gitignore .work/ and untrack design docs
+- Regenerate patches for decoder NULL-deref fix (ffmpeg)
+
+### CI
+
+- Point runner-token templates and pipeline comments to the wiki
+
+### Chores
+
+- Update issue #10 status tracking file
+- Regenerate patches for all FFmpeg versions (ffmpeg-dev)
+- Update issue #10 status tracking file
+- Add VS Code C/C++ IntelliSense configuration (devcontainer)
+- Add domain-specific words to cSpell dictionary (devcontainer)
+- Remove TODO.md — all items tracked as GitHub issues
+- Iteration 1 — sessions 1-5 findings, skill v1→v2 (retro)
+- Iteration 2 — sessions 6-10 findings, skill v2→v3 (retro)
+- Iteration 3 — sessions 11-14 findings, skill v3→v4 (retro)
+- Iteration 4 — sessions 15-20 findings, skill v4→v5 (retro)
+- Iteration 5 — memory audit + stale cleanup, skill v5→v6 (retro)
+- Session a79c607d findings, skill v9→v10 (retro)
+- Session findings, skill v10→v11 (retro)
+- Add mandatory issue labelling rule (retro)
+- Session 4e1f4f38 findings, skill v11→v12 (retro)
+- A79c session findings, skill v12→v13 (retro)
+- Session d1622f65 findings, skill v13→v14 (retro)
+
+### Documentation
+
+- Add ARCHITECTURE.md with modular split convention
+- Update DEVELOPMENT.md with modular file structure
+- Add issue #10 design spec and implementation plan
+- Add THREAD_SAFETY.md, API_REFERENCE.md, update BUILD/README/TODO (nvmpi)
+- Add Fixes #N pre-push gate to CLAUDE.md issue closing rules
+- Update ARCHITECTURE.md, DEVELOPMENT.md for encoder modular split
+- Update references for NVMPI_frameBuf → nvmpi_frame_buffer rename
+- Update README with encoder and API test suites (test)
+- Add ci.skip rule for branch push before MR creation
+- Fold session findings into CLAUDE.md, retro skill v6→v7
+- Second-pass findings + pre-push retro gate, skill v7→v8
+- Scope to current-session by default, idempotent re-runs, v8→v9 (retro)
+- Add vcs-cli gh+glab command cheatsheet (skills)
+- Point documentation links to the wiki (readme)
+- Retarget docs refs to wiki + add standing wiki-docs rule
+- Add GitHub wiki commands to vcs-cli agent; retarget doc refs (skills)
+- Migrate BUILD.md to wiki (Build and Install)
+- Migrate COMPATIBILITY.md to wiki (Compatibility)
+- Migrate SCRIPTS.md to wiki (Scripts and Commands)
+- Migrate DEVELOPMENT.md to wiki (Development Guide)
+- Migrate ARCHITECTURE.md to wiki (Architecture)
+- Migrate API_REFERENCE.md to wiki (API Reference)
+- Migrate THREAD_SAFETY.md to wiki (Thread Safety)
+- Migrate DEVCONTAINER.md to wiki (Dev Container)
+- Migrate GITHUB.md to wiki (GitHub Actions)
+- Migrate GITLAB.md to wiki (GitLab CI)
+- Migrate GITHUB_RUNNER_MANUAL.md to wiki (GitHub Runner Manual)
+- Migrate GITHUB_RUNNER_K8S.md to wiki (GitHub Runner Kubernetes)
+- Migrate GITLAB_RUNNER_MANUAL.md to wiki (GitLab Runner Manual)
+- Migrate GITLAB_RUNNER_K8S.md to wiki (GitLab Runner Kubernetes)
+- Migrate RELEASE.md to wiki (Release Process)
+- Migrate FORKS.md to wiki (Fork Network Overview)
+- Migrate FORKS_REPORT.md to wiki (Fork Analysis Report)
+- Migrate FORKS_RESULT.md to wiki (Fork Analysis Results)
+- Add FAQ section to wiki
+- Retarget code-comment doc refs to wiki; regenerate patches (nvmpi)
+
+### Features
+
+- Add condition-variable blocking dequeue to NVMPI_bufPool (nvmpi)
+- Make ctx->eos atomic and add wait_timeout_ms (nvmpi)
+- Wire shutdown() to capture-loop exit and use atomic eos (nvmpi)
+- Implement blocking wait in nvmpi_decoder_get_frame() (nvmpi)
+- Add wait_timeout AVOption for low-delay decoder (ffmpeg)
+- Blocking wait in decoder get_frame (nvmpi)
+- Add session retrospective skill v1 (retro)
+
+### Refactor
+
+- Extract nvmpictx struct to nvmpi_dec_internal.h (nvmpi)
+- Extract capture loop to nvmpi_dec_capture.cpp (nvmpi)
+- Fix copyNvBufToFrame forward declaration signature (nvmpi)
+- Extract V4L2 plane setup to nvmpi_dec_planes.cpp (nvmpi)
+- Rename nvmpi_dec.cpp to nvmpi_dec_api.cpp (nvmpi)
+- Extract nvmpi_enc_internal.h from nvmpi_enc.cpp (nvmpi)
+- Extract nvmpi_enc_output.cpp from nvmpi_enc.cpp (nvmpi)
+- Rename nvmpi_enc.cpp → nvmpi_enc_api.cpp; update CMakeLists (nvmpi)
+- Modular split of encoder source files (nvmpi)
+- Rename NVMPI_frameBuf to nvmpi_frame_buffer (nvmpi)
+- Convert vcs-cli skill to a sonnet agent (skills)
+
+### Styling
+
+- Fix markdown lint errors across all documentation (docs)
+
+### Testing
+
+- Add unit tests for NVMPI_bufPool blocking dequeue (nvmpi)
+- Add hw test suites for blocking wait, lifecycle, and perf (nvmpi)
+- Add pool-size boundary and lifecycle stress suites (encoder)
+- Add libnvmpi C API smoke test harness (api)
+- Add V4L2 recovery delay before post-stress health check (decoder)
 ## 2.7.0 - 2026-06-15
 
 ### Bug Fixes
@@ -14,6 +127,10 @@
 ### CI
 
 - Add jetson-status to jetpack image for testing stage
+
+### Chores
+
+- Release 2.7.0
 
 ### Documentation
 
