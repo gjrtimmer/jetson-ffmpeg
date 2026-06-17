@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.8.1 - 2026-06-17
+
+### Bug Fixes
+
+- Guard initFramePool against invalid pool size and double-init (decoder)
+
+### Tests
+
+- Fix CI collapsed section timing and hw-stats message
+
+### Chores
+
+- Exempt release commits from smoke-all gate
+
 ## 2.8.0 - 2026-06-17
 
 ### Bug Fixes
