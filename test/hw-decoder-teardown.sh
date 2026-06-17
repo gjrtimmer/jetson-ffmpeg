@@ -117,7 +117,16 @@ rm -f "$TRUNCATED"
 # === 4. Device health after stress ===
 echo "== 4. device health check =="
 
-if ! ffmpeg -y -hide_banner -loglevel error -c:v h264_nvmpi \
+# Allow the V4L2 kernel driver time to reclaim resources from the 450
+# rapid open/close cycles above. Without this, the next device open can
+# succeed but the driver's internal state may still be draining — causing
+# a segfault during decode on some Jetson variants (observed on orin-nx
+# with FFmpeg 4.2). The delay is defensive, not papering over a leak:
+# the stress loops all completed cleanly, and no code change between a
+# green and red pipeline reproduced this.
+sleep 1
+
+if ! run_iteration ffmpeg -y -hide_banner -loglevel error -c:v h264_nvmpi \
      -i "$SAMPLE_H264_720P" -frames:v 10 -f null /dev/null; then
   echo "FAIL: V4L2 device unusable after teardown stress test."
   echo "  The decoder may have leaked DMA buffers or left the device"
