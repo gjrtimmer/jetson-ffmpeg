@@ -104,7 +104,26 @@ void nvmpictx::deinitFramePool()
 //from the block-linear CAPTURE-plane buffers the decoder writes into.
 void nvmpictx::initFramePool()
 {
-	//if(bufNumber <= 0) return false; //TODO log msg //TODO check if it's already allocated and deinit first
+	/* Validate pool size — zero or negative would allocate nothing, causing
+	 * downstream dqEmptyBuf() to block forever or return null. */
+	if (frame_pool_size <= 0) {
+		std::cerr << "[libnvmpi][E]: initFramePool: frame_pool_size="
+		          << frame_pool_size << " is invalid, skipping allocation"
+		          << std::endl;
+		return;
+	}
+
+	/* If the pool is already populated (e.g. initFramePool called without a
+	 * prior deinitFramePool), tear down the existing buffers first to prevent
+	 * leaking DMA buffer FDs. deinitFramePool is safe on an empty pool. */
+	if (!allocatedFrameBufs.empty()) {
+		std::cerr << "[libnvmpi][W]: initFramePool: pool already allocated ("
+		          << allocatedFrameBufs.size()
+		          << " buffers), deinitializing first to prevent DMA fd leak"
+		          << std::endl;
+		deinitFramePool();
+	}
+
 	//VIC destination format: NV12 or planar YUV420 (8-bit), or NV12_10LE
 	//(P010, 10-bit). The 10-bit branch is NvUtils-only — out_pixfmt can
 	//never be NV_PIX_P010 on legacy builds (rejected at decoder init), but
