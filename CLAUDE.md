@@ -396,6 +396,16 @@ validates against the live GitLab instance (resolves YAML anchors, `extends`,
 - **Write specs, design docs, and implementation plans to `.work/`** in the
   repo root (create it if absent) — not `.claude/work/`, `docs/`, or a skill's
   default location. This overrides any skill's default spec path.
+- **Fix root causes before adding workarounds.** When a test or pipeline
+  fails, investigate the actual code defect first. Only add test-level
+  retries, delays, or sleep-based workarounds after confirming the failure is
+  a hardware/driver timing issue with no code fix possible. "Add retry logic"
+  is not a fix — it masks the bug.
+- **Establish full regression windows when investigating pipeline failures.**
+  Check enough pipeline history to find the last green run AND the first red
+  run. Compare the commits between them to determine whether the failure is a
+  code regression or a flaky environment issue. Don't stop at 2–3 pipelines —
+  scan 10–20 if needed to find the boundary.
 - **On a red pipeline, stop and diagnose — never continue.** When monitoring a
   pipeline (or smoke-all run) and it fails or doesn't go green, halt the
   workflow and investigate; do not proceed to the next step. If a release/tag

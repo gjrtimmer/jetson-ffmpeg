@@ -26,7 +26,7 @@ Invoke: **`/retro`** or **`/retro <session-id-prefix>`** (target one session).
 
 ## Skill Version
 
-<!-- retro:version:13 -->
+<!-- retro:version:14 -->
 Track version here. Each self-improvement pass increments this counter and
 logs what changed in the commit message.
 
@@ -78,6 +78,7 @@ messages matching correction/feedback patterns. The script must:
 | `unrequested_addition` | why is this added, should not have been added, not asked for | Added CI jobs, features, or changes the user didn't request |
 | `cost_concern` | cheaper, waste tokens, subagent model, too expensive | User flagging token/cost waste — use cheaper models, fewer calls |
 | `pipeline_abort` | if not green stop/abort, if fail diagnose, abort release | Pipeline went red and assistant continued instead of stopping to diagnose |
+| `workaround_before_fix` | retry logic instead of actual fix, analyse before timing | Added test-level workaround (retry/sleep/delay) instead of investigating root cause code defect |
 | `positive_signal` | yes exactly, perfect, good, correct, nice | Approach was validated — preserve what worked |
 | `preference_signal` | might be better, prefer to, should we, what if we, let's try | User suggesting an improvement or expressing a preference — validated when assistant agrees |
 | `frustration` | idiot, moron, stupid, wtf, ffs, profanity | Strong negative signal — the preceding action was seriously wrong; always pair with another category from context |
@@ -367,6 +368,13 @@ const PATTERNS = {
     /\bmight be better\b/i, /\bprefer\b.*\b(to|if|that)\b/i,
     /\bshould we\b/i, /\bwhat if we\b/i, /\bwhat about\b/i,
     /\blet'?s\s+(try|do|use|go with)\b/i, /\bcan we\b.*\binstead\b/i
+  ],
+  workaround_before_fix: [
+    /\bdo we need\b.*\bretry\b/i, /\binstead of.*\bactual fix\b/i,
+    /\banalyse?\b.*\bbefore\b.*\b(timing|retry|sleep|delay)\b/i,
+    /\broot cause\b.*\bnot\b.*\bworkaround\b/i,
+    /\bfix\b.*\bnot\b.*\b(retry|sleep|mask)\b/i,
+    /\bactual\s+(fix|cause|bug)\b/i
   ],
   frustration: [
     /\bidiot\b/i, /\bmoron\b/i, /\bstupid\b/i, /\bdumb\b/i,
