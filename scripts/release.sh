@@ -53,6 +53,17 @@ for f in "${ARCHIVES[@]}"; do
 done
 
 # --- 3. GitLab release ---------------------------------------------------
+# Idempotent: delete any existing release for this tag before creating.
+# Retried pipelines and manual re-runs hit a 409 "Release already exists"
+# without this. Packages (step 2) are registry-scoped and unaffected.
+RELEASE_API="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/releases/${TAG}"
+if curl --silent --fail --head --header "JOB-TOKEN: ${CI_JOB_TOKEN}" "${RELEASE_API}" >/dev/null 2>&1; then
+    echo "[i] release ${TAG} already exists — deleting before recreate"
+    curl --silent --fail --request DELETE \
+         --header "JOB-TOKEN: ${CI_JOB_TOKEN}" "${RELEASE_API}" || \
+        echo "[!] delete failed (may need MAINTAINER token); continuing anyway"
+fi
+
 echo "[i] creating GitLab release ${TAG}"
 release-cli create \
     --name "jetson-ffmpeg ${VERSION}" \

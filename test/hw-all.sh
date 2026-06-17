@@ -20,6 +20,10 @@ set -eu
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 variant="${JETSON_VARIANT:-unknown}"
+# Per-suite wall-clock timeout (seconds). Prevents a single hanging suite from
+# eating the entire CI job timeout. Default 600s (10 min) — no individual suite
+# should take longer; the longest (perf-bench) runs ~3 min on Orin Nano.
+SUITE_TIMEOUT="${HW_SUITE_TIMEOUT:-600}"
 
 discover() {
   local s
@@ -52,7 +56,16 @@ for s in $SUITES; do
   fi
   ts_before="$(date +%s)"
   rc=0
-  out="$(bash "$script" 2>&1)" || rc=$?
+  out="$(timeout "${SUITE_TIMEOUT}" bash "$script" 2>&1)" || rc=$?
+  if [ "$rc" -eq 124 ]; then
+    echo "######## suite: hw-${s} — TIMEOUT (${SUITE_TIMEOUT}s) ########"
+    printf '%s\n' "$out"
+    echo "######## suite hung — killed after ${SUITE_TIMEOUT}s ########"
+    echo "[hint] rerun with longer timeout: HW_SUITE_TIMEOUT=900 HW_SUITES=\"${s}\" test/hw-all.sh"
+    results="${results}${s}:TIMEOUT\n"
+    fail=1
+    continue
+  fi
   if [ "$rc" -eq 0 ]; then
     # Passing suite: full log inside a collapsed section.
     section_start "hw_${s//-/_}" "$ts_before"
