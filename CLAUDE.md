@@ -60,6 +60,10 @@ There is no unit-test suite. Verification is layered: per-feature hardware suite
 
 **Never push code changes without a passing `./test/smoke-all.sh` run** (7/7
 matrix green). Docs-only changes are exempt and may push with `-o ci.skip`.
+**Release commits are exempt from the smoke-all gate.** When creating a
+release (CHANGELOG.md update + tag), the code has already been validated by the
+MR pipeline. Push the release commit and tag directly to main without a local
+smoke-all run.
 
 **Skip the branch pipeline when opening an MR immediately.** Pushing a
 branch triggers a branch pipeline; creating an MR triggers a second
