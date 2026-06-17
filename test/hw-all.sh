@@ -38,7 +38,7 @@ echo "ffmpeg under test: $(command -v ffmpeg)"
 ffmpeg -version 2>/dev/null | head -1
 echo "variant: ${variant} | suites: ${SUITES}"
 
-section_start() { [ -n "${GITLAB_CI:-}" ] && printf '\e[0Ksection_start:%s:%s[collapsed=true]\r\e[0K' "$(date +%s)" "$1" || true; }
+section_start() { [ -n "${GITLAB_CI:-}" ] && printf '\e[0Ksection_start:%s:%s[collapsed=true]\r\e[0K' "$2" "$1" || true; }
 section_end()   { [ -n "${GITLAB_CI:-}" ] && printf '\e[0Ksection_end:%s:%s\r\e[0K' "$(date +%s)" "$1" || true; }
 
 results="" fail=0
@@ -50,11 +50,12 @@ for s in $SUITES; do
     fail=1
     continue
   fi
+  ts_before="$(date +%s)"
   rc=0
   out="$(bash "$script" 2>&1)" || rc=$?
   if [ "$rc" -eq 0 ]; then
     # Passing suite: full log inside a collapsed section.
-    section_start "hw_${s//-/_}"
+    section_start "hw_${s//-/_}" "$ts_before"
     echo "######## suite: hw-${s} — PASS ########"
     printf '%s\n' "$out"
     section_end "hw_${s//-/_}"

@@ -214,8 +214,8 @@ echo "    +poc_type=2: ${enc_poc2} fps"
 echo ""
 
 if [ -z "$TEGRASTATS_BIN" ] && [ "$HAS_JTOP" = 0 ]; then
-  echo "  hw-stats: not available (install jetson-stats: pip3 install jetson-stats)"
-  echo "  Tip: run on Jetson host for tegrastats, or install jetson-stats for jtop API."
+  echo "  hw-stats: not available (tegrastats not found, jtop service not running)"
+  echo "  Tip: run on Jetson host for tegrastats, or ensure jtop.service is active for jtop API."
 fi
 
 echo ""
