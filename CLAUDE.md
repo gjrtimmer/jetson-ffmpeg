@@ -65,6 +65,11 @@ release (CHANGELOG.md update + tag), the code has already been validated by the
 MR pipeline. Push the release commit and tag directly to main without a local
 smoke-all run.
 
+**Never put `[ci skip]` or `[skip ci]` in commit messages.** These tokens
+poison every pipeline that includes the commit — branch pipelines AND MR
+pipelines. Use `-o ci.skip` on `git push` instead; that flag is scoped to the
+push event only and does not affect MR pipelines.
+
 **Skip the branch pipeline when opening an MR immediately.** Pushing a
 branch triggers a branch pipeline; creating an MR triggers a second
 (merge-request) pipeline. When the intent is to open an MR right after the
@@ -442,6 +447,11 @@ validates against the live GitLab instance (resolves YAML anchors, `extends`,
   through `tee /tmp/<name>.log` and report the path so the user can
   `tail -f`. Don't rely on background-task notifications alone — the user
   needs real-time visibility.
+- **Prefer periodic polling over per-event monitors for long test runs.**
+  When monitoring `smoke-all.sh` or `hw-all.sh`, check progress every ~10 min
+  with a grep summary rather than streaming every suite result as a
+  notification. Per-event monitors are noisy and waste context — use them only
+  when immediate reaction to a specific failure is needed.
 - **Run the `/retro` skill before pushing a new branch.** When work is ready to
   push, invoke `/retro` first to capture this session's lessons and improve the
   rules/skills, THEN push. The pre-push gate order is: smoke-all green →

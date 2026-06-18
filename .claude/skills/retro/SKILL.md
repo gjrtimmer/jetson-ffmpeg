@@ -26,7 +26,7 @@ Invoke: **`/retro`** or **`/retro <session-id-prefix>`** (target one session).
 
 ## Skill Version
 
-<!-- retro:version:14 -->
+<!-- retro:version:15 -->
 Track version here. Each self-improvement pass increments this counter and
 logs what changed in the commit message.
 
@@ -236,9 +236,7 @@ git add -A .claude/skills/ CLAUDE.md
 git commit -m "chore(retro): <session-id> findings, skill vN→vN+1
 
 - [findings applied to CLAUDE.md]
-- [pattern/filter/category improvements]
-
-[ci skip]"
+- [pattern/filter/category improvements]"
 ```
 
 Note: auto-memory files live OUTSIDE the repo
@@ -246,9 +244,10 @@ Note: auto-memory files live OUTSIDE the repo
 deleting/migrating them is a filesystem op, not a commit.
 
 Key commit rules:
-- **Always include `[ci skip]`** — retro changes are rules/skills only, never
-  code that needs a pipeline. (Note: this repo's CI also honors `-o ci.skip`
-  on push; the `[ci skip]` in the message is the in-commit equivalent.)
+- **Never put `[ci skip]` in commit messages.** `[ci skip]` in a commit
+  message poisons every pipeline that includes that commit — including MR
+  pipelines. Use `-o ci.skip` on `git push` instead; that flag is scoped to
+  the push event and does not affect MR pipelines.
 - No AI attribution (per project rules).
 - Conventional commit format: `chore(retro): <description>`.
 
