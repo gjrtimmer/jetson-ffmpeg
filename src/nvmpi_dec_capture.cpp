@@ -151,9 +151,20 @@ void dec_capture_loop_fcn(void *arg)
 			struct v4l2_plane planes[MAX_PLANES];
 			v4l2_buf.m.planes = planes;
 
-			/* Dequeue a filled buffer. */
-			//(0 retries: EAGAIN means nothing decoded yet, poll again;
-			// the V4L2_BUF_FLAG_LAST flag marks the final buffer => EOS)
+			/* Dequeue a filled buffer.
+			 * 0 retries: non-blocking. On EAGAIN we sleep and retry.
+			 * The sleep interval (10 ms) is 10× longer than the original
+			 * 1 ms, reducing the capture thread's poll rate from ~1 kHz
+			 * to ~100 Hz and cutting its CPU overhead proportionally.
+			 * This fixes the monotonic CPU rise reported in GitHub #24
+			 * and upstream Keylost#41.
+			 *
+			 * DevicePoll() (kernel-blocking wait) was considered but
+			 * rejected: the Tegra V4L2 driver does not unblock DevicePoll
+			 * after the final EOS frame is dequeued, causing an indefinite
+			 * hang once all capture buffers are drained. The NVIDIA sample
+			 * works around this with a dedicated poll thread + semaphore
+			 * coordination, but that is too invasive for this fix. */
 			if (dec->capture_plane.dqBuffer(v4l2_buf, &dec_buffer, NULL, 0))
 			{
 				if (errno == EAGAIN)
@@ -163,7 +174,7 @@ void dec_capture_loop_fcn(void *arg)
 						ERROR_MSG("Got EoS at capture plane");
 						ctx->eos.store(true);
 					}
-					usleep(1000);
+					usleep(10000);
 				}
 				else
 				{
@@ -197,15 +208,16 @@ void dec_capture_loop_fcn(void *arg)
 			}
 			else
 			{
-				//no buffers available in the pool. wait for EOS or for user to read.
-				//Backpressure: poll every 500us until the user returns a
-				//buffer via nvmpi_decoder_get_frame(), then do the same
-				//transform/publish as above. The V4L2 buffer is held back
-				//meanwhile, eventually stalling the decoder.
+				/* Backpressure: the frame pool is exhausted because the
+				 * consumer (user thread calling nvmpi_decoder_get_frame)
+				 * hasn't returned a buffer yet. Block on the pool's
+				 * empty-queue CV (100 ms timeout) instead of the previous
+				 * 500 µs busy-spin — eliminates ~2000 wakeups/s while
+				 * back-pressured. The V4L2 capture buffer is held back
+				 * meanwhile, eventually stalling the decoder hardware. */
 				while(!ctx->eos.load())
 				{
-					std::this_thread::sleep_for(std::chrono::microseconds(500));
-					fb = ctx->framePool->dqEmptyBuf();
+					fb = ctx->framePool->dqEmptyBuf(std::chrono::milliseconds(100));
 					if(fb)
 					{
 #ifdef WITH_NVUTILS
