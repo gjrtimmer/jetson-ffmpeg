@@ -117,6 +117,22 @@ When adding a new FFmpeg version or handling a new API change, see the step-by-s
 
 The CMake build also pulls NVIDIA sample classes (`NvVideoDecoder`, `NvVideoEncoder`, etc.) from `${JETSON_MULTIMEDIA_API_DIR}/samples/common/classes` — these are not vendored in this repo and must exist on the build host (or via the devcontainer mounts).
 
+**Known Tegra V4L2 driver pitfalls (verified on Orin):**
+
+- **`DevicePoll()` hangs after EOS.** The Tegra V4L2 driver does not unblock
+  `V4L2_CID_MPEG_VIDEO_DEVICE_POLL` after the final capture buffer is drained
+  post-EOS. NVIDIA's own `00_video_decode` sample works around this with a
+  dedicated poll thread + semaphore + `SetPollInterrupt()`, but that pattern is
+  too invasive for libnvmpi. Do not use `DevicePoll()` in the decoder capture
+  loop — use non-blocking `dqBuffer` + sleep instead.
+- **`-stream_loop -1` segfaults with hw decoders.** FFmpeg's stream-loop triggers
+  a seek, which requires decoder re-init. Some Jetson driver versions crash on
+  this path. For soak/stress tests, use a shell loop that repeatedly invokes
+  ffmpeg instead of `-stream_loop`.
+- **`NvV4l2Element::fd` is protected.** The V4L2 file descriptor cannot be
+  accessed from outside the class hierarchy, so standard `poll()` syscall is
+  not usable on the decoder/encoder fd.
+
 ## Secure codec engineering agent (always active)
 
 This section is a standing directive. Apply these rules to every line of C/C++ code written or reviewed in this repository — no invocation required, no exceptions.
@@ -421,6 +437,11 @@ validates against the live GitLab instance (resolves YAML anchors, `extends`,
 - **Prefer linear git history.** When a branch depends on changes from an
   in-flight MR, wait for that MR to merge into main, then rebase on updated
   main before pushing. Avoids merge commits and keeps the log linear.
+- **Tailable logs for long-running processes.** When starting `smoke-all.sh`,
+  multi-version builds, or any process expected to run >1 min, pipe output
+  through `tee /tmp/<name>.log` and report the path so the user can
+  `tail -f`. Don't rely on background-task notifications alone — the user
+  needs real-time visibility.
 - **Run the `/retro` skill before pushing a new branch.** When work is ready to
   push, invoke `/retro` first to capture this session's lessons and improve the
   rules/skills, THEN push. The pre-push gate order is: smoke-all green →
