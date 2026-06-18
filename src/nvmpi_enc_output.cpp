@@ -21,7 +21,7 @@ bool encoder_capture_plane_dq_callback(struct v4l2_buffer *v4l2_buf, NvBuffer * 
 
 	if (buffer->planes[0].bytesused == 0)
 	{
-		ctx->capPlaneGotEOS = true;
+		ctx->capPlaneGotEOS.store(true, std::memory_order_release);
 		//cout << "Got 0 size buffer in capture \n"; //TODO  log it
 		return false;
 	}

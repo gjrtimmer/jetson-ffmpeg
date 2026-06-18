@@ -162,10 +162,18 @@ int nvmpienc_nvPacket_reset(nvPacket* nPkt, AVCodecContext *avctx, int bufSize)
 int nvmpienc_initPktPool(AVCodecContext *avctx, int pktNum)
 {
 	nvmpiEncodeContext * nvmpi_context = avctx->priv_data;
-	//TODO free allocated mem on error
 	for(int i=0;i<pktNum;i++)
 	{
 		nvPacket* nPkt = nvmpienc_nvPacket_alloc(avctx, NVMPI_ENC_CHUNK_SIZE);
+		if (!nPkt)
+		{
+			/* Allocation failed mid-pool: drain and free all previously
+			 * queued packets to avoid a partially populated pool. */
+			av_log(avctx, AV_LOG_ERROR,
+			       "nvmpi: packet pool allocation failed at %d/%d\n", i, pktNum);
+			nvmpienc_deinitPktPool(avctx);
+			return AVERROR(ENOMEM);
+		}
 		nvmpi_encoder_qEmptyPacket(nvmpi_context->ctx, nPkt);
 	}
 	return 0;
@@ -290,7 +298,12 @@ static av_cold int nvmpi_encode_init(AVCodecContext *avctx)
 
 		nvmpi_context->ctx = nvmpi_create_encoder(&param);
 		_ctx = nvmpi_context->ctx;
-		//TODO error handling. if(!_ctx)
+		if (!_ctx)
+		{
+			av_freep(&dst[0]);
+			av_frame_free(&nvmpi_context->frame);
+			return AVERROR(ENOMEM);
+		}
 		nvmpienc_initPktPool(avctx,nvmpi_context->packet_pool_size);
 		i=0;
 		_nvframe.timestamp=0;
@@ -391,11 +404,13 @@ static av_cold int nvmpi_encode_init(AVCodecContext *avctx)
 	}
 	//else TODO
 	
-	if(nvmpi_context->ctx)
+	if(!nvmpi_context->ctx)
 	{
-		nvmpienc_initPktPool(avctx,nvmpi_context->packet_pool_size);
+		av_log(avctx, AV_LOG_ERROR, "nvmpi: encoder creation failed\n");
+		av_frame_free(&nvmpi_context->frame);
+		return AVERROR(ENOMEM);
 	}
-	//TODO error handling. if(!nvmpi_context->ctx)
+	nvmpienc_initPktPool(avctx,nvmpi_context->packet_pool_size);
 
 	return 0;
 }
@@ -577,15 +592,15 @@ static av_cold int nvmpi_encode_close(AVCodecContext *avctx)
 			if(ret < 0)
 			{
 				if(ret == -2) break; //got eos
-				//usleep(1000);
 				continue;
 			}
 			nvmpienc_nvPacket_free(nPkt);
 			nPkt = nvmpienc_nvPacket_alloc(avctx, NVMPI_ENC_CHUNK_SIZE);
+			if (!nPkt) break; /* OOM during close — stop draining */
 			nvmpi_encoder_qEmptyPacket(nvmpi_context->ctx, nPkt);
 		}
 	}
-	
+
 	nvmpienc_deinitPktPool(avctx);
 	nvmpi_encoder_close(nvmpi_context->ctx);
 	av_frame_free(&nvmpi_context->frame);

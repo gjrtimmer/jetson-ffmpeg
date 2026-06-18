@@ -69,8 +69,8 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 	ctx->num_reference_frames=param->refs;
 	ctx->insert_sps_pps_at_idr=(param->insert_spspps_idr==1)?true:false;
 	ctx->insert_vui=(param->insert_vui!=0)?true:false;
-	ctx->capPlaneGotEOS = false;
-	ctx->flushing = false;
+	ctx->capPlaneGotEOS.store(false, std::memory_order_relaxed);
+	ctx->flushing.store(false, std::memory_order_relaxed);
 	ctx->blocking_mode = true; //TODO non-blocking mode support
 	ctx->max_perf = param->max_perf;
 	ctx->poc_type = param->poc_type;
@@ -187,13 +187,20 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 	}
 	if(ctx->blocking_mode)
 	{
-		ctx->enc=NvVideoEncoder::createVideoEncoder("enc0");
+		ctx->enc.reset(NvVideoEncoder::createVideoEncoder("enc0"));
 	}
 	else
 	{
-		ctx->enc = NvVideoEncoder::createVideoEncoder("enc0", O_NONBLOCK);
+		ctx->enc.reset(NvVideoEncoder::createVideoEncoder("enc0", O_NONBLOCK));
 	}
-	TEST_ERROR(!ctx->enc, "Could not create encoder",ret);
+	/* Factory returns NULL on failure; bail out instead of continuing
+	 * with a half-initialized context (TEST_ERROR only logged). */
+	if (!ctx->enc)
+	{
+		std::cerr << "Could not create encoder" << std::endl;
+		delete ctx;
+		return NULL;
+	}
 
 	//CAPTURE plane carries the compressed bitstream; each buffer is sized
 	//NVMPI_ENC_CHUNK_SIZE — the same constant the wrapper uses for packets
@@ -427,7 +434,7 @@ int copyFrameToNvBuf(nvFrame* frame, NvBuffer& buffer)
 //encoder error.
 int nvmpi_encoder_put_frame(nvmpictx* ctx,nvFrame* frame)
 {
-	if(ctx->flushing) return -2;
+	if(ctx->flushing.load(std::memory_order_acquire)) return -2;
 
 	int ret;
 	struct v4l2_buffer v4l2_buf;
@@ -485,7 +492,7 @@ int nvmpi_encoder_put_frame(nvmpictx* ctx,nvFrame* frame)
 	{
 		//send EOS and flush
 		//(a buffer queued with bytesused==0 tells the encoder to drain)
-		ctx->flushing = true;
+		ctx->flushing.store(true, std::memory_order_release);
 		v4l2_buf.m.planes[0].m.userptr = 0;
 		v4l2_buf.m.planes[0].bytesused = v4l2_buf.m.planes[1].bytesused = v4l2_buf.m.planes[2].bytesused = 0;
 	}
@@ -561,13 +568,13 @@ int nvmpi_encoder_get_packet(nvmpictx* ctx,nvPacket** packet)
 
 	if(!pkt)
 	{
-		if(!ctx->flushing) return -1;
+		if(!ctx->flushing.load(std::memory_order_acquire)) return -1;
 		bool wait = true;
 		while(wait)
 		{
 			pkt = ctx->pktPool->dqFilledBuf();
-			if(pkt || ctx->capPlaneGotEOS) wait = false;
-			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+			if(pkt || ctx->capPlaneGotEOS.load(std::memory_order_acquire)) wait = false;
+			else std::this_thread::sleep_for(std::chrono::milliseconds(1));
 		}
 		if(!pkt) return -2; //if got eos
 	}
@@ -619,7 +626,9 @@ int nvmpi_encoder_close(nvmpictx* ctx)
     delete[] ctx->output_plane_fd;
     #endif
 
-	delete ctx->enc;
+	/* unique_ptr: release the NvVideoEncoder after the DQ thread is
+	 * joined and all V4L2 buffers are unmapped. */
+	ctx->enc.reset();
 	delete ctx->pktPool;
 	delete ctx;
 	return 0;
