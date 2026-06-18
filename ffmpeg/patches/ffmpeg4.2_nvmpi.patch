@@ -674,10 +674,10 @@ index 0000000..f5009df
 +
 diff --git a/libavcodec/nvmpi_enc.c b/libavcodec/nvmpi_enc.c
 new file mode 100644
-index 0000000..ca8be1e
+index 0000000..caa2e37
 --- /dev/null
 +++ b/libavcodec/nvmpi_enc.c
-@@ -0,0 +1,752 @@
+@@ -0,0 +1,767 @@
 +/*
 + * nvmpi_enc.c — FFmpeg encoder wrapper for libnvmpi (layer 2 of
 + * jetson-ffmpeg, the FFmpeg integration layer).
@@ -842,10 +842,18 @@ index 0000000..ca8be1e
 +int nvmpienc_initPktPool(AVCodecContext *avctx, int pktNum)
 +{
 +	nvmpiEncodeContext * nvmpi_context = avctx->priv_data;
-+	//TODO free allocated mem on error
 +	for(int i=0;i<pktNum;i++)
 +	{
 +		nvPacket* nPkt = nvmpienc_nvPacket_alloc(avctx, NVMPI_ENC_CHUNK_SIZE);
++		if (!nPkt)
++		{
++			/* Allocation failed mid-pool: drain and free all previously
++			 * queued packets to avoid a partially populated pool. */
++			av_log(avctx, AV_LOG_ERROR,
++			       "nvmpi: packet pool allocation failed at %d/%d\n", i, pktNum);
++			nvmpienc_deinitPktPool(avctx);
++			return AVERROR(ENOMEM);
++		}
 +		nvmpi_encoder_qEmptyPacket(nvmpi_context->ctx, nPkt);
 +	}
 +	return 0;
@@ -970,7 +978,12 @@ index 0000000..ca8be1e
 +
 +		nvmpi_context->ctx = nvmpi_create_encoder(&param);
 +		_ctx = nvmpi_context->ctx;
-+		//TODO error handling. if(!_ctx)
++		if (!_ctx)
++		{
++			av_freep(&dst[0]);
++			av_frame_free(&nvmpi_context->frame);
++			return AVERROR(ENOMEM);
++		}
 +		nvmpienc_initPktPool(avctx,nvmpi_context->packet_pool_size);
 +		i=0;
 +		_nvframe.timestamp=0;
@@ -1071,11 +1084,13 @@ index 0000000..ca8be1e
 +	}
 +	//else TODO
 +	
-+	if(nvmpi_context->ctx)
++	if(!nvmpi_context->ctx)
 +	{
-+		nvmpienc_initPktPool(avctx,nvmpi_context->packet_pool_size);
++		av_log(avctx, AV_LOG_ERROR, "nvmpi: encoder creation failed\n");
++		av_frame_free(&nvmpi_context->frame);
++		return AVERROR(ENOMEM);
 +	}
-+	//TODO error handling. if(!nvmpi_context->ctx)
++	nvmpienc_initPktPool(avctx,nvmpi_context->packet_pool_size);
 +
 +	return 0;
 +}
@@ -1257,15 +1272,15 @@ index 0000000..ca8be1e
 +			if(ret < 0)
 +			{
 +				if(ret == -2) break; //got eos
-+				//usleep(1000);
 +				continue;
 +			}
 +			nvmpienc_nvPacket_free(nPkt);
 +			nPkt = nvmpienc_nvPacket_alloc(avctx, NVMPI_ENC_CHUNK_SIZE);
++			if (!nPkt) break; /* OOM during close — stop draining */
 +			nvmpi_encoder_qEmptyPacket(nvmpi_context->ctx, nPkt);
 +		}
 +	}
-+	
++
 +	nvmpienc_deinitPktPool(avctx);
 +	nvmpi_encoder_close(nvmpi_context->ctx);
 +	av_frame_free(&nvmpi_context->frame);

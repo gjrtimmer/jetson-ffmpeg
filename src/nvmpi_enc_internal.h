@@ -10,6 +10,8 @@
 #include <iostream>
 #include <thread>
 #include <unistd.h>
+#include <memory>
+#include <atomic>
 
 #define MAX_BUFFERS 32
 //Error reporting helper: logs to stderr but does NOT abort or return;
@@ -61,14 +63,26 @@ struct nvmpictx
 	bool enable_extended_colorformat;
 	bool enableLossless;           //constant QP 0 + High 4:4:4 profile (H.264)
 	bool blocking_mode;            //true: use NvVideoEncoder's DQ thread (only mode implemented)
-	bool capPlaneGotEOS;           //set by the DQ callback on the zero-byte EOS buffer
-	bool flushing;                 //set once a NULL frame (EOS) was submitted
+
+	/* Cross-thread flags — atomic to avoid data races between the user
+	 * thread (put_frame/get_packet) and the capture-plane DQ callback.
+	 * capPlaneGotEOS: written by DQ callback (nvmpi_enc_output.cpp),
+	 *   read by user thread in nvmpi_encoder_get_packet().
+	 * flushing: written by user thread in nvmpi_encoder_put_frame(),
+	 *   read by user thread in get_packet; combined with capPlaneGotEOS
+	 *   so both must use acquire/release ordering for coherence. */
+	std::atomic<bool> capPlaneGotEOS{false};
+	std::atomic<bool> flushing{false};
 
 	enum v4l2_mpeg_video_bitrate_mode ratecontrol; //CBR or VBR
 	enum v4l2_mpeg_video_h264_level level;
 	enum v4l2_enc_hw_preset_type hw_preset_type;   //speed/quality preset
 
-	NvVideoEncoder *enc;           //NVIDIA V4L2 encoder device wrapper
+	/* NVIDIA V4L2 encoder device wrapper. unique_ptr guarantees cleanup
+	 * on all exit paths, preventing leaks from partial init failures.
+	 * Allocated in nvmpi_create_encoder(); released in nvmpi_encoder_close()
+	 * via reset() after the DQ thread is joined. */
+	std::unique_ptr<NvVideoEncoder> enc;
 	//producer/consumer pool of caller-allocated packets: DQ thread fills,
 	//user thread consumes and recycles
 	NVMPI_bufPool<nvPacket*>* pktPool;
