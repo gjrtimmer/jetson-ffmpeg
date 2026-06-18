@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.8.2 - 2026-06-18
+
+### Bug Fixes
+
+- Reduce decoder capture thread CPU overhead (nvmpi)
+- Use atomics for cross-thread flags, unique_ptr for NvVideoEncoder (encoder)
+
+### Testing
+
+- Add hw-soak-decode suite for CPU regression guard
+- Add concurrent multi-stream encode stress suite (encoder)
+
+### Chores
+
+- Session findings, skill v14→v15 (retro)
+
 ## 2.8.1 - 2026-06-17
 
 ### Bug Fixes
