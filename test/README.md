@@ -19,6 +19,7 @@ engines (NVDEC/NVENC/VIC) actually engaged.
 | `hw-encoder-header.sh` | suite | `-flags +global_header` yields non-empty extradata for h264_nvmpi **and** hevc_nvmpi (bounded NAL scan incl. the H.265 VPS/SPS/PPS branch) |
 | `hw-encoder-gop.sh` | suite | `AV_PKT_FLAG_KEY` only on IDR packets at the configured GOP cadence (upstream [Keylost#26](https://github.com/Keylost/jetson-ffmpeg/issues/26) all-keyframe bug guard) |
 | `hw-encoder-lifecycle.sh` | suite | Encoder close-path stress: rapid open/close ×200, close-mid-encode, short encode EOS, device health after stress |
+| `hw-encoder-thread-safety.sh` | suite | Concurrent multi-stream encode stress: parallel H.264/HEVC/mixed-codec encodes, parallel rapid lifecycle, atomic flag coherence under concurrent teardown ([#17](https://github.com/gjrtimmer/jetson-ffmpeg/issues/17)) |
 | `hw-encoder-pools.sh` | suite | `packet_pool_size` AVOption boundary values (min=1, max=32); no deadlock or crash at extremes |
 | `hw-decoder-blocking-wait.sh` | suite | Blocking wait (`wait=true`) in `get_frame`: low-delay frames arrive, EOS no hang, latency comparison, `wait_timeout` AVOption, HEVC blocking, rapid open/close |
 | `hw-decoder-lifecycle.sh` | suite | Decoder lifecycle correctness: normal decode, flush+reuse (seek), short file EOS |
