@@ -107,3 +107,24 @@ gen-sample-vp9() {
     -f lavfi -i testsrc2=s=1280x720:r=30 -t "${2:-3}" \
     -c:v libvpx-vp9 -b:v 3M "$1"
 }
+
+# shellcheck disable=SC2034
+SAMPLE_MJPEG_720P="/tmp/nvmpi-sample-mjpeg-720p.mkv"
+# shellcheck disable=SC2034
+SAMPLE_MJPEG_480P="/tmp/nvmpi-sample-mjpeg-480p.mkv"
+
+# Baseline JPEG sequence in MKV container (hw-decodable).
+#   gen-sample-mjpeg FILE [SECONDS]
+gen-sample-mjpeg() {
+  ffmpeg -y -hide_banner -loglevel error \
+    -f lavfi -i testsrc2=s=1280x720:r=30 -t "${2:-3}" \
+    -c:v mjpeg -q:v 5 "$1"
+}
+
+# Lower-resolution MJPEG sample for resolution-change testing.
+#   gen-sample-mjpeg-480p FILE [SECONDS]
+gen-sample-mjpeg-480p() {
+  ffmpeg -y -hide_banner -loglevel error \
+    -f lavfi -i testsrc2=s=854x480:r=30 -t "${2:-2}" \
+    -c:v mjpeg -q:v 5 "$1"
+}
