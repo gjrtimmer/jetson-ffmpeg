@@ -1,5 +1,29 @@
 # Changelog
 
+## 2.9.0 - 2026-06-19
+
+### Features
+
+- Hardware MJPEG decoder (`mjpeg_nvmpi`) via Tegra NVJPG engine (nvmpi)
+- Synchronous per-frame decode through NvJPEGDecoder::decodeToFd()
+- Progressive JPEG (SOF2) detection and rejection
+- VIC block-linear to pitch-linear transform with auto-reallocating frame pool
+
+### Bug Fixes
+
+- Retry V4L2 device creation on transient failure with backoff (nvmpi)
+- Serialize hardware test runs with flock to prevent device access collision
+
+### Testing
+
+- Add MJPEG hardware decoder test suite (5 test cases)
+- Add MJPEG sample generators to gen-samples.sh
+
+### Build
+
+- Add NvJpegDecoder to build, link libjpeg for standard JPEG symbols
+- Add NvJpegDecoder stub for off-Jetson CI
+
 ## 2.8.2 - 2026-06-18
 
 ### Bug Fixes
