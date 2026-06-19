@@ -1,5 +1,5 @@
 /*
- * nvmpi_jpegdec.cpp — hardware MJPEG/JPEG decoder via NvJPEGDecoder.
+ * nvmpi_dec_jpeg.cpp — hardware MJPEG/JPEG decoder via NvJPEGDecoder.
  *
  * This is a synchronous, per-frame decode path using the Tegra NVJPG engine.
  * It does NOT use V4L2 M2M — there is no capture thread, no resolution-change
@@ -17,7 +17,7 @@
  *
  * Allocated by nvmpi_create_jpeg_decoder(); freed by nvmpi_jpeg_decoder_close().
  */
-#include "nvmpi_jpegdec_internal.h"
+#include "nvmpi_dec_jpeg_internal.h"
 
 /* ------------------------------------------------------------------ */
 /* Frame pool management (mirrors nvmpi_dec_api.cpp patterns)          */

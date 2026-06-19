@@ -1,5 +1,5 @@
 diff --git a/configure b/configure
-index 48ef85d..3551c14 100755
+index 48ef85d..6b3df1c 100755
 --- a/configure
 +++ b/configure
 @@ -349,6 +349,7 @@ External library support:
@@ -38,15 +38,16 @@ index 48ef85d..3551c14 100755
  hevc_nvenc_encoder_deps="nvenc"
  hevc_nvenc_encoder_select="atsc_a53"
  hevc_qsv_decoder_select="hevc_mp4toannexb_bsf qsvdec"
-@@ -3114,6 +3122,7 @@ hevc_v4l2m2m_decoder_deps="v4l2_m2m hevc_v4l2_m2m"
+@@ -3114,6 +3122,8 @@ hevc_v4l2m2m_decoder_deps="v4l2_m2m hevc_v4l2_m2m"
  hevc_v4l2m2m_decoder_select="hevc_mp4toannexb_bsf"
  hevc_v4l2m2m_encoder_deps="v4l2_m2m hevc_v4l2_m2m"
  mjpeg_cuvid_decoder_deps="cuvid"
 +mjpeg_nvmpi_decoder_deps="nvmpi"
++mjpeg_nvmpi_encoder_deps="nvmpi"
  mjpeg_qsv_decoder_select="qsvdec"
  mjpeg_qsv_encoder_deps="libmfx"
  mjpeg_qsv_encoder_select="qsvenc"
-@@ -3124,6 +3133,7 @@ mpeg1_cuvid_decoder_deps="cuvid"
+@@ -3124,6 +3134,7 @@ mpeg1_cuvid_decoder_deps="cuvid"
  mpeg1_v4l2m2m_decoder_deps="v4l2_m2m mpeg1_v4l2_m2m"
  mpeg2_crystalhd_decoder_select="crystalhd"
  mpeg2_cuvid_decoder_deps="cuvid"
@@ -54,7 +55,7 @@ index 48ef85d..3551c14 100755
  mpeg2_mmal_decoder_deps="mmal"
  mpeg2_mediacodec_decoder_deps="mediacodec"
  mpeg2_qsv_decoder_select="qsvdec"
-@@ -3132,6 +3142,7 @@ mpeg2_vaapi_encoder_select="cbs_mpeg2 vaapi_encode"
+@@ -3132,6 +3143,7 @@ mpeg2_vaapi_encoder_select="cbs_mpeg2 vaapi_encode"
  mpeg2_v4l2m2m_decoder_deps="v4l2_m2m mpeg2_v4l2_m2m"
  mpeg4_crystalhd_decoder_select="crystalhd"
  mpeg4_cuvid_decoder_deps="cuvid"
@@ -62,7 +63,7 @@ index 48ef85d..3551c14 100755
  mpeg4_mediacodec_decoder_deps="mediacodec"
  mpeg4_mmal_decoder_deps="mmal"
  mpeg4_omx_encoder_deps="omx"
-@@ -3146,6 +3157,7 @@ vc1_mmal_decoder_deps="mmal"
+@@ -3146,6 +3158,7 @@ vc1_mmal_decoder_deps="mmal"
  vc1_qsv_decoder_select="qsvdec"
  vc1_v4l2m2m_decoder_deps="v4l2_m2m vc1_v4l2_m2m"
  vp8_cuvid_decoder_deps="cuvid"
@@ -70,7 +71,7 @@ index 48ef85d..3551c14 100755
  vp8_mediacodec_decoder_deps="mediacodec"
  vp8_qsv_decoder_select="qsvdec"
  vp8_rkmpp_decoder_deps="rkmpp"
-@@ -3154,6 +3166,7 @@ vp8_vaapi_encoder_select="vaapi_encode"
+@@ -3154,6 +3167,7 @@ vp8_vaapi_encoder_select="vaapi_encode"
  vp8_v4l2m2m_decoder_deps="v4l2_m2m vp8_v4l2_m2m"
  vp8_v4l2m2m_encoder_deps="v4l2_m2m vp8_v4l2_m2m"
  vp9_cuvid_decoder_deps="cuvid"
@@ -78,7 +79,7 @@ index 48ef85d..3551c14 100755
  vp9_mediacodec_decoder_deps="mediacodec"
  vp9_qsv_decoder_select="qsvdec"
  vp9_rkmpp_decoder_deps="rkmpp"
-@@ -6490,6 +6503,7 @@ enabled libvpx            && {
+@@ -6490,6 +6504,7 @@ enabled libvpx            && {
  enabled libwebp           && {
      enabled libwebp_encoder      && require_pkg_config libwebp "libwebp >= 0.2.0" webp/encode.h WebPGetEncoderVersion
      enabled libwebp_anim_encoder && check_pkg_config libwebp_anim_encoder "libwebpmux >= 0.4.0" webp/mux.h WebPAnimEncoderOptionsInit; }
@@ -87,7 +88,7 @@ index 48ef85d..3551c14 100755
                                 { require libx264 "stdint.h x264.h" x264_encoder_encode "-lx264 $pthreads_extralibs $libm_extralibs" &&
                                   warn "using libx264 without pkg-config"; } } &&
 diff --git a/libavcodec/Makefile b/libavcodec/Makefile
-index b3d284d..a078127 100644
+index b3d284d..b1a530d 100644
 --- a/libavcodec/Makefile
 +++ b/libavcodec/Makefile
 @@ -374,6 +374,8 @@ OBJS-$(CONFIG_H264_CUVID_DECODER)      += cuviddec.o
@@ -108,15 +109,16 @@ index b3d284d..a078127 100644
  OBJS-$(CONFIG_HEVC_NVENC_ENCODER)      += nvenc.o nvenc_hevc.o
  OBJS-$(CONFIG_NVENC_HEVC_ENCODER)      += nvenc.o nvenc_hevc.o
  OBJS-$(CONFIG_HEVC_QSV_DECODER)        += qsvdec.o
-@@ -456,6 +460,7 @@ OBJS-$(CONFIG_MJPEG_QSV_DECODER)       += qsvdec.o
+@@ -456,6 +460,8 @@ OBJS-$(CONFIG_MJPEG_QSV_DECODER)       += qsvdec.o
  OBJS-$(CONFIG_MJPEG_ENCODER)           += mjpegenc.o mjpegenc_common.o \
                                            mjpegenc_huffman.o
  OBJS-$(CONFIG_MJPEGB_DECODER)          += mjpegbdec.o
 +OBJS-$(CONFIG_MJPEG_NVMPI_DECODER)      += nvmpi_dec.o
++OBJS-$(CONFIG_MJPEG_NVMPI_ENCODER)      += nvmpi_enc_jpeg.o
  OBJS-$(CONFIG_MJPEG_CUVID_DECODER)     += cuviddec.o
  OBJS-$(CONFIG_MJPEG_QSV_ENCODER)       += qsvenc_jpeg.o
  OBJS-$(CONFIG_MJPEG_VAAPI_ENCODER)     += vaapi_encode_mjpeg.o
-@@ -493,12 +498,14 @@ OBJS-$(CONFIG_MPEG2_QSV_DECODER)       += qsvdec.o
+@@ -493,12 +499,14 @@ OBJS-$(CONFIG_MPEG2_QSV_DECODER)       += qsvdec.o
  OBJS-$(CONFIG_MPEG2_QSV_ENCODER)       += qsvenc_mpeg2.o
  OBJS-$(CONFIG_MPEG2VIDEO_DECODER)      += mpeg12dec.o mpeg12.o mpeg12data.o
  OBJS-$(CONFIG_MPEG2VIDEO_ENCODER)      += mpeg12enc.o mpeg12.o
@@ -131,7 +133,7 @@ index b3d284d..a078127 100644
  OBJS-$(CONFIG_MPEG4_CUVID_DECODER)     += cuviddec.o
  OBJS-$(CONFIG_MPEG4_MEDIACODEC_DECODER) += mediacodecdec.o
  OBJS-$(CONFIG_MPEG4_OMX_ENCODER)       += omx.o
-@@ -713,6 +720,7 @@ OBJS-$(CONFIG_VP6_DECODER)             += vp6.o vp56.o vp56data.o \
+@@ -713,6 +721,7 @@ OBJS-$(CONFIG_VP6_DECODER)             += vp6.o vp56.o vp56data.o \
                                            vp6dsp.o vp56rac.o
  OBJS-$(CONFIG_VP7_DECODER)             += vp8.o vp56rac.o
  OBJS-$(CONFIG_VP8_DECODER)             += vp8.o vp56rac.o
@@ -139,7 +141,7 @@ index b3d284d..a078127 100644
  OBJS-$(CONFIG_VP8_CUVID_DECODER)       += cuviddec.o
  OBJS-$(CONFIG_VP8_MEDIACODEC_DECODER)  += mediacodecdec.o
  OBJS-$(CONFIG_VP8_QSV_DECODER)         += qsvdec.o
-@@ -723,6 +731,7 @@ OBJS-$(CONFIG_VP8_V4L2M2M_ENCODER)     += v4l2_m2m_enc.o
+@@ -723,6 +732,7 @@ OBJS-$(CONFIG_VP8_V4L2M2M_ENCODER)     += v4l2_m2m_enc.o
  OBJS-$(CONFIG_VP9_DECODER)             += vp9.o vp9data.o vp9dsp.o vp9lpf.o vp9recon.o \
                                            vp9block.o vp9prob.o vp9mvs.o vp56rac.o \
                                            vp9dsp_8bpp.o vp9dsp_10bpp.o vp9dsp_12bpp.o
@@ -148,7 +150,7 @@ index b3d284d..a078127 100644
  OBJS-$(CONFIG_VP9_MEDIACODEC_DECODER)  += mediacodecdec.o
  OBJS-$(CONFIG_VP9_RKMPP_DECODER)       += rkmppdec.o
 diff --git a/libavcodec/allcodecs.c b/libavcodec/allcodecs.c
-index 2e9a358..0369f43 100644
+index 2e9a358..fe7dbe9 100644
 --- a/libavcodec/allcodecs.c
 +++ b/libavcodec/allcodecs.c
 @@ -142,6 +142,8 @@ extern AVCodec ff_h263p_encoder;
@@ -169,15 +171,16 @@ index 2e9a358..0369f43 100644
  extern AVCodec ff_hevc_qsv_decoder;
  extern AVCodec ff_hevc_rkmpp_decoder;
  extern AVCodec ff_hevc_v4l2m2m_decoder;
-@@ -188,6 +192,7 @@ extern AVCodec ff_mdec_decoder;
+@@ -188,6 +192,8 @@ extern AVCodec ff_mdec_decoder;
  extern AVCodec ff_mimic_decoder;
  extern AVCodec ff_mjpeg_encoder;
  extern AVCodec ff_mjpeg_decoder;
 +extern AVCodec ff_mjpeg_nvmpi_decoder;
++extern AVCodec ff_mjpeg_nvmpi_encoder;
  extern AVCodec ff_mjpegb_decoder;
  extern AVCodec ff_mmvideo_decoder;
  extern AVCodec ff_mobiclip_decoder;
-@@ -196,8 +201,10 @@ extern AVCodec ff_mpeg1video_encoder;
+@@ -196,8 +202,10 @@ extern AVCodec ff_mpeg1video_encoder;
  extern AVCodec ff_mpeg1video_decoder;
  extern AVCodec ff_mpeg2video_encoder;
  extern AVCodec ff_mpeg2video_decoder;
@@ -188,7 +191,7 @@ index 2e9a358..0369f43 100644
  extern AVCodec ff_mpeg4_crystalhd_decoder;
  extern AVCodec ff_mpeg4_v4l2m2m_decoder;
  extern AVCodec ff_mpeg4_mmal_decoder;
-@@ -357,9 +364,11 @@ extern AVCodec ff_vp6a_decoder;
+@@ -357,9 +365,11 @@ extern AVCodec ff_vp6a_decoder;
  extern AVCodec ff_vp6f_decoder;
  extern AVCodec ff_vp7_decoder;
  extern AVCodec ff_vp8_decoder;
@@ -1666,3 +1669,300 @@ index 0000000..caa2e37
 +//entries (added by ffpatch.sh / the version overlays).
 +NVMPI_ENC(h264, "H.264", AV_CODEC_ID_H264);
 +NVMPI_ENC(hevc, "HEVC", AV_CODEC_ID_HEVC);
+diff --git a/libavcodec/nvmpi_enc_jpeg.c b/libavcodec/nvmpi_enc_jpeg.c
+new file mode 100644
+index 0000000..0ae341b
+--- /dev/null
++++ b/libavcodec/nvmpi_enc_jpeg.c
+@@ -0,0 +1,291 @@
++/*
++ * nvmpi_enc_jpeg.c — FFmpeg MJPEG encoder wrapper for libnvmpi JPEG encoder.
++ *
++ * This is a SEPARATE file from nvmpi_enc.c because the JPEG encoder is
++ * fundamentally different from the V4L2-based H.264/HEVC encoders:
++ *   - Synchronous per-frame (no packet pool, no DQ thread, no DELAY cap)
++ *   - No bitrate/GOP/profile/level options — only quality
++ *   - Uses NvJPEGEncoder, not NvVideoEncoder
++ *
++ * One source supports FFmpeg 4.2 .. 8.0+ via preprocessor guards:
++ *   - LIBAVCODEC_VERSION_MAJOR >= 60: FFCodec + FF_CODEC_ENCODE_CB
++ *   - LIBAVCODEC_VERSION_MAJOR < 60: plain AVCodec with .encode2
++ *
++ * Quality mapping: FFmpeg's global_quality (from -q:v) is in
++ * FF_QP2LAMBDA units. We convert: libjpeg_quality = 2 + (31 - qscale) * 98 / 30
++ * where qscale = global_quality / FF_QP2LAMBDA, clamped to [1, 31].
++ * -q:v 1 (best) → quality ~100; -q:v 31 (worst) → quality ~2.
++ * If no -q:v is set, default quality is 85.
++ */
++#include <nvmpi.h>
++#include "avcodec.h"
++#include "internal.h"
++#include <stdio.h>
++#include "libavutil/avutil.h"
++#include "libavutil/common.h"
++#include "libavutil/imgutils.h"
++#include "libavutil/log.h"
++#include "libavutil/opt.h"
++#include "libavutil/mem.h"
++
++#include "version.h"
++
++/* libavcodec 58.134+ (FFmpeg 4.4+): encode.h provides ff_get_encode_buffer. */
++#if (LIBAVCODEC_VERSION_MAJOR >= 59) || (LIBAVCODEC_VERSION_MAJOR >= 58 && LIBAVCODEC_VERSION_MINOR >= 134)
++#include "encode.h"
++#endif
++
++/* libavcodec 60+ (FFmpeg 6.0): FFCodec registration. */
++#if (LIBAVCODEC_VERSION_MAJOR >= 60)
++#include "codec_internal.h"
++#endif
++
++/* Private encoder context — wraps the opaque libnvmpi JPEG encoder handle. */
++typedef struct {
++    AVClass *avclass;
++    nvmpictx *ctx;
++    /* Reusable output buffer for encoded JPEG data. Sized to worst-case
++     * (uncompressed YUV420 + JPEG overhead). Allocated lazily on first encode. */
++    uint8_t *pkt_buf;
++    int pkt_buf_size;
++} nvmpiJpegEncContext;
++
++/* ------------------------------------------------------------------ */
++/* Quality mapping                                                     */
++/* ------------------------------------------------------------------ */
++
++/*
++ * Convert FFmpeg quality scale to libjpeg quality 1-100.
++ *
++ * FFmpeg's -q:v sets global_quality in FF_QP2LAMBDA units.
++ * Standard MJPEG encoders use qscale 1 (best) to 31 (worst).
++ * We linearly map: qscale 1 → quality 100, qscale 31 → quality 2.
++ */
++static int qscale_to_jpeg_quality(int global_quality)
++{
++    int qscale;
++
++    if (global_quality <= 0)
++        return 85; /* No -q:v specified — use default. */
++
++    qscale = global_quality / FF_QP2LAMBDA;
++    if (qscale < 1) qscale = 1;
++    if (qscale > 31) qscale = 31;
++
++    /* Linear map: qscale 1 → 100, qscale 31 → 2 */
++    return 2 + (31 - qscale) * 98 / 30;
++}
++
++/* ------------------------------------------------------------------ */
++/* AVCodec callbacks                                                   */
++/* ------------------------------------------------------------------ */
++
++static av_cold int nvmpi_jpegenc_init(AVCodecContext *avctx)
++{
++    nvmpiJpegEncContext *s = avctx->priv_data;
++    int quality;
++
++    avctx->pix_fmt = AV_PIX_FMT_YUV420P;
++    avctx->color_range = AVCOL_RANGE_JPEG;
++
++    quality = qscale_to_jpeg_quality(avctx->global_quality);
++
++    s->ctx = nvmpi_create_jpeg_encoder(quality);
++    if (!s->ctx) {
++        av_log(avctx, AV_LOG_ERROR,
++               "Failed to create JPEG hardware encoder. This Jetson module "
++               "may not have NVJPG encode capability (e.g. Orin Nano). "
++               "Use -c:v mjpeg for software JPEG encoding.\n");
++        return AVERROR_EXTERNAL;
++    }
++
++    s->pkt_buf = NULL;
++    s->pkt_buf_size = 0;
++
++    return 0;
++}
++
++static av_cold int nvmpi_jpegenc_close(AVCodecContext *avctx)
++{
++    nvmpiJpegEncContext *s = avctx->priv_data;
++
++    if (s->ctx) {
++        nvmpi_jpeg_encoder_close(s->ctx);
++        s->ctx = NULL;
++    }
++
++    av_freep(&s->pkt_buf);
++    s->pkt_buf_size = 0;
++
++    return 0;
++}
++
++/*
++ * Ensure pkt_buf is large enough for worst-case JPEG output.
++ * Worst case: uncompressed YUV420 is w*h*1.5 bytes; JPEG with
++ * quality 100 can be larger than input due to headers. We use
++ * w*h*2 + 65536 as a safe upper bound.
++ */
++static int ensure_pkt_buf(nvmpiJpegEncContext *s, int width, int height)
++{
++    /* Integer overflow protection: check multiplication before allocating.
++     * Width and height are validated against NVJPEG_ENC_MAX_DIM (16384) by
++     * libnvmpi, so the product fits in int64_t safely. */
++    int64_t needed = (int64_t)width * height * 2 + 65536;
++    if (needed > INT_MAX)
++        return AVERROR(EINVAL);
++
++    if (s->pkt_buf_size >= (int)needed)
++        return 0;
++
++    av_freep(&s->pkt_buf);
++    s->pkt_buf = av_malloc(needed);
++    if (!s->pkt_buf) {
++        s->pkt_buf_size = 0;
++        return AVERROR(ENOMEM);
++    }
++    s->pkt_buf_size = (int)needed;
++    return 0;
++}
++
++/*
++ * Encode one frame. JPEG encoding is synchronous — one frame in,
++ * one packet out, no pipeline delay.
++ */
++#if LIBAVCODEC_VERSION_MAJOR >= 60
++static int nvmpi_jpegenc_encode(AVCodecContext *avctx, AVPacket *avpkt,
++                                const AVFrame *frame, int *got_packet)
++#else
++static int nvmpi_jpegenc_encode(AVCodecContext *avctx, AVPacket *avpkt,
++                                const AVFrame *frame, int *got_packet)
++#endif
++{
++    nvmpiJpegEncContext *s = avctx->priv_data;
++    nvFrame nv_frame = {0};
++    nvPacket nv_packet = {0};
++    int ret;
++
++    *got_packet = 0;
++
++    if (!frame) {
++        /* Flush / EOS — JPEG has no pipeline delay, nothing to drain. */
++        return 0;
++    }
++
++    /* Build nvFrame from AVFrame planes. */
++    nv_frame.payload[0] = frame->data[0];
++    nv_frame.payload[1] = frame->data[1];
++    nv_frame.payload[2] = frame->data[2];
++    nv_frame.linesize[0] = frame->linesize[0];
++    nv_frame.linesize[1] = frame->linesize[1];
++    nv_frame.linesize[2] = frame->linesize[2];
++    nv_frame.width = frame->width;
++    nv_frame.height = frame->height;
++    nv_frame.timestamp = frame->pts;
++    nv_frame.type = NV_PIX_YUV420;
++
++    ret = nvmpi_jpeg_encoder_put_frame(s->ctx, &nv_frame);
++    if (ret < 0) {
++        av_log(avctx, AV_LOG_ERROR, "nvmpi_jpeg_encoder_put_frame failed.\n");
++        return AVERROR_EXTERNAL;
++    }
++
++    /* Ensure output buffer is large enough. */
++    ret = ensure_pkt_buf(s, frame->width, frame->height);
++    if (ret < 0)
++        return ret;
++
++    nv_packet.payload = s->pkt_buf;
++    nv_packet.payload_size = 0;
++
++    ret = nvmpi_jpeg_encoder_get_packet(s->ctx, &nv_packet);
++    if (ret < 0) {
++        if (ret == -2) return 0; /* EOS, no more packets. */
++        return 0; /* No packet ready — shouldn't happen for sync encode. */
++    }
++
++    /* Allocate the AVPacket data buffer. */
++#if LIBAVCODEC_VERSION_MAJOR >= 60
++    ret = ff_get_encode_buffer(avctx, avpkt, nv_packet.payload_size, 0);
++#elif LIBAVCODEC_VERSION_MAJOR >= 59 || (LIBAVCODEC_VERSION_MAJOR >= 58 && LIBAVCODEC_VERSION_MINOR >= 134)
++    ret = av_new_packet(avpkt, nv_packet.payload_size);
++#else
++    ret = ff_alloc_packet2(avctx, avpkt, nv_packet.payload_size, 0);
++#endif
++    if (ret < 0)
++        return ret;
++
++    memcpy(avpkt->data, nv_packet.payload, nv_packet.payload_size);
++    avpkt->size = nv_packet.payload_size;
++
++    /* JPEG frames are always keyframes (intra-only codec). */
++    avpkt->flags |= AV_PKT_FLAG_KEY;
++    avpkt->pts = frame->pts;
++    avpkt->dts = frame->pts;
++
++    *got_packet = 1;
++    return 0;
++}
++
++/* ------------------------------------------------------------------ */
++/* AVOption table                                                      */
++/* ------------------------------------------------------------------ */
++
++/* JPEG encoder has minimal options — quality is driven by -q:v.
++ * We expose no private options for now. */
++static const AVOption options[] = {
++    { NULL }
++};
++
++static const AVClass nvmpi_mjpeg_enc_class = {
++    .class_name = "mjpeg_nvmpi_encoder",
++    .item_name  = av_default_item_name,
++    .option     = options,
++    .version    = LIBAVUTIL_VERSION_INT,
++};
++
++/* ------------------------------------------------------------------ */
++/* Codec registration                                                  */
++/* ------------------------------------------------------------------ */
++
++/* JPEG is intra-only (no pipeline delay), so no AV_CODEC_CAP_DELAY.
++ * Uses .encode2 (not .receive_packet) because it is synchronous. */
++#if LIBAVCODEC_VERSION_MAJOR >= 60
++FFCodec ff_mjpeg_nvmpi_encoder = {
++    .p.name           = "mjpeg_nvmpi",
++    CODEC_LONG_NAME("mjpeg (nvmpi)"),
++    .p.type           = AVMEDIA_TYPE_VIDEO,
++    .p.id             = AV_CODEC_ID_MJPEG,
++    .priv_data_size = sizeof(nvmpiJpegEncContext),
++    .p.priv_class     = &nvmpi_mjpeg_enc_class,
++    .init           = nvmpi_jpegenc_init,
++    FF_CODEC_ENCODE_CB(nvmpi_jpegenc_encode),
++    .close          = nvmpi_jpegenc_close,
++    .p.pix_fmts       = (const enum AVPixelFormat[]) {
++        AV_PIX_FMT_YUV420P,
++        AV_PIX_FMT_NONE
++    },
++    .p.capabilities   = AV_CODEC_CAP_HARDWARE,
++    .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
++    .p.wrapper_name   = "nvmpi",
++};
++#else
++AVCodec ff_mjpeg_nvmpi_encoder = {
++    .name           = "mjpeg_nvmpi",
++    .long_name      = NULL_IF_CONFIG_SMALL("mjpeg (nvmpi)"),
++    .type           = AVMEDIA_TYPE_VIDEO,
++    .id             = AV_CODEC_ID_MJPEG,
++    .priv_data_size = sizeof(nvmpiJpegEncContext),
++    .priv_class     = &nvmpi_mjpeg_enc_class,
++    .init           = nvmpi_jpegenc_init,
++    .encode2        = nvmpi_jpegenc_encode,
++    .close          = nvmpi_jpegenc_close,
++    .pix_fmts       = (const enum AVPixelFormat[]) {
++        AV_PIX_FMT_YUV420P,
++        AV_PIX_FMT_NONE
++    },
++    .capabilities   = AV_CODEC_CAP_HARDWARE,
++    .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
++    .wrapper_name   = "nvmpi",
++};
++#endif

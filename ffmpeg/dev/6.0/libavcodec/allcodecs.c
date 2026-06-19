@@ -204,6 +204,7 @@ extern const FFCodec ff_mimic_decoder;
 extern const FFCodec ff_mjpeg_encoder;
 extern const FFCodec ff_mjpeg_decoder;
 extern const FFCodec ff_mjpeg_nvmpi_decoder;
+extern const FFCodec ff_mjpeg_nvmpi_encoder;
 extern const FFCodec ff_mjpegb_decoder;
 extern const FFCodec ff_mmvideo_decoder;
 extern const FFCodec ff_mobiclip_decoder;
