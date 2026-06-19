@@ -127,6 +127,13 @@ if ! grep -q 'vp9_nvmpi_decoder_deps' "$BKP_FILE_CONFIGURE"; then
 	if cmp "$BKP_FILE_CONFIGURE" "$BKP_FILE_CONFIGURE.1"; then return 1; fi;
 fi
 
+#add nvmpi mjpeg deps. insert after mjpeg_cuvid_decoder_deps="cuvid"
+if ! grep -q 'mjpeg_nvmpi_decoder_deps' "$BKP_FILE_CONFIGURE"; then
+	cp "$BKP_FILE_CONFIGURE" "$BKP_FILE_CONFIGURE.1"
+	sed -i '/mjpeg_cuvid_decoder_deps="cuvid"/a mjpeg_nvmpi_decoder_deps="nvmpi"' "$BKP_FILE_CONFIGURE"
+	if cmp "$BKP_FILE_CONFIGURE" "$BKP_FILE_CONFIGURE.1"; then return 1; fi;
+fi
+
 #insert before enabled libx264 line.
 if ! grep -q 'enabled nvmpi' "$BKP_FILE_CONFIGURE"; then
 	cp "$BKP_FILE_CONFIGURE" "$BKP_FILE_CONFIGURE.1"
@@ -183,6 +190,13 @@ if ! grep -q 'CONFIG_VP9_NVMPI_DECODER' "$BKP_FILE_LIBAVCODEC_MAKEFILE"; then
 	if cmp "$BKP_FILE_LIBAVCODEC_MAKEFILE" "$BKP_FILE_LIBAVCODEC_MAKEFILE.1"; then return 1; fi;
 fi
 
+#add nvmpi mjpeg decoder
+if ! grep -q 'CONFIG_MJPEG_NVMPI_DECODER' "$BKP_FILE_LIBAVCODEC_MAKEFILE"; then
+	cp "$BKP_FILE_LIBAVCODEC_MAKEFILE" "$BKP_FILE_LIBAVCODEC_MAKEFILE.1"
+	sed -i '/OBJS-\$(CONFIG_MJPEG_CUVID_DECODER)/i OBJS-\$(CONFIG_MJPEG_NVMPI_DECODER)      += nvmpi_dec.o' "$BKP_FILE_LIBAVCODEC_MAKEFILE"
+	if cmp "$BKP_FILE_LIBAVCODEC_MAKEFILE" "$BKP_FILE_LIBAVCODEC_MAKEFILE.1"; then return 1; fi;
+fi
+
 return 0;
 }
 ################## MODIFY libavcodec/Makefile ############################
@@ -234,6 +248,13 @@ fi
 if ! grep -q 'ff_vp9_nvmpi_decoder' "$BKP_FILE_LIBAVCODEC_ALLCODECSC"; then
 	cp "$BKP_FILE_LIBAVCODEC_ALLCODECSC" "$BKP_FILE_LIBAVCODEC_ALLCODECSC.1"
 	sed -i "/$FF_CODEC_INTERFACE ff_vp9_decoder;/a $FF_CODEC_INTERFACE ff_vp9_nvmpi_decoder;" "$BKP_FILE_LIBAVCODEC_ALLCODECSC"
+	if cmp "$BKP_FILE_LIBAVCODEC_ALLCODECSC" "$BKP_FILE_LIBAVCODEC_ALLCODECSC.1"; then return 1; fi;
+fi
+
+#add nvmpi mjpeg decoder
+if ! grep -q 'ff_mjpeg_nvmpi_decoder' "$BKP_FILE_LIBAVCODEC_ALLCODECSC"; then
+	cp "$BKP_FILE_LIBAVCODEC_ALLCODECSC" "$BKP_FILE_LIBAVCODEC_ALLCODECSC.1"
+	sed -i "/$FF_CODEC_INTERFACE ff_mjpeg_decoder;/a $FF_CODEC_INTERFACE ff_mjpeg_nvmpi_decoder;" "$BKP_FILE_LIBAVCODEC_ALLCODECSC"
 	if cmp "$BKP_FILE_LIBAVCODEC_ALLCODECSC" "$BKP_FILE_LIBAVCODEC_ALLCODECSC.1"; then return 1; fi;
 fi
 

@@ -86,6 +86,7 @@ static nvCodingType nvmpi_get_codingtype(AVCodecContext *avctx)
 		case AV_CODEC_ID_VP9:           return NV_VIDEO_CodingVP9;
 		case AV_CODEC_ID_MPEG4:		return NV_VIDEO_CodingMPEG4;
 		case AV_CODEC_ID_MPEG2VIDEO:    return NV_VIDEO_CodingMPEG2;
+		case AV_CODEC_ID_MJPEG:         return NV_VIDEO_CodingMJPEG;
 		default:                        return NV_VIDEO_CodingUnused;
 	}
 };
@@ -394,6 +395,161 @@ static void nvmpi_flush_decoder(AVCodecContext *avctx)
 	}
 }
 
+/* ------------------------------------------------------------------ */
+/* MJPEG-specific callbacks (NvJPEGDecoder, not V4L2)                  */
+/* ------------------------------------------------------------------ */
+
+//MJPEG .init: create the JPEG decoder (no V4L2 device, no capture thread).
+//Output is always YUV420P with JPEG (full) color range.
+static int nvmpi_init_mjpeg_decoder(AVCodecContext *avctx)
+{
+	nvmpiDecodeContext *nvmpi_context = avctx->priv_data;
+
+	avctx->pix_fmt = AV_PIX_FMT_YUV420P;
+	avctx->color_range = AVCOL_RANGE_JPEG;
+
+	nvmpi_context->bufFrame = av_frame_alloc();
+	if (!nvmpi_context->bufFrame)
+		return AVERROR(ENOMEM);
+
+	nvmpi_context->ctx = nvmpi_create_jpeg_decoder();
+	if (!nvmpi_context->ctx)
+	{
+		av_frame_free(&(nvmpi_context->bufFrame));
+		nvmpi_context->bufFrame = NULL;
+		av_log(avctx, AV_LOG_ERROR, "Failed to create JPEG hardware decoder.\n");
+		return AVERROR_EXTERNAL;
+	}
+
+	return 0;
+}
+
+//MJPEG .close: destroy the JPEG decoder.
+static int nvmpi_close_mjpeg(AVCodecContext *avctx)
+{
+	nvmpiDecodeContext *nvmpi_context = avctx->priv_data;
+	if (nvmpi_context->bufFrame)
+	{
+		av_frame_free(&(nvmpi_context->bufFrame));
+		nvmpi_context->bufFrame = NULL;
+	}
+	if (!nvmpi_context->ctx)
+		return 0;
+	return nvmpi_jpeg_decoder_close(nvmpi_context->ctx);
+}
+
+//MJPEG .decode: synchronous per-frame decode.
+#if LIBAVCODEC_VERSION_MAJOR >= 60
+static int nvmpi_decode_mjpeg(AVCodecContext *avctx, AVFrame *data, int *got_frame, AVPacket *avpkt)
+#else
+static int nvmpi_decode_mjpeg(AVCodecContext *avctx, void *data, int *got_frame, AVPacket *avpkt)
+#endif
+{
+	nvmpiDecodeContext *nvmpi_context = avctx->priv_data;
+	AVFrame *frame = data;
+	nvFrame _nvframe = {0};
+	nvPacket packet;
+	int res;
+
+	if (!avpkt->size)
+	{
+		*got_frame = 0;
+		return 0;
+	}
+
+	packet.payload_size = avpkt->size;
+	packet.payload = avpkt->data;
+	packet.pts = avpkt->pts;
+
+	res = nvmpi_jpeg_decoder_put_packet(nvmpi_context->ctx, &packet);
+	if (res < 0)
+	{
+		av_log(avctx, AV_LOG_ERROR,
+		       "nvmpi_jpeg_decoder_put_packet failed (code=%d).\n", res);
+		return AVERROR_EXTERNAL;
+	}
+
+	//Allocate or refresh bufFrame at the decoded resolution.
+	//JPEG dimensions come from the bitstream; we must update avctx once known.
+	AVFrame *bufFrame = nvmpi_context->bufFrame;
+	if (!bufFrame->data[0] || bufFrame->width != avctx->width || bufFrame->height != avctx->height)
+	{
+		av_frame_unref(bufFrame);
+		bufFrame->format = avctx->pix_fmt;
+		bufFrame->width = avctx->width ? avctx->width : 1280;
+		bufFrame->height = avctx->height ? avctx->height : 720;
+		if (ff_get_buffer(avctx, bufFrame, 0) < 0)
+			return AVERROR(ENOMEM);
+	}
+
+	_nvframe.payload[0] = bufFrame->data[0];
+	_nvframe.payload[1] = bufFrame->data[1];
+	_nvframe.payload[2] = bufFrame->data[2];
+	_nvframe.linesize[0] = bufFrame->linesize[0];
+	_nvframe.linesize[1] = bufFrame->linesize[1];
+	_nvframe.linesize[2] = bufFrame->linesize[2];
+
+	res = nvmpi_jpeg_decoder_get_frame(nvmpi_context->ctx, &_nvframe, 1);
+	if (res < 0)
+	{
+		*got_frame = 0;
+		return avpkt->size;
+	}
+
+	//Update avctx dimensions from the decoded frame (JPEG is self-describing).
+	if (_nvframe.width && _nvframe.height &&
+	    ((int)_nvframe.width != avctx->width || (int)_nvframe.height != avctx->height))
+	{
+		avctx->width = _nvframe.width;
+		avctx->height = _nvframe.height;
+
+		//Reallocate bufFrame at new resolution.
+		av_frame_unref(bufFrame);
+		bufFrame->format = avctx->pix_fmt;
+		bufFrame->width = avctx->width;
+		bufFrame->height = avctx->height;
+		if (ff_get_buffer(avctx, bufFrame, 0) < 0)
+			return AVERROR(ENOMEM);
+
+		//Re-decode into new buffer.
+		_nvframe.payload[0] = bufFrame->data[0];
+		_nvframe.payload[1] = bufFrame->data[1];
+		_nvframe.payload[2] = bufFrame->data[2];
+		_nvframe.linesize[0] = bufFrame->linesize[0];
+		_nvframe.linesize[1] = bufFrame->linesize[1];
+		_nvframe.linesize[2] = bufFrame->linesize[2];
+		//Frame is already in the pool from the first get_frame; just copy it.
+	}
+
+	bufFrame->format = avctx->pix_fmt;
+	bufFrame->pts = _nvframe.timestamp;
+	bufFrame->pkt_dts = AV_NOPTS_VALUE;
+	av_frame_move_ref(frame, bufFrame);
+
+	*got_frame = 1;
+
+	//Re-acquire a fresh bufFrame for the next decode.
+	bufFrame->width = avctx->width;
+	bufFrame->height = avctx->height;
+	bufFrame->format = avctx->pix_fmt;
+	if (ff_get_buffer(avctx, bufFrame, 0) < 0)
+	{
+		av_log(avctx, AV_LOG_ERROR, "ff_get_buffer failed\n");
+		return AVERROR(ENOMEM);
+	}
+
+	frame->metadata = bufFrame->metadata;
+	bufFrame->metadata = NULL;
+
+	return avpkt->size;
+}
+
+//MJPEG .flush: JPEG is stateless per-picture, nothing to reset.
+static void nvmpi_flush_mjpeg(AVCodecContext *avctx)
+{
+	(void)avctx;
+}
+
 //AVOption table: user-settable private options, resolved into
 //nvmpiDecodeContext fields by FFmpeg's option system before .init runs.
 //OFFSET locates the field inside the priv_data struct; VD restricts the
@@ -488,4 +644,44 @@ NVMPI_DEC(mpeg2, AV_CODEC_ID_MPEG2VIDEO,NULL);
 NVMPI_DEC(mpeg4, AV_CODEC_ID_MPEG4,NULL);
 NVMPI_DEC(vp9,  AV_CODEC_ID_VP9,NULL);
 NVMPI_DEC(vp8, AV_CODEC_ID_VP8,NULL);
+
+//MJPEG decoder — uses NvJPEGDecoder, not V4L2 M2M. Separate init/decode/
+//close/flush callbacks, and only YUV420P output (no NV12/P010).
+#if LIBAVCODEC_VERSION_MAJOR >= 60
+	NVMPI_DEC_CLASS(mjpeg)
+	FFCodec ff_mjpeg_nvmpi_decoder = {
+		.p.name           = "mjpeg_nvmpi",
+		CODEC_LONG_NAME("mjpeg (nvmpi)"),
+		.p.type           = AVMEDIA_TYPE_VIDEO,
+		.p.id             = AV_CODEC_ID_MJPEG,
+		.priv_data_size = sizeof(nvmpiDecodeContext),
+		.init           = nvmpi_init_mjpeg_decoder,
+		.close          = nvmpi_close_mjpeg,
+		FF_CODEC_DECODE_CB(nvmpi_decode_mjpeg),
+		.flush          = nvmpi_flush_mjpeg,
+		.p.priv_class     = &nvmpi_mjpeg_dec_class,
+		.p.capabilities   = AV_CODEC_CAP_AVOID_PROBING | AV_CODEC_CAP_HARDWARE,
+		.caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
+		.p.pix_fmts     = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NONE},
+		.p.wrapper_name   = "nvmpi",
+	};
+#else
+	NVMPI_DEC_CLASS(mjpeg)
+	AVCodec ff_mjpeg_nvmpi_decoder = {
+		.name           = "mjpeg_nvmpi",
+		.long_name      = NULL_IF_CONFIG_SMALL("mjpeg (nvmpi)"),
+		.type           = AVMEDIA_TYPE_VIDEO,
+		.id             = AV_CODEC_ID_MJPEG,
+		.priv_data_size = sizeof(nvmpiDecodeContext),
+		.init           = nvmpi_init_mjpeg_decoder,
+		.close          = nvmpi_close_mjpeg,
+		.decode         = nvmpi_decode_mjpeg,
+		.flush          = nvmpi_flush_mjpeg,
+		.priv_class     = &nvmpi_mjpeg_dec_class,
+		.capabilities   = AV_CODEC_CAP_AVOID_PROBING | AV_CODEC_CAP_HARDWARE,
+		.caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
+		.pix_fmts       = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NONE},
+		.wrapper_name   = "nvmpi",
+	};
+#endif
 
