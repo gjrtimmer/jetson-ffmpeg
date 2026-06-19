@@ -54,6 +54,21 @@ find_library(LIB_V4L2 nvv4l2 PATHS "${JETSON_MULTIMEDIA_LIB_DIR}")
 find_library(LIB_NVJPEG nvjpeg PATHS "${JETSON_MULTIMEDIA_LIB_DIR}")
 find_package (Threads)
 
+# NvJpegDecoder.cpp calls standard libjpeg functions (jpeg_read_raw_data etc.).
+# Jetson ships libjpeg.so.8 but not the -dev symlink; find_library needs the
+# unversioned name or NAMES with the soname. Stubs fallback: link -ljpeg
+# against the stub libjpeg.so we ship.
+find_library(LIB_JPEG NAMES jpeg PATHS "${JETSON_MULTIMEDIA_LIB_DIR}" "/usr/lib/aarch64-linux-gnu")
+if(NOT LIB_JPEG)
+	find_file(LIB_JPEG_SONAME "libjpeg.so.8" PATHS "/usr/lib/aarch64-linux-gnu" "/usr/lib")
+	if(LIB_JPEG_SONAME)
+		set(LIB_JPEG "${LIB_JPEG_SONAME}")
+	else()
+		set(LIB_JPEG "jpeg")
+		message(STATUS "libjpeg not found — will link -ljpeg (stubs or system).")
+	endif()
+endif()
+
 set(NVMPI_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")
 set(NVMPI_PUBLIC_HEADER "${NVMPI_INCLUDE_DIR}/nvmpi.h")
 set(JETSON_MULTIMEDIA_API_INCLUDE_DIR "${JETSON_MULTIMEDIA_API_DIR}/include")
@@ -93,7 +108,7 @@ set(NVMPI_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_frame_buffer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_jpegdec.cpp)
     
-set(NVMPI_DEP_LIBS ${CMAKE_THREAD_LIBS_INIT} ${LIB_V4L2} ${LIB_NVJPEG})
+set(NVMPI_DEP_LIBS ${CMAKE_THREAD_LIBS_INIT} ${LIB_V4L2} ${LIB_NVJPEG} ${LIB_JPEG})
 
 #if NvUtils API is present prefer it to nvbuf_utils 
 if(EXISTS "${JETSON_MULTIMEDIA_API_INCLUDE_DIR}/nvbufsurface.h")
