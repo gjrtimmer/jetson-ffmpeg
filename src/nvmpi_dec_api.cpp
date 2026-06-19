@@ -190,15 +190,26 @@ nvmpictx* nvmpi_create_decoder(nvDecParam* param)
 
 	nvmpictx* ctx=new nvmpictx();
 
-	/* Open the V4L2 decoder device. Returns NULL when the kernel device
-	 * is temporarily unavailable (e.g. after rapid open/close stress) —
-	 * propagate NULL so the FFmpeg wrapper reports AVERROR_EXTERNAL
-	 * instead of crashing on a NULL dereference. */
-	ctx->dec = NvVideoDecoder::createVideoDecoder("dec0");
+	/* Open the V4L2 decoder device. The Tegra V4L2 driver may fail when
+	 * the device is temporarily busy (concurrent sessions from CI or other
+	 * processes). Retry up to 3 times with 100ms backoff before giving up.
+	 * NvV4l2Element discards errno, so we cannot distinguish EBUSY from
+	 * ENODEV — treat all failures as transient and retry. See #37. */
+	for (int attempt = 0; attempt < 3; attempt++) {
+		ctx->dec = NvVideoDecoder::createVideoDecoder("dec0");
+		if (ctx->dec) break;
+		if (attempt < 2) {
+			std::cerr << "[libnvmpi][W]: V4L2 decoder device busy, "
+			          << "retrying (" << (attempt + 1) << "/3)..."
+			          << std::endl;
+			usleep(100000);  /* 100ms backoff */
+		}
+	}
 	if (!ctx->dec)
 	{
 		std::cerr << "[libnvmpi][E]: Could not create decoder "
-		          << "(V4L2 device unavailable)" << std::endl;
+		          << "after 3 attempts (V4L2 device unavailable)"
+		          << std::endl;
 		delete ctx;
 		return NULL;
 	}

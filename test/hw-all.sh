@@ -18,6 +18,17 @@
 #   - The run ends with a per-suite result block, one suite per line.
 set -eu
 
+# Serialize hardware access: only one hw-all instance at a time.
+# The Tegra V4L2 driver segfaults on device access collision when
+# multiple processes fight over NVDEC/NVENC — flock prevents that.
+# Uses /tmp so it works across CI jobs and local runs on the same host.
+LOCK_FILE="/tmp/nvmpi-hw-test.lock"
+exec 9>"${LOCK_FILE}"
+if ! flock -n 9; then
+  echo "[W] Another hw test run holds ${LOCK_FILE} — waiting..."
+  flock 9
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 variant="${JETSON_VARIANT:-unknown}"
 # Per-suite wall-clock timeout (seconds). Prevents a single hanging suite from
