@@ -127,6 +127,8 @@ When adding a new FFmpeg version or handling a new API change, see the step-by-s
 - `NVMPI_bufPool.hpp` — thread-safe producer/consumer pool used for both decoded-frame and encoded-packet buffers.
 - `nvmpi_frame_buffer.{hpp,cpp}` — DMA buffer alloc/destroy, abstracting NvUtils vs nvbuf_utils.
 
+**Source file naming convention:** All libnvmpi codec source files follow the pattern `nvmpi_{dec,enc}_{codec}.*`, with `_internal` appended for private headers. Examples: `nvmpi_dec_jpeg.cpp`, `nvmpi_enc_jpeg_internal.h`, `nvmpi_dec_api.cpp`. FFmpeg wrapper files in `ffmpeg/dev/common/libavcodec/` follow the same pattern: `nvmpi_enc_jpeg.c`. This convention applies to all new codec files — never use `nvmpi_{codec}{dec,enc}` or other orderings.
+
 The CMake build also pulls NVIDIA sample classes (`NvVideoDecoder`, `NvVideoEncoder`, etc.) from `${JETSON_MULTIMEDIA_API_DIR}/samples/common/classes` — these are not vendored in this repo and must exist on the build host (or via the devcontainer mounts).
 
 **Known Tegra V4L2 driver pitfalls (verified on Orin):**
@@ -459,6 +461,15 @@ validates against the live GitLab instance (resolves YAML anchors, `extends`,
   with a grep summary rather than streaming every suite result as a
   notification. Per-event monitors are noisy and waste context — use them only
   when immediate reaction to a specific failure is needed.
+- **Never `pkill`/`kill`/`killall` ffmpeg or V4L2 processes without checking
+  CI first.** The Tegra V4L2 driver shares device state — killing one process
+  crashes another's device session. Run `glab ci list` or
+  `glab ci status` to confirm no pipeline hw-test jobs are active before any
+  process termination on the Jetson host.
+- **Verify pipeline monitor targets after MR merge.** When an MR merges, the
+  MR pipeline is no longer relevant. Monitor the main branch pipeline
+  triggered by the merge commit — specify the exact pipeline ID or branch
+  ref (`main`), not the MR number.
 - **Run the `/retro` skill before pushing a new branch.** When work is ready to
   push, invoke `/retro` first to capture this session's lessons and improve the
   rules/skills, THEN push. The pre-push gate order is: smoke-all green →
