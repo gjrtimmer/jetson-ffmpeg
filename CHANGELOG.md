@@ -1,29 +1,50 @@
 # Changelog
 
-## 2.9.0 - 2026-06-19
-
-### Features
-
-- Hardware MJPEG decoder (`mjpeg_nvmpi`) via Tegra NVJPG engine (nvmpi)
-- Synchronous per-frame decode through NvJPEGDecoder::decodeToFd()
-- Progressive JPEG (SOF2) detection and rejection
-- VIC block-linear to pitch-linear transform with auto-reallocating frame pool
+## 2.10.0 - 2026-06-19
 
 ### Bug Fixes
 
-- Retry V4L2 device creation on transient failure with backoff (nvmpi)
-- Serialize hardware test runs with flock to prevent device access collision
-
-### Testing
-
-- Add MJPEG hardware decoder test suite (5 test cases)
-- Add MJPEG sample generators to gen-samples.sh
+- Resolve decoder capture-loop race on FFmpeg 7.0+ threaded model (nvmpi)
+- Add goto-cleanup error handling in encoder init (nvmpi)
 
 ### Build
 
-- Add NvJpegDecoder to build, link libjpeg for standard JPEG symbols
-- Add NvJpegDecoder stub for off-Jetson CI
+- Add Tegra libjpeg HW accel stubs for NvJpegEncoder (stubs)
 
+### Chores
+
+- 0668aaa3 session findings, skill v15→v16 (retro)
+- 2d112242 session findings, skill v16 (no skill change) (retro)
+
+### Features
+
+- Hardware MJPEG encoder via NvJPEGEncoder::encodeFromFd (nvmpi)
+
+### Testing
+
+- Add MJPEG encoder hardware test suite (nvmpi)
+## 2.9.0 - 2026-06-19
+
+### Bug Fixes
+
+- Retry V4L2 device creation on transient failure (nvmpi)
+
+### Build
+
+- Add NvJpegDecoder to build and stub for off-Jetson CI (stubs)
+- Link libjpeg for NvJpegDecoder standard jpeg symbols
+
+### Chores
+
+- Release 2.9.0
+
+### Features
+
+- Add hardware MJPEG decoder via NvJPEGDecoder (nvmpi)
+
+### Testing
+
+- Add MJPEG hardware decoder test suite (decoder)
 ## 2.8.2 - 2026-06-18
 
 ### Bug Fixes
@@ -31,29 +52,32 @@
 - Reduce decoder capture thread CPU overhead (nvmpi)
 - Use atomics for cross-thread flags, unique_ptr for NvVideoEncoder (encoder)
 
+### Chores
+
+- Session d4b84d2a findings (retro)
+- Trigger MR pipeline
+- D4b84d2a session findings, skill v14→v15 (retro)
+- Release 2.8.2
+
 ### Testing
 
 - Add hw-soak-decode suite for CPU regression guard
 - Add concurrent multi-stream encode stress suite (encoder)
-
-### Chores
-
-- Session findings, skill v14→v15 (retro)
-
 ## 2.8.1 - 2026-06-17
 
 ### Bug Fixes
 
 - Guard initFramePool against invalid pool size and double-init (decoder)
-
-### Tests
-
-- Fix CI collapsed section timing and hw-stats message
+- Per-suite timeout in hw-all.sh and idempotent release creation (ci)
 
 ### Chores
 
 - Exempt release commits from smoke-all gate
+- Release 2.8.1
 
+### Testing
+
+- Fix CI collapsed section timing and hw-stats message
 ## 2.8.0 - 2026-06-17
 
 ### Bug Fixes
@@ -92,6 +116,7 @@
 - Session 4e1f4f38 findings, skill v11→v12 (retro)
 - A79c session findings, skill v12→v13 (retro)
 - Session d1622f65 findings, skill v13→v14 (retro)
+- Release 2.8.0
 
 ### Documentation
 
