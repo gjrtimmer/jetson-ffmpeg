@@ -99,9 +99,10 @@ void dec_capture_loop_fcn(void *arg)
 	struct v4l2_format v4l2Format;
 	struct v4l2_crop v4l2Crop;
 	struct v4l2_event v4l2Event;
+	memset(&v4l2Event, 0, sizeof(v4l2Event));
 	int ret;
 	nvmpi_frame_buffer* fb = NULL;
-	//std::thread transformWorkersPool[3];
+	bool got_resolution_change = false;
 
     /* Need to wait for the first Resolution change event, so that
        the decoder knows the stream resolution and can allocate appropriate
@@ -122,11 +123,38 @@ void dec_capture_loop_fcn(void *arg)
                ctx->eos.store(true);
             }
         }
+        if (v4l2Event.type == V4L2_EVENT_RESOLUTION_CHANGE)
+            got_resolution_change = true;
     }
-    while ((v4l2Event.type != V4L2_EVENT_RESOLUTION_CHANGE) && !ctx->eos.load());
+    while (!got_resolution_change && !ctx->eos.load());
 
-    /* Received the resolution change event, now can do respondToResolutionEvent. */
-    if (!ctx->eos.load()) respondToResolutionEvent(v4l2Format, v4l2Crop, ctx);
+    /* Race guard: after flush/seek, FFmpeg's threaded decoder model
+     * (libavcodec >= 61 / FFmpeg 7.0+) may queue all remaining packets
+     * including the zero-sized EOS marker before the V4L2 decoder has
+     * emitted the resolution-change event triggered by re-primed
+     * extradata. put_packet sets ctx->eos on the zero-sized marker,
+     * causing the loop above to exit before the event arrives.
+     *
+     * Without a retry the capture plane stays uninitialized: no REQBUFS,
+     * no STREAMON, no DMA buffers. The Tegra V4L2 driver then segfaults
+     * when decoded frames have no destination — it does not gracefully
+     * handle the "capture plane never set up" state.
+     *
+     * One additional 500 ms dqEvent covers the gap with margin; the
+     * extradata-to-event latency is normally single-digit ms. For
+     * nvmpi_decoder_close() the extra wait is within join tolerance. */
+    if (!got_resolution_change && ctx->eos.load()) {
+        ret = dec->dqEvent(v4l2Event, 500);
+        if (ret == 0 && v4l2Event.type == V4L2_EVENT_RESOLUTION_CHANGE)
+            got_resolution_change = true;
+    }
+
+    /* Initialize capture plane if and only if we received the event.
+     * Keyed on got_resolution_change (not eos): even when EOS arrived
+     * early, the capture plane MUST be set up so the V4L2 decoder has
+     * valid destination buffers for any frames it has already decoded. */
+    if (got_resolution_change)
+        respondToResolutionEvent(v4l2Format, v4l2Crop, ctx);
 
 	while (!(ctx->eos.load() || dec->isInError()))
 	{

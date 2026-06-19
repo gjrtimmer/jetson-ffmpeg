@@ -26,7 +26,7 @@ Invoke: **`/retro`** or **`/retro <session-id-prefix>`** (target one session).
 
 ## Skill Version
 
-<!-- retro:version:15 -->
+<!-- retro:version:16 -->
 Track version here. Each self-improvement pass increments this counter and
 logs what changed in the commit message.
 
@@ -55,7 +55,17 @@ CLAUDE.md. Do NOT batch-scan the whole transcript history by default.
 - `--all` → opt-in full historical sweep (one session at a time; rarely
   needed — only for a first-time backfill of the initial rule set).
 
-### 0b. Extract correction signals
+### 0b. Compaction-aware fallback
+
+When the JSONL scan returns 0 corrections but the session was **resumed from
+a compaction summary** (the conversation context contains "This session is
+being continued from a previous conversation"), the corrections happened
+pre-compaction and are lost from the JSONL. In this case, extract corrections
+from the compaction summary's "Errors and fixes" and "All user messages"
+sections in the live conversation context instead of relying solely on JSONL
+pattern matching.
+
+### 0c. Extract correction signals
 
 Run `ctx_execute` with JavaScript to scan session JSONL files. Extract user
 messages matching correction/feedback patterns. The script must:
@@ -87,7 +97,7 @@ messages matching correction/feedback patterns. The script must:
    thing the user corrected) to understand what went wrong.
 6. Return a structured summary: `{category, userMsg, assistantContext, sessionId, timestamp}`.
 
-### 0c. Extract assistant errors
+### 0d. Extract assistant errors
 
 Also scan for assistant-side signals:
 

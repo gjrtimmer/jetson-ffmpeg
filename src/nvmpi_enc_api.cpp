@@ -209,11 +209,19 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 		return NULL;
 	}
 
+	/* CRITICAL FORMAT SETUP — format negotiation must succeed for the
+	 * encoder to function. Unlike parameter-tuning calls (setBitrate,
+	 * setProfile, etc.) which may fall back to defaults, a format failure
+	 * means the V4L2 device is in an unusable state. Abort to cleanup. */
+
 	//CAPTURE plane carries the compressed bitstream; each buffer is sized
 	//NVMPI_ENC_CHUNK_SIZE — the same constant the wrapper uses for packets
 	ret = ctx->enc->setCapturePlaneFormat(ctx->encoder_pixfmt, ctx->width,ctx->height, NVMPI_ENC_CHUNK_SIZE);
-
-	TEST_ERROR(ret < 0, "Could not set output plane format", ret);
+	if (ret < 0) {
+		std::cerr << "[libnvmpi][E]: Could not set capture plane format"
+		          << std::endl;
+		goto cleanup;
+	}
 
 	//pick the raw input format. Priority: lossless (YUV444M, set below) >
 	//HEVC Main10 (10-bit P010M) > requested 8-bit layout (NV12M vs YUV420M).
@@ -240,8 +248,11 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 	{
 		ret = ctx->enc->setOutputPlaneFormat(ctx->raw_pixfmt, ctx->width,ctx->height);
 	}
-
-	TEST_ERROR(ret < 0, "Could not set output plane format", ret);
+	if (ret < 0) {
+		std::cerr << "[libnvmpi][E]: Could not set output plane format"
+		          << std::endl;
+		goto cleanup;
+	}
 
 	ret = ctx->enc->setBitrate(ctx->bitrate);
 	TEST_ERROR(ret < 0, "Could not set encoder bitrate", ret);
@@ -348,30 +359,57 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 	ret = ctx->enc->setFrameRate(ctx->fps_n, ctx->fps_d);
 	TEST_ERROR(ret < 0, "Could not set framerate", ret);
 
+	/* CRITICAL PLANE/STREAM SETUP — if any of these fail the V4L2 device
+	 * cannot operate; abort to cleanup instead of returning a broken ctx.
+	 * Without this, the TEST_ERROR (log-only) macro allowed half-init
+	 * encoders to reach the caller; under concurrent stress the resulting
+	 * crashes leaked DMA memory and cascaded to all subsequent jobs. */
+
 	//ret = ctx->enc->output_plane.setupPlane(V4L2_MEMORY_USERPTR, ctx->packets_num, false, true);
 #if (OUTPLANE_MEMTYPE == OUTPLANE_MEMTYPE_MMAP)
 	ret = ctx->enc->output_plane.setupPlane(V4L2_MEMORY_MMAP, ctx->packets_num, true, false);
 #else
 	ret = setup_output_dmabuf(ctx,ctx->packets_num); //V4L2_MEMORY_DMABUF
 #endif
-	TEST_ERROR(ret < 0, "Could not setup output plane", ret);
+	if (ret < 0) {
+		std::cerr << "[libnvmpi][E]: Could not setup output plane" << std::endl;
+		goto cleanup;
+	}
 
 	ret = ctx->enc->capture_plane.setupPlane(V4L2_MEMORY_MMAP, ctx->packets_num, true, false);
-	TEST_ERROR(ret < 0, "Could not setup capture plane", ret);
+	if (ret < 0) {
+		std::cerr << "[libnvmpi][E]: Could not setup capture plane" << std::endl;
+		goto cleanup;
+	}
 
 	ret = ctx->enc->subscribeEvent(V4L2_EVENT_EOS,0,0);
-	TEST_ERROR(ret < 0, "Could not subscribe EOS event", ret);
+	if (ret < 0) {
+		std::cerr << "[libnvmpi][E]: Could not subscribe EOS event" << std::endl;
+		goto cleanup;
+	}
 
 	ret = ctx->enc->output_plane.setStreamStatus(true);
-	TEST_ERROR(ret < 0, "Error in output plane streamon", ret);
+	if (ret < 0) {
+		std::cerr << "[libnvmpi][E]: Error in output plane streamon" << std::endl;
+		goto cleanup;
+	}
 
 	ret = ctx->enc->capture_plane.setStreamStatus(true);
-	TEST_ERROR(ret < 0, "Error in capture plane streamon", ret);
+	if (ret < 0) {
+		std::cerr << "[libnvmpi][E]: Error in capture plane streamon" << std::endl;
+		goto cleanup;
+	}
 
 	if(ctx->blocking_mode)
 	{
 		ctx->enc->capture_plane.setDQThreadCallback(encoder_capture_plane_dq_callback);
-		ctx->enc->capture_plane.startDQThread(ctx);
+		ret = ctx->enc->capture_plane.startDQThread(ctx);
+		if (ret < 0) {
+			std::cerr << "[libnvmpi][E]: Could not start DQ thread"
+			          << std::endl;
+			goto cleanup;
+		}
+		ctx->dq_thread_started = true;
 	}
     else
     {
@@ -396,11 +434,35 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 		v4l2_buf.m.planes = planes;
 
 		ret = ctx->enc->capture_plane.qBuffer(v4l2_buf, NULL);
-		TEST_ERROR(ret < 0, "Error while queueing buffer at capture plane", ret);
-
+		if (ret < 0) {
+			std::cerr << "[libnvmpi][E]: Error while queueing buffer at "
+			          << "capture plane (buf " << i << ")" << std::endl;
+			goto cleanup;
+		}
 	}
 
 	return ctx;
+
+	/* Cleanup on critical V4L2 setup failure. The DQ thread is only
+	 * started after STREAMON; dq_thread_started gates the join.
+	 * The NvVideoEncoder destructor (via unique_ptr reset) handles
+	 * STREAMOFF + V4L2 buffer teardown. Freed here: enc (via reset),
+	 * pktPool (allocated at line 60), and ctx itself. */
+cleanup:
+	if (ctx->dq_thread_started) {
+		ctx->enc->capture_plane.stopDQThread();
+		ctx->enc->capture_plane.waitForDQThread(1000);
+	}
+	ctx->enc.reset();
+	delete ctx->pktPool;
+#if (OUTPLANE_MEMTYPE == OUTPLANE_MEMTYPE_DMA)
+	/* DMA mode: output_plane_fd entries may be partially filled;
+	 * setup_output_dmabuf initializes them, but on partial failure
+	 * some may be unset. TODO: initialize array to -1 on alloc. */
+	delete[] ctx->output_plane_fd;
+#endif
+	delete ctx;
+	return NULL;
 }
 
 //Copy the caller's raw frame planes into a V4L2 OUTPUT-plane NvBuffer.
@@ -597,7 +659,12 @@ int nvmpi_encoder_get_packet(nvmpictx* ctx,nvPacket** packet)
 //FFmpeg wrapper drains and frees them first (nvmpienc_deinitPktPool).
 int nvmpi_encoder_close(nvmpictx* ctx)
 {
-	if(ctx->blocking_mode)
+	/* Guard: only stop/join the DQ thread if it was actually started.
+	 * A half-initialized encoder (create failed after STREAMON but before
+	 * startDQThread) or a non-blocking-mode encoder never starts the DQ
+	 * thread. Calling stopDQThread/waitForDQThread on an un-started
+	 * thread invokes pthread_join on an uninitialized handle → UB/crash. */
+	if(ctx->blocking_mode && ctx->dq_thread_started)
 	{
 		ctx->enc->capture_plane.stopDQThread();
 		ctx->enc->capture_plane.waitForDQThread(1000);

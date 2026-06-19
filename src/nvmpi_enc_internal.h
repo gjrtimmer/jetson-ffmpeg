@@ -63,6 +63,12 @@ struct nvmpictx
 	bool enable_extended_colorformat;
 	bool enableLossless;           //constant QP 0 + High 4:4:4 profile (H.264)
 	bool blocking_mode;            //true: use NvVideoEncoder's DQ thread (only mode implemented)
+	/* Set to true in nvmpi_create_encoder() after startDQThread succeeds;
+	 * checked in nvmpi_encoder_close() to avoid calling stopDQThread on
+	 * an un-started thread (pthread_join on uninitialized thread = UB).
+	 * Also used by the cleanup path when nvmpi_create_encoder fails
+	 * after STREAMON but before the DQ thread is started. */
+	bool dq_thread_started{false};
 
 	/* Cross-thread flags — atomic to avoid data races between the user
 	 * thread (put_frame/get_packet) and the capture-plane DQ callback.

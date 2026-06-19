@@ -134,6 +134,13 @@ if ! grep -q 'mjpeg_nvmpi_decoder_deps' "$BKP_FILE_CONFIGURE"; then
 	if cmp "$BKP_FILE_CONFIGURE" "$BKP_FILE_CONFIGURE.1"; then return 1; fi;
 fi
 
+#add nvmpi mjpeg encoder deps. insert after mjpeg_nvmpi_decoder_deps
+if ! grep -q 'mjpeg_nvmpi_encoder_deps' "$BKP_FILE_CONFIGURE"; then
+	cp "$BKP_FILE_CONFIGURE" "$BKP_FILE_CONFIGURE.1"
+	sed -i '/mjpeg_nvmpi_decoder_deps="nvmpi"/a mjpeg_nvmpi_encoder_deps="nvmpi"' "$BKP_FILE_CONFIGURE"
+	if cmp "$BKP_FILE_CONFIGURE" "$BKP_FILE_CONFIGURE.1"; then return 1; fi;
+fi
+
 #insert before enabled libx264 line.
 if ! grep -q 'enabled nvmpi' "$BKP_FILE_CONFIGURE"; then
 	cp "$BKP_FILE_CONFIGURE" "$BKP_FILE_CONFIGURE.1"
@@ -194,6 +201,13 @@ fi
 if ! grep -q 'CONFIG_MJPEG_NVMPI_DECODER' "$BKP_FILE_LIBAVCODEC_MAKEFILE"; then
 	cp "$BKP_FILE_LIBAVCODEC_MAKEFILE" "$BKP_FILE_LIBAVCODEC_MAKEFILE.1"
 	sed -i '/OBJS-\$(CONFIG_MJPEG_CUVID_DECODER)/i OBJS-\$(CONFIG_MJPEG_NVMPI_DECODER)      += nvmpi_dec.o' "$BKP_FILE_LIBAVCODEC_MAKEFILE"
+	if cmp "$BKP_FILE_LIBAVCODEC_MAKEFILE" "$BKP_FILE_LIBAVCODEC_MAKEFILE.1"; then return 1; fi;
+fi
+
+#add nvmpi mjpeg encoder
+if ! grep -q 'CONFIG_MJPEG_NVMPI_ENCODER' "$BKP_FILE_LIBAVCODEC_MAKEFILE"; then
+	cp "$BKP_FILE_LIBAVCODEC_MAKEFILE" "$BKP_FILE_LIBAVCODEC_MAKEFILE.1"
+	sed -i '/OBJS-\$(CONFIG_MJPEG_NVMPI_DECODER)/a OBJS-\$(CONFIG_MJPEG_NVMPI_ENCODER)      += nvmpi_enc_jpeg.o' "$BKP_FILE_LIBAVCODEC_MAKEFILE"
 	if cmp "$BKP_FILE_LIBAVCODEC_MAKEFILE" "$BKP_FILE_LIBAVCODEC_MAKEFILE.1"; then return 1; fi;
 fi
 
@@ -258,6 +272,13 @@ if ! grep -q 'ff_mjpeg_nvmpi_decoder' "$BKP_FILE_LIBAVCODEC_ALLCODECSC"; then
 	if cmp "$BKP_FILE_LIBAVCODEC_ALLCODECSC" "$BKP_FILE_LIBAVCODEC_ALLCODECSC.1"; then return 1; fi;
 fi
 
+#add nvmpi mjpeg encoder
+if ! grep -q 'ff_mjpeg_nvmpi_encoder' "$BKP_FILE_LIBAVCODEC_ALLCODECSC"; then
+	cp "$BKP_FILE_LIBAVCODEC_ALLCODECSC" "$BKP_FILE_LIBAVCODEC_ALLCODECSC.1"
+	sed -i "/$FF_CODEC_INTERFACE ff_mjpeg_nvmpi_decoder;/a $FF_CODEC_INTERFACE ff_mjpeg_nvmpi_encoder;" "$BKP_FILE_LIBAVCODEC_ALLCODECSC"
+	if cmp "$BKP_FILE_LIBAVCODEC_ALLCODECSC" "$BKP_FILE_LIBAVCODEC_ALLCODECSC.1"; then return 1; fi;
+fi
+
 return 0;
 }
 ################## MODIFY libavcodec/allcodecs.c ############################
@@ -273,6 +294,7 @@ cp "$BKP_FILE_LIBAVCODEC_ALLCODECSC" "$FF_FILE_LIBAVCODEC_ALLCODECSC"
 #copy nvmpi enc and dec files to ffmpeg libavcodec dir
 cp "${REPO_ROOT}/ffmpeg/dev/common/libavcodec/nvmpi_dec.c" ${FF_DIR_LIBAVCODEC}"/nvmpi_dec.c"
 cp "${REPO_ROOT}/ffmpeg/dev/common/libavcodec/nvmpi_enc.c" ${FF_DIR_LIBAVCODEC}"/nvmpi_enc.c"
+cp "${REPO_ROOT}/ffmpeg/dev/common/libavcodec/nvmpi_enc_jpeg.c" ${FF_DIR_LIBAVCODEC}"/nvmpi_enc_jpeg.c"
 
 echo "Success!"
 

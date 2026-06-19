@@ -191,6 +191,30 @@ extern "C" {
 	//Destroy the JPEG decoder context and free all DMA buffers.
 	int nvmpi_jpeg_decoder_close(nvmpictx* ctx);
 
+	//--- JPEG encoder (synchronous, NvJPEGEncoder-backed, no V4L2) ---
+
+	//Create a JPEG encoder context backed by the Tegra NVJPG engine.
+	//No V4L2 device, no DQ thread — encoding is synchronous per frame.
+	//quality: libjpeg quality 1-100 (clamped). Default 85 if out of range.
+	//Returns NULL on failure. On modules without NVJPG encode capability
+	//(e.g. Orin Nano), createJPEGEncoder returns NULL — the FFmpeg wrapper
+	//reports a clear error suggesting -c:v mjpeg software fallback.
+	nvmpictx* nvmpi_create_jpeg_encoder(int quality);
+
+	//Encode one YUV420 frame to JPEG. frame==NULL signals EOS.
+	//Returns 0 on success, -1 on error. The encoded JPEG is staged
+	//internally for retrieval via nvmpi_jpeg_encoder_get_packet().
+	int nvmpi_jpeg_encoder_put_frame(nvmpictx* ctx, nvFrame* frame);
+
+	//Retrieve the encoded JPEG packet. Copies JPEG data into
+	//packet->payload (caller must pre-allocate). Returns 0 on success,
+	//-1 when no packet is ready, -2 on EOS with no packet.
+	//packet->flags is set to 1 (keyframe) for every JPEG frame.
+	int nvmpi_jpeg_encoder_get_packet(nvmpictx* ctx, nvPacket* packet);
+
+	//Destroy the JPEG encoder context and free all resources.
+	int nvmpi_jpeg_encoder_close(nvmpictx* ctx);
+
 	//Create an encoder context: opens the V4L2 encoder device, programs
 	//profile/level/rate-control from param, sets up both planes and starts
 	//the capture-plane dequeue thread. Returns opaque handle.

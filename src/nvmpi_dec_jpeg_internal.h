@@ -1,5 +1,5 @@
 /*
- * nvmpi_jpegdec_internal.h — JPEG decoder context (NvJPEGDecoder-backed).
+ * nvmpi_dec_jpeg_internal.h — JPEG decoder context (NvJPEGDecoder-backed).
  *
  * Unlike the V4L2 video decoder (nvmpi_dec_internal.h), JPEG decoding is
  * synchronous per-frame via NvJPEGDecoder::decodeToFd. There is no capture

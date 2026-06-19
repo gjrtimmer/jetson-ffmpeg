@@ -97,7 +97,8 @@ set(JETSON_MULTIMEDIA_API_SRC
     ${NVV4L2_ELEMENT_PLANE_SRC}
     ${JETSON_MULTIMEDIA_API_SRC_DIR}/NvVideoDecoder.cpp
     ${JETSON_MULTIMEDIA_API_SRC_DIR}/NvVideoEncoder.cpp
-    ${JETSON_MULTIMEDIA_API_SRC_DIR}/NvJpegDecoder.cpp)
+    ${JETSON_MULTIMEDIA_API_SRC_DIR}/NvJpegDecoder.cpp
+    ${JETSON_MULTIMEDIA_API_SRC_DIR}/NvJpegEncoder.cpp)
 
 set(NVMPI_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_dec_api.cpp
@@ -106,7 +107,8 @@ set(NVMPI_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_enc_api.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_enc_output.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_frame_buffer.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_jpegdec.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_dec_jpeg.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_enc_jpeg.cpp)
     
 set(NVMPI_DEP_LIBS ${CMAKE_THREAD_LIBS_INIT} ${LIB_V4L2} ${LIB_NVJPEG} ${LIB_JPEG})
 
@@ -126,6 +128,13 @@ else ()
 endif()
 
 set(NVMPI_SRC ${NVMPI_SRC} ${JETSON_MULTIMEDIA_API_SRC})
+
+# Tegra's custom libjpeg.so.8 exports jpeg_set_hardware_acceleration_parameters_{enc,dec}
+# which NvJpegEncoder.cpp / NvJpegDecoder.cpp call. System libjpeg lacks these symbols;
+# in stubs mode, compile no-op implementations so the linker is satisfied.
+if(WITH_STUBS)
+	set(NVMPI_SRC ${NVMPI_SRC} ${CMAKE_CURRENT_SOURCE_DIR}/stubs/jpeg_tegra_stubs.c)
+endif()
 
 #NVIDIA's sample classes are external (host-provided) and not -Wextra clean:
 #they trigger benign -Wmissing-field-initializers/-Wunused-parameter noise.
