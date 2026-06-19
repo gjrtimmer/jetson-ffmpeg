@@ -92,6 +92,13 @@ auto-merge.
 **Never `rm -rf build`** — use `./scripts/build.sh --clean`; the build
 directory may be shared with a concurrent build. CI compiles libnvmpi + patches/builds all seven FFmpeg versions against `stubs/` on non-Jetson runners, and hw-tests each version on self-hosted Jetson runners. **GitLab** (`.gitlab-ci.yml`) is the active pipeline; **GitHub Actions** (`.github/workflows/ci.yml`) is manual-only (`workflow_dispatch`) because it needs self-hosted Jetson runners + arm64 containers.
 
+**Never run `smoke-all.sh` or `hw-all.sh` while a CI pipeline is running hw
+tests on the same Jetson.** The Tegra V4L2 driver segfaults on device access
+collision instead of returning `EBUSY` — concurrent sessions from the pipeline
+and local tests fight over NVDEC/NVENC hardware, causing spurious segfaults
+that look like code bugs but are driver-level resource contention. Check
+`glab ci list` for running pipelines before starting local hw tests.
+
 ## Critical workflow rule: never hand-edit `ffmpeg/patches/`
 
 The files in `ffmpeg/patches/*.patch` are **generated artifacts**. To change the FFmpeg integration:

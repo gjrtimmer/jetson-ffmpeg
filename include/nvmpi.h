@@ -51,6 +51,7 @@ typedef enum {
 	NV_VIDEO_CodingVP8,                /**< VP8 */
 	NV_VIDEO_CodingVP9,                /**< VP9 */
 	NV_VIDEO_CodingHEVC,               /**< H.265/HEVC */
+	NV_VIDEO_CodingMJPEG,              /**< MJPEG (via NvJPEGDecoder, not V4L2) */
 } nvCodingType;
 
 //Simple width/height pair (used for the optional decoder resize target).
@@ -169,6 +170,26 @@ extern "C" {
 	//Stop the capture thread, free all DMA buffers/pools and destroy ctx.
 	//The handle is invalid afterwards. Always returns 0.
 	int nvmpi_decoder_close(nvmpictx* ctx);
+
+	//--- JPEG decoder (synchronous, NvJPEGDecoder-backed, no V4L2) ---
+
+	//Create a JPEG decoder context backed by the Tegra NVJPG engine.
+	//No V4L2 device, no capture thread — decoding is synchronous per frame.
+	//Returns NULL on failure (NvJPEGDecoder creation error).
+	nvmpictx* nvmpi_create_jpeg_decoder(void);
+
+	//Decode one JPEG frame. payload_size==0 signals EOS (no decode, sets
+	//internal eos flag). Returns 0 on success, -1 on decode error or
+	//unsupported JPEG format (progressive). The decoded frame is queued
+	//internally for retrieval via nvmpi_jpeg_decoder_get_frame().
+	int nvmpi_jpeg_decoder_put_packet(nvmpictx* ctx, nvPacket* packet);
+
+	//Retrieve one decoded frame. When wait is true: blocks up to 500ms
+	//for a frame. Returns -1 when no frame is available (timeout or EOS).
+	int nvmpi_jpeg_decoder_get_frame(nvmpictx* ctx, nvFrame* frame, bool wait);
+
+	//Destroy the JPEG decoder context and free all DMA buffers.
+	int nvmpi_jpeg_decoder_close(nvmpictx* ctx);
 
 	//Create an encoder context: opens the V4L2 encoder device, programs
 	//profile/level/rate-control from param, sets up both planes and starts

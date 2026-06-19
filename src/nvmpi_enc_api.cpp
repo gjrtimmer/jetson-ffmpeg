@@ -185,19 +185,26 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 	{
 		ctx->encoder_pixfmt=V4L2_PIX_FMT_H265;
 	}
-	if(ctx->blocking_mode)
-	{
-		ctx->enc.reset(NvVideoEncoder::createVideoEncoder("enc0"));
+	/* Open the V4L2 encoder device. Retry up to 3 times with 100ms
+	 * backoff — the Tegra driver may fail transiently when the device
+	 * is busy with concurrent sessions. See #37. */
+	for (int attempt = 0; attempt < 3; attempt++) {
+		if (ctx->blocking_mode)
+			ctx->enc.reset(NvVideoEncoder::createVideoEncoder("enc0"));
+		else
+			ctx->enc.reset(NvVideoEncoder::createVideoEncoder("enc0", O_NONBLOCK));
+		if (ctx->enc) break;
+		if (attempt < 2) {
+			std::cerr << "[libnvmpi][W]: V4L2 encoder device busy, "
+			          << "retrying (" << (attempt + 1) << "/3)..."
+			          << std::endl;
+			usleep(100000);  /* 100ms backoff */
+		}
 	}
-	else
-	{
-		ctx->enc.reset(NvVideoEncoder::createVideoEncoder("enc0", O_NONBLOCK));
-	}
-	/* Factory returns NULL on failure; bail out instead of continuing
-	 * with a half-initialized context (TEST_ERROR only logged). */
 	if (!ctx->enc)
 	{
-		std::cerr << "Could not create encoder" << std::endl;
+		std::cerr << "[libnvmpi][E]: Could not create encoder "
+		          << "after 3 attempts" << std::endl;
 		delete ctx;
 		return NULL;
 	}

@@ -499,6 +499,7 @@ OBJS-$(CONFIG_MJPEG_QSV_DECODER)       += qsvdec.o
 OBJS-$(CONFIG_MJPEG_ENCODER)           += mjpegenc.o mjpegenc_common.o \
                                           mjpegenc_huffman.o
 OBJS-$(CONFIG_MJPEGB_DECODER)          += mjpegbdec.o
+OBJS-$(CONFIG_MJPEG_NVMPI_DECODER)      += nvmpi_dec.o
 OBJS-$(CONFIG_MJPEG_CUVID_DECODER)     += cuviddec.o
 OBJS-$(CONFIG_MJPEG_QSV_ENCODER)       += qsvenc_jpeg.o
 OBJS-$(CONFIG_MJPEG_VAAPI_ENCODER)     += vaapi_encode_mjpeg.o
