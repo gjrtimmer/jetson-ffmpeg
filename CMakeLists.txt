@@ -129,6 +129,13 @@ endif()
 
 set(NVMPI_SRC ${NVMPI_SRC} ${JETSON_MULTIMEDIA_API_SRC})
 
+# Tegra's custom libjpeg.so.8 exports jpeg_set_hardware_acceleration_parameters_{enc,dec}
+# which NvJpegEncoder.cpp / NvJpegDecoder.cpp call. System libjpeg lacks these symbols;
+# in stubs mode, compile no-op implementations so the linker is satisfied.
+if(WITH_STUBS)
+	set(NVMPI_SRC ${NVMPI_SRC} ${CMAKE_CURRENT_SOURCE_DIR}/stubs/jpeg_tegra_stubs.c)
+endif()
+
 #NVIDIA's sample classes are external (host-provided) and not -Wextra clean:
 #they trigger benign -Wmissing-field-initializers/-Wunused-parameter noise.
 #Suppress those two warnings for these files only; src/ keeps full -Wall -Wextra.
