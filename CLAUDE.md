@@ -435,6 +435,11 @@ validates against the live GitLab instance (resolves YAML anchors, `extends`,
   retries, delays, or sleep-based workarounds after confirming the failure is
   a hardware/driver timing issue with no code fix possible. "Add retry logic"
   is not a fix — it masks the bug.
+- **Diagnosis that reproduces a bug is authorization to write the fix.**
+  When a code defect is identified and reproduced, write the fix immediately
+  — don't stall on further analysis, re-explain the problem, or wait for
+  additional permission. The plan-presentation gate covers approach approval;
+  once past that gate, a confirmed bug means write the code.
 - **Establish full regression windows when investigating pipeline failures.**
   Check enough pipeline history to find the last green run AND the first red
   run. Compare the commits between them to determine whether the failure is a
