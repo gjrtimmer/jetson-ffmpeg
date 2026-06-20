@@ -84,7 +84,9 @@ struct nvmpictx
 	std::atomic<bool> flushing{false};
 
 	enum v4l2_mpeg_video_bitrate_mode ratecontrol; //CBR or VBR
-	enum v4l2_mpeg_video_h264_level level;
+	/* V4L2 level enum — uint32_t so it can hold either
+	 * v4l2_mpeg_video_h264_level or v4l2_mpeg_video_hevc_level. */
+	uint32_t level;
 	enum v4l2_enc_hw_preset_type hw_preset_type;   //speed/quality preset
 
 	/* NVIDIA V4L2 encoder device wrapper. unique_ptr guarantees cleanup
