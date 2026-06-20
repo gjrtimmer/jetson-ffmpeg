@@ -57,8 +57,9 @@ gjrtimmer/jetson-ffmpeg --body "..."` at each gate.
 | 1 Plan | Full implementation plan (root cause, files, tests, risks) |
 | 2 Implement | "Implementation started on branch `fix/NR-short-desc`" |
 | 3 Local verify | "Local verification: build OK, hw-all [PASS/FAIL details]" |
-| 4 Full matrix | "smoke-all.sh: [N/7] green [details if partial]" |
+| 4 Full matrix | "smoke-all.sh: [N/N] green [details if partial]" |
 | 5 Ship | Full resolution comment (commits, files, root cause, validation) |
+| 5d/5e Pipeline | "MR pipeline green, main pipeline green — issue resolved" |
 | 6 Upstream | Comment on related open fork/upstream issues (if applicable) |
 
 Failure comments are equally important — if a phase fails and needs rework,
@@ -153,7 +154,7 @@ Compile-time check — no hw needed, runs anywhere:
 ./ffmpeg/dev/try_build.sh
 ```
 
-7/7 FFmpeg versions must compile. Use `ctx_batch_execute` for output analysis.
+All FFmpeg versions in the matrix must compile. Use `ctx_batch_execute` for output analysis.
 
 **Loop**: fix → build → check → repeat until green.
 
@@ -174,13 +175,13 @@ If partial failure:
 - Fix version-specific issue
 - Re-run with `-v "X.Y"` subset first, then full
 
-**Gate**: 7/7 green required. Never commit with failures.
+**Gate**: Full matrix green required. Never commit with failures.
 
 ### Status update
 
 Post comment on issue with matrix results:
 ```bash
-gh issue comment NR -R gjrtimmer/jetson-ffmpeg --body "smoke-all.sh: 7/7 green (FFmpeg 4.2, 4.4, 6.0, 6.1, 7.0, 7.1, 8.0)."
+gh issue comment NR -R gjrtimmer/jetson-ffmpeg --body "smoke-all.sh: N/N green (FFmpeg <list versions>)."
 ```
 
 ## Phase 5: Commit & Ship
@@ -240,6 +241,27 @@ glab mr merge NR --auto-merge
 
 Never force-merge or merge manually while a pipeline is running.
 
+### 5d. Wait for MR pipeline
+
+**Gate**: Wait for the MR pipeline to go green before considering the MR
+shipped. Poll with:
+```bash
+glab api "projects/timmertech%2Fjetson-ffmpeg/merge_requests/NR" | jq '.head_pipeline.status'
+```
+
+If red → stop, diagnose, fix, force-push, wait for new pipeline.
+
+### 5e. Wait for post-merge main pipeline
+
+After auto-merge completes, the MR pipeline is no longer relevant. Switch to
+monitoring the **main branch pipeline** triggered by the merge commit:
+```bash
+glab api "projects/timmertech%2Fjetson-ffmpeg/pipelines?ref=main&per_page=1" | jq '.[0] | {id, status}'
+```
+
+**Gate**: Main pipeline must go green before the issue is considered resolved.
+If red → the merge introduced a regression; investigate immediately.
+
 If GitLab MR creation fails (auth, network), fall back to GitHub PR:
 ```bash
 gh pr create -R gjrtimmer/jetson-ffmpeg \
@@ -296,9 +318,11 @@ Create on invocation:
 5. Post "work started" comment on issue
 6. Implement fix
 7. Write/update tests
-8. Build verify — build.sh --stubs + try_build.sh 7/7 compile
-9. Full hw matrix — smoke-all.sh 7/7 (builds FFmpeg + hw-all), post results on issue
+8. Build verify — build.sh --stubs + try_build.sh N/N compile
+9. Full hw matrix — smoke-all.sh N/N (builds FFmpeg + hw-all), post results on issue
 10. Commit with `Fixes #NR` footer
 11. Post resolution/evidence comment on issue
-12. Push branch + create PR
-13. Upstream notification (if applicable)
+12. Push branch + create MR, enable auto-merge
+13. Wait for MR pipeline green
+14. Wait for post-merge main pipeline green
+15. Upstream notification (if applicable)

@@ -505,6 +505,13 @@ All prose documentation lives in the **[project wiki](https://github.com/gjrtimm
 (`jetson-ffmpeg.wiki.git`), not in the repo. Only `README.md`, `CHANGELOG.md`,
 `CLAUDE.md`, and `test/README.md` remain in-tree.
 
+**Mark retired features, don't erase them.** When dropping support for FFmpeg
+versions, hardware platforms, or other features, mark them as **retired** in
+documentation (wiki, README, compatibility pages) with a pointer to the last
+release that included them. Users searching for the dropped feature must find
+a clear note explaining it existed and where to get the legacy version — not a
+blank where it used to be.
+
 **Standing rule — documentation changes target the wiki.** When work calls for
 documentation (a new feature, behavior change, troubleshooting entry, or FAQ),
 **update or create the relevant wiki page** — clone `jetson-ffmpeg.wiki.git`,
