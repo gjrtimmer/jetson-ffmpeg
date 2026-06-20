@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.1.0 - 2026-06-20
+
+### Features
+
+- Wire `-level` through to V4L2 setLevel for H.264 and H.265 encoders (encoder)
+- Add HEVC level mapping using Tegra V4L2_MPEG_VIDEO_H265_LEVEL_*_MAIN_TIER enums (encoder)
+- Add missing level constants 5.2/6.0/6.1/6.2 to FFmpeg AVOption table (ffmpeg)
+
+### Testing
+
+- Add hw-encoder-level suite for bitstream-level SPS verification (encoder)
+
 ## 3.0.0 - 2026-06-20
 
 ### Bug Fixes
