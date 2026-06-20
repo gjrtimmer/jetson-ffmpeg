@@ -97,57 +97,58 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 	}
 
 	//Level mapping: level_idc style values (10*level, e.g. 41 = 4.1) to
-	//V4L2 enums; defaults to 5.1 (also for the "auto"/0 option value).
-	switch(param->level)
+	//V4L2 enums. Both H.264 and HEVC share the same level_idc convention
+	//from the FFmpeg wrapper; the correct V4L2 enum family is selected by
+	//codingType. Default: 5.1 (also for the "auto"/0 option value).
+	if (param->codingType == NV_VIDEO_CodingH264)
 	{
-		case 10:
-			ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_1_0;
-			break;
-		case 11:
-			ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_1_1;
-			break;
-		case 12:
-			ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_1_2;
-			break;
-		case 13:
-			ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_1_3;
-			break;
-		case 20:
-			ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_2_0;
-			break;
-		case 21:
-			ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_2_1;
-			break;
-		case 22:
-			ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_2_2;
-			break;
-		case 30:
-			ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_3_0;
-			break;
-		case 31:
-			ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_3_1;
-			break;
-		case 32:
-			ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_3_2;
-			break;
-		case 40:
-			ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_4_0;
-			break;
-		case 41:
-			ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_4_1;
-			break;
-		case 42:
-			ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_4_2;
-			break;
-		case 50:
-			ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_5_0;
-			break;
-		case 51:
-			ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_5_1;
-			break;
-		default:
-			ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_5_1;
-			break;
+		switch(param->level)
+		{
+			case 10: ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_1_0; break;
+			case 11: ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_1_1; break;
+			case 12: ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_1_2; break;
+			case 13: ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_1_3; break;
+			case 20: ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_2_0; break;
+			case 21: ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_2_1; break;
+			case 22: ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_2_2; break;
+			case 30: ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_3_0; break;
+			case 31: ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_3_1; break;
+			case 32: ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_3_2; break;
+			case 40: ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_4_0; break;
+			case 41: ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_4_1; break;
+			case 42: ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_4_2; break;
+			case 50: ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_5_0; break;
+			case 51: ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_5_1; break;
+			case 52: ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_5_2; break;
+			case 60: ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_6_0; break;
+			case 61: ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_6_1; break;
+			case 62: ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_6_2; break;
+			default: ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_5_1; break;
+		}
+	}
+	else if (param->codingType == NV_VIDEO_CodingHEVC)
+	{
+		/* HEVC uses the same level_idc convention (10*level) from the
+		 * FFmpeg wrapper. Tegra's V4L2 extensions define per-tier enums
+		 * (v4l2_mpeg_video_h265_level in v4l2_nv_extensions.h); default
+		 * to Main Tier since FFmpeg's -level does not distinguish tiers. */
+		switch(param->level)
+		{
+			case 10: ctx->level=V4L2_MPEG_VIDEO_H265_LEVEL_1_0_MAIN_TIER; break;
+			case 20: ctx->level=V4L2_MPEG_VIDEO_H265_LEVEL_2_0_MAIN_TIER; break;
+			case 21: ctx->level=V4L2_MPEG_VIDEO_H265_LEVEL_2_1_MAIN_TIER; break;
+			case 30: ctx->level=V4L2_MPEG_VIDEO_H265_LEVEL_3_0_MAIN_TIER; break;
+			case 31: ctx->level=V4L2_MPEG_VIDEO_H265_LEVEL_3_1_MAIN_TIER; break;
+			case 40: ctx->level=V4L2_MPEG_VIDEO_H265_LEVEL_4_0_MAIN_TIER; break;
+			case 41: ctx->level=V4L2_MPEG_VIDEO_H265_LEVEL_4_1_MAIN_TIER; break;
+			case 50: ctx->level=V4L2_MPEG_VIDEO_H265_LEVEL_5_0_MAIN_TIER; break;
+			case 51: ctx->level=V4L2_MPEG_VIDEO_H265_LEVEL_5_1_MAIN_TIER; break;
+			case 52: ctx->level=V4L2_MPEG_VIDEO_H265_LEVEL_5_2_MAIN_TIER; break;
+			case 60: ctx->level=V4L2_MPEG_VIDEO_H265_LEVEL_6_0_MAIN_TIER; break;
+			case 61: ctx->level=V4L2_MPEG_VIDEO_H265_LEVEL_6_1_MAIN_TIER; break;
+			case 62: ctx->level=V4L2_MPEG_VIDEO_H265_LEVEL_6_2_MAIN_TIER; break;
+			default: ctx->level=V4L2_MPEG_VIDEO_H265_LEVEL_5_1_MAIN_TIER; break;
+		}
 	}
 
 	//HW preset mapping: 1=ultrafast .. 4=slow (default medium); trades
@@ -286,7 +287,7 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 		TEST_ERROR(ret < 0, "Could not set encoder profile", ret);
 	}
 
-	if(param->codingType== NV_VIDEO_CodingH264)
+	if(param->codingType == NV_VIDEO_CodingH264 || param->codingType == NV_VIDEO_CodingHEVC)
 	{
 		ret = ctx->enc->setLevel(ctx->level);
 		TEST_ERROR(ret < 0, "Could not set encoder level", ret);

@@ -205,10 +205,10 @@ index e593ad1..2bb1004 100644
  extern const FFCodec ff_vqa_decoder;
 diff --git a/libavcodec/nvmpi_dec.c b/libavcodec/nvmpi_dec.c
 new file mode 100644
-index 0000000..282566b
+index 0000000..4134b6e
 --- /dev/null
 +++ b/libavcodec/nvmpi_dec.c
-@@ -0,0 +1,687 @@
+@@ -0,0 +1,633 @@
 +/*
 + * nvmpi_dec.c — FFmpeg decoder wrapper for libnvmpi (layer 2 of
 + * jetson-ffmpeg, the FFmpeg integration layer).
@@ -220,11 +220,9 @@ index 0000000..282566b
 + * mpeg4_nvmpi, vp8_nvmpi, vp9_nvmpi) by delegating all real work to the
 + * libnvmpi C API (<nvmpi.h>, implemented in src/nvmpi_dec.cpp).
 + *
-+ * One source file supports FFmpeg 4.2 through 8.0+: API differences are
++ * One source file supports FFmpeg 6.0 through 8.0+: API differences are
 + * handled with LIBAVCODEC_VERSION_MAJOR preprocessor guards (see
-+ * https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Development-Guide "Wrapper code paths by FFmpeg version"). For the
-+ * decoder the only breakpoint is the AVCodec -> FFCodec registration
-+ * change in libavcodec 60 (FFmpeg 6.0).
++ * https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Development-Guide "Wrapper code paths by FFmpeg version").
 + */
 +#include <stdio.h>
 +#include <stdlib.h>
@@ -243,12 +241,7 @@ index 0000000..282566b
 +#include "libavutil/log.h"
 +#include "libavutil/opt.h"
 +
-+//libavcodec >= 60 (FFmpeg 6.0+) moved the internal codec description to
-+//FFCodec in codec_internal.h; older versions register a plain AVCodec and
-+//must not include this private header.
-+#if LIBAVCODEC_VERSION_MAJOR >= 60
 +#include "codec_internal.h"
-+#endif
 +
 +//valid range / default for the frame_pool_size AVOption (mirrors the size
 +//of libnvmpi's decoded-frame pool, i.e. how many frames may buffer up
@@ -496,14 +489,9 @@ index 0000000..282566b
 +//one call feeds one compressed packet to libnvmpi and, if a decoded frame
 +//is already available, returns it via *data/got_frame. Asymmetric latency
 +//(decoder pipeline depth) is absorbed by libnvmpi's frame pool.
-+//Signature guard: libavcodec 60 changed the decode callback's output
-+//argument from void* to a typed AVFrame*; both spellings receive the same
-+//pointer, so the body is shared.
-+#if LIBAVCODEC_VERSION_MAJOR >= 60
++//Signature: libavcodec 60 changed the decode callback's output argument
++//from void* to a typed AVFrame*; since 6.0+ is required, we use AVFrame*.
 +static int nvmpi_decode(AVCodecContext *avctx, AVFrame *data, int *got_frame, AVPacket *avpkt)
-+#else
-+static int nvmpi_decode(AVCodecContext *avctx, void *data, int *got_frame, AVPacket *avpkt)
-+#endif
 +{
 +	nvmpiDecodeContext *nvmpi_context = avctx->priv_data;
 +	AVFrame *frame = data;
@@ -650,11 +638,7 @@ index 0000000..282566b
 +}
 +
 +//MJPEG .decode: synchronous per-frame decode.
-+#if LIBAVCODEC_VERSION_MAJOR >= 60
 +static int nvmpi_decode_mjpeg(AVCodecContext *avctx, AVFrame *data, int *got_frame, AVPacket *avpkt)
-+#else
-+static int nvmpi_decode_mjpeg(AVCodecContext *avctx, void *data, int *got_frame, AVPacket *avpkt)
-+#endif
 +{
 +	nvmpiDecodeContext *nvmpi_context = avctx->priv_data;
 +	AVFrame *frame = data;
@@ -729,7 +713,23 @@ index 0000000..282566b
 +		_nvframe.linesize[0] = bufFrame->linesize[0];
 +		_nvframe.linesize[1] = bufFrame->linesize[1];
 +		_nvframe.linesize[2] = bufFrame->linesize[2];
-+		//Frame is already in the pool from the first get_frame; just copy it.
++
++		//Re-submit the same packet and get the frame at the correct resolution.
++		res = nvmpi_jpeg_decoder_put_packet(nvmpi_context->ctx, &packet);
++		if (res < 0)
++		{
++			av_log(avctx, AV_LOG_ERROR,
++			       "nvmpi_jpeg_decoder_put_packet failed on resolution-change re-decode (code=%d).\n", res);
++			return AVERROR_EXTERNAL;
++		}
++		res = nvmpi_jpeg_decoder_get_frame(nvmpi_context->ctx, &_nvframe, 1);
++		if (res < 0)
++		{
++			av_log(avctx, AV_LOG_ERROR,
++			       "nvmpi_jpeg_decoder_get_frame failed on resolution-change re-decode (code=%d).\n", res);
++			*got_frame = 0;
++			return avpkt->size;
++		}
 +	}
 +
 +	bufFrame->format = avctx->pix_fmt;
@@ -788,62 +788,28 @@ index 0000000..282566b
 +	};
 +
 +//Codec registration struct, stamped out once per codec by NVMPI_DEC().
-+//Two variants exist because libavcodec 60 (FFmpeg 6.0) split the codec
-+//description into a public AVCodec (now the .p sub-struct) plus private
-+//FFCodec fields, and replaced the bare .decode pointer with the
-+//FF_CODEC_DECODE_CB() wrapper. The matching extern declaration patched
-+//into allcodecs.c differs likewise ("extern AVCodec" vs "extern const
-+//FFCodec") — that is why version overlay files exist (https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Development-Guide).
-+//Shared semantics of both variants:
-+//  - name "<codec>_nvmpi", wrapper_name "nvmpi" (how FFmpeg knows this is
-+//    a hw wrapper around an external implementation);
-+//  - capabilities: DELAY (frames come out later than packets go in),
-+//    AVOID_PROBING, HARDWARE;
-+//  - BSFS optionally inserts a bitstream filter — h264/hevc use
-+//    *_mp4toannexb so libnvmpi always receives Annex-B NAL units.
-+#if LIBAVCODEC_VERSION_MAJOR >= 60
-+	//FFCodec variant for libavcodec >= 60 (FFmpeg 6.0/6.1/7.x/8.x)
-+	#define NVMPI_DEC(NAME, ID, BSFS) \
-+		NVMPI_DEC_CLASS(NAME) \
-+		FFCodec ff_##NAME##_nvmpi_decoder = { \
-+			.p.name           = #NAME "_nvmpi", \
-+			CODEC_LONG_NAME(#NAME " (nvmpi)"), \
-+			.p.type           = AVMEDIA_TYPE_VIDEO, \
-+			.p.id             = ID, \
-+			.priv_data_size = sizeof(nvmpiDecodeContext), \
-+			.init           = nvmpi_init_decoder, \
-+			.close          = nvmpi_close, \
-+			FF_CODEC_DECODE_CB(nvmpi_decode), \
-+			.flush          = nvmpi_flush_decoder, \
-+			.p.priv_class     = &nvmpi_##NAME##_dec_class, \
-+			.p.capabilities   = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_AVOID_PROBING | AV_CODEC_CAP_HARDWARE, \
-+			.caps_internal  = FF_CODEC_CAP_INIT_CLEANUP, \
-+			.p.pix_fmts	=(const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P,AV_PIX_FMT_NV12,AV_PIX_FMT_P010LE,AV_PIX_FMT_NONE},\
-+			.bsfs           = BSFS, \
-+			.p.wrapper_name   = "nvmpi", \
-+		};
-+#else
-+	//legacy AVCodec variant for libavcodec < 60 (FFmpeg 4.2/4.4/5.x)
-+	#define NVMPI_DEC(NAME, ID, BSFS) \
-+		NVMPI_DEC_CLASS(NAME) \
-+		AVCodec ff_##NAME##_nvmpi_decoder = { \
-+			.name           = #NAME "_nvmpi", \
-+			.long_name      = NULL_IF_CONFIG_SMALL(#NAME " (nvmpi)"), \
-+			.type           = AVMEDIA_TYPE_VIDEO, \
-+			.id             = ID, \
-+			.priv_data_size = sizeof(nvmpiDecodeContext), \
-+			.init           = nvmpi_init_decoder, \
-+			.close          = nvmpi_close, \
-+			.decode         = nvmpi_decode, \
-+			.flush          = nvmpi_flush_decoder, \
-+			.priv_class     = &nvmpi_##NAME##_dec_class, \
-+			.capabilities   = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_AVOID_PROBING | AV_CODEC_CAP_HARDWARE, \
-+			.caps_internal  = FF_CODEC_CAP_INIT_CLEANUP, \
-+			.pix_fmts	=(const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P,AV_PIX_FMT_NV12,AV_PIX_FMT_P010LE,AV_PIX_FMT_NONE},\
-+			.bsfs           = BSFS, \
-+			.wrapper_name   = "nvmpi", \
-+		};
-+#endif
++//FFCodec variant for libavcodec >= 60 (FFmpeg 6.0+). The matching extern in
++//allcodecs.c is "extern const FFCodec". Capabilities: DELAY, AVOID_PROBING,
++//HARDWARE. BSFS inserts h264/hevc mp4toannexb for Annex-B NAL units.
++#define NVMPI_DEC(NAME, ID, BSFS) \
++	NVMPI_DEC_CLASS(NAME) \
++	const FFCodec ff_##NAME##_nvmpi_decoder = { \
++		.p.name           = #NAME "_nvmpi", \
++		CODEC_LONG_NAME(#NAME " (nvmpi)"), \
++		.p.type           = AVMEDIA_TYPE_VIDEO, \
++		.p.id             = ID, \
++		.priv_data_size = sizeof(nvmpiDecodeContext), \
++		.init           = nvmpi_init_decoder, \
++		.close          = nvmpi_close, \
++		FF_CODEC_DECODE_CB(nvmpi_decode), \
++		.flush          = nvmpi_flush_decoder, \
++		.p.priv_class     = &nvmpi_##NAME##_dec_class, \
++		.p.capabilities   = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_AVOID_PROBING | AV_CODEC_CAP_HARDWARE, \
++		.caps_internal  = FF_CODEC_CAP_INIT_CLEANUP, \
++		.p.pix_fmts	=(const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P,AV_PIX_FMT_NV12,AV_PIX_FMT_P010LE,AV_PIX_FMT_NONE},\
++		.bsfs           = BSFS, \
++		.p.wrapper_name   = "nvmpi", \
++	};
 +
 +
 +//Instantiate the six nvmpi decoders. Each expansion must have a matching
@@ -858,50 +824,30 @@ index 0000000..282566b
 +
 +//MJPEG decoder — uses NvJPEGDecoder, not V4L2 M2M. Separate init/decode/
 +//close/flush callbacks, and only YUV420P output (no NV12/P010).
-+#if LIBAVCODEC_VERSION_MAJOR >= 60
-+	NVMPI_DEC_CLASS(mjpeg)
-+	FFCodec ff_mjpeg_nvmpi_decoder = {
-+		.p.name           = "mjpeg_nvmpi",
-+		CODEC_LONG_NAME("mjpeg (nvmpi)"),
-+		.p.type           = AVMEDIA_TYPE_VIDEO,
-+		.p.id             = AV_CODEC_ID_MJPEG,
-+		.priv_data_size = sizeof(nvmpiDecodeContext),
-+		.init           = nvmpi_init_mjpeg_decoder,
-+		.close          = nvmpi_close_mjpeg,
-+		FF_CODEC_DECODE_CB(nvmpi_decode_mjpeg),
-+		.flush          = nvmpi_flush_mjpeg,
-+		.p.priv_class     = &nvmpi_mjpeg_dec_class,
-+		.p.capabilities   = AV_CODEC_CAP_AVOID_PROBING | AV_CODEC_CAP_HARDWARE,
-+		.caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
-+		.p.pix_fmts     = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NONE},
-+		.p.wrapper_name   = "nvmpi",
-+	};
-+#else
-+	NVMPI_DEC_CLASS(mjpeg)
-+	AVCodec ff_mjpeg_nvmpi_decoder = {
-+		.name           = "mjpeg_nvmpi",
-+		.long_name      = NULL_IF_CONFIG_SMALL("mjpeg (nvmpi)"),
-+		.type           = AVMEDIA_TYPE_VIDEO,
-+		.id             = AV_CODEC_ID_MJPEG,
-+		.priv_data_size = sizeof(nvmpiDecodeContext),
-+		.init           = nvmpi_init_mjpeg_decoder,
-+		.close          = nvmpi_close_mjpeg,
-+		.decode         = nvmpi_decode_mjpeg,
-+		.flush          = nvmpi_flush_mjpeg,
-+		.priv_class     = &nvmpi_mjpeg_dec_class,
-+		.capabilities   = AV_CODEC_CAP_AVOID_PROBING | AV_CODEC_CAP_HARDWARE,
-+		.caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
-+		.pix_fmts       = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NONE},
-+		.wrapper_name   = "nvmpi",
-+	};
-+#endif
++NVMPI_DEC_CLASS(mjpeg)
++const FFCodec ff_mjpeg_nvmpi_decoder = {
++	.p.name           = "mjpeg_nvmpi",
++	CODEC_LONG_NAME("mjpeg (nvmpi)"),
++	.p.type           = AVMEDIA_TYPE_VIDEO,
++	.p.id             = AV_CODEC_ID_MJPEG,
++	.priv_data_size = sizeof(nvmpiDecodeContext),
++	.init           = nvmpi_init_mjpeg_decoder,
++	.close          = nvmpi_close_mjpeg,
++	FF_CODEC_DECODE_CB(nvmpi_decode_mjpeg),
++	.flush          = nvmpi_flush_mjpeg,
++	.p.priv_class     = &nvmpi_mjpeg_dec_class,
++	.p.capabilities   = AV_CODEC_CAP_AVOID_PROBING | AV_CODEC_CAP_HARDWARE,
++	.caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
++	.p.pix_fmts     = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NONE},
++	.p.wrapper_name   = "nvmpi",
++};
 +
 diff --git a/libavcodec/nvmpi_enc.c b/libavcodec/nvmpi_enc.c
 new file mode 100644
-index 0000000..caa2e37
+index 0000000..b6cbc6c
 --- /dev/null
 +++ b/libavcodec/nvmpi_enc.c
-@@ -0,0 +1,767 @@
+@@ -0,0 +1,677 @@
 +/*
 + * nvmpi_enc.c — FFmpeg encoder wrapper for libnvmpi (layer 2 of
 + * jetson-ffmpeg, the FFmpeg integration layer).
@@ -917,10 +863,7 @@ index 0000000..caa2e37
 + * the encoder's empty pool, and recycles them after each
 + * avcodec_receive_packet().
 + *
-+ * One source supports FFmpeg 4.2 .. 8.0+ via preprocessor guards:
-+ *  - NVMPI_FF_NEW_API   (lavc 58.134+/59+): "new" encode API — the codec
-+ *    exposes a single receive_packet callback that pulls input frames
-+ *    itself (ff_encode_get_frame) instead of send_frame/receive_packet.
++ * One source supports FFmpeg 6.0 .. 8.0+ via preprocessor guards:
 + *  - LIBAVCODEC_VERSION_MAJOR >= 60: FFCodec registration +
 + *    ff_get_encode_buffer replaces ff_alloc_packet2.
 + *  - lavc >= 62.11 (FFmpeg 8.0): FF_PROFILE_* renamed to AV_PROFILE_*.
@@ -952,19 +895,8 @@ index 0000000..caa2e37
 +#define FF_PROFILE_H264_MAIN AV_PROFILE_H264_MAIN
 +#endif
 +
-+//"New" encode API detection: from libavcodec 58.134 (FFmpeg 4.4) /
-+//any 59+ release, encoders register a receive_packet callback and pull
-+//frames with ff_encode_get_frame() from encode.h. FFmpeg 4.2 (58.54) is
-+//the only supported version on the old send_frame/receive_packet pair.
-+#if (LIBAVCODEC_VERSION_MAJOR >= 58 && LIBAVCODEC_VERSION_MINOR>= 134) || (LIBAVCODEC_VERSION_MAJOR >= 59)
-+#define NVMPI_FF_NEW_API
 +#include "encode.h"
-+#endif
-+//libavcodec 60+ (FFmpeg 6.0): FFCodec registration lives in this private
-+//header; older versions register a plain AVCodec.
-+#if (LIBAVCODEC_VERSION_MAJOR >= 60)
 +#include "codec_internal.h"
-+#endif
 +
 +//libnvmpi exchanges timestamps in microseconds; used with av_rescale_q to
 +//convert to/from the stream's AVCodecContext time_base.
@@ -1006,19 +938,14 @@ index 0000000..caa2e37
 +//Creates one pool packet: an nvPacket whose payload points into a real
 +//AVPacket data buffer (kept in privData). This is what makes the later
 +//handoff to FFmpeg zero-copy. Returns NULL on allocation failure.
-+//Version guard: libavcodec 60 replaced ff_alloc_packet2() with
-+//ff_get_encode_buffer() as the way encoders obtain packet buffers.
++//ff_get_encode_buffer() is how encoders obtain packet buffers (libavcodec 60+).
 +nvPacket* nvmpienc_nvPacket_alloc(AVCodecContext *avctx, int bufSize)
 +{
 +	AVPacket* pkt = av_packet_alloc();
 +	nvPacket* nPkt = (nvPacket*)malloc(sizeof(nvPacket));
 +	int res;
 +	memset(nPkt, 0, sizeof(nvPacket));
-+#if LIBAVCODEC_VERSION_MAJOR >= 60
 +	if((res = ff_get_encode_buffer(avctx, pkt, bufSize, 0)))
-+#else
-+	if((res = ff_alloc_packet2(avctx,pkt,bufSize,bufSize)))
-+#endif
 +	{
 +		av_packet_free(&pkt);
 +		free(nPkt);
@@ -1044,11 +971,7 @@ index 0000000..caa2e37
 +{
 +	AVPacket* pkt = nPkt->privData;
 +	int res;
-+#if LIBAVCODEC_VERSION_MAJOR >= 60
 +	if((res = ff_get_encode_buffer(avctx, pkt, bufSize, 0)))
-+#else
-+	if((res = ff_alloc_packet2(avctx,pkt,bufSize,bufSize)))
-+#endif
 +	{
 +		return -1;
 +	}
@@ -1322,8 +1245,7 @@ index 0000000..caa2e37
 +//send_frame half of the encode API: wrap the AVFrame's planes in an
 +//nvFrame (no copy here — libnvmpi memcpy's into its V4L2 buffer inside
 +//put_frame, which may block briefly) and rescale pts to microseconds.
-+//frame==NULL initiates flushing (EOS to libnvmpi). On <4.4 this is the
-+//codec's .send_frame callback; on newer FFmpeg it is called internally by
++//frame==NULL initiates flushing (EOS to libnvmpi). Called internally by
 +//ff_nvmpi_receive_packet_async().
 +static int ff_nvmpi_send_frame(AVCodecContext *avctx,const AVFrame *frame)
 +{
@@ -1405,30 +1327,7 @@ index 0000000..caa2e37
 +	return 0;
 +}
 +
-+/*
-+ * //old avcodec .encode2 api. TODO: remove it
-+static int ff_nvmpi_encode_frame(AVCodecContext *avctx, AVPacket *pkt,const AVFrame *frame, int *got_packet)
-+{
-+	int res;
-+	*got_packet = 0;
-+
-+	res = ff_nvmpi_send_frame(avctx, frame);
-+
-+	if(res < 0)
-+	{
-+		if(res != AVERROR_EOF && res != AVERROR(EAGAIN)) return res;
-+	}
-+
-+	res = ff_nvmpi_receive_packet(avctx, pkt);
-+	if(res<0) return res;
-+	
-+	*got_packet = 1;
-+
-+	return 0;
-+}
-+*/
-+
-+//New-API (lavc 58.134+/59+) single-callback encoder entry point: FFmpeg
++//Single-callback encoder entry point: FFmpeg
 +//only calls receive_packet, and the encoder pulls its own input via
 +//ff_encode_get_frame(). Flow per call:
 +//  1. if no frame is pending, pull one (EAGAIN = nothing to send yet;
@@ -1436,7 +1335,6 @@ index 0000000..caa2e37
 +//  2. push it to libnvmpi via ff_nvmpi_send_frame() and unref on success
 +//     (on failure the frame stays in nvmpi_context->frame for retry);
 +//  3. try to return an encoded packet via ff_nvmpi_receive_packet().
-+#ifdef NVMPI_FF_NEW_API
 +static int ff_nvmpi_receive_packet_async(AVCodecContext *avctx, AVPacket *pkt)
 +{
 +	int res;
@@ -1470,7 +1368,6 @@ index 0000000..caa2e37
 +
 +	return 0;
 +}
-+#endif
 +
 +//AVCodec/FFCodec .close callback: make sure EOS was sent, drain remaining
 +//packets (recycling pool buffers while doing so), then free the pool and
@@ -1516,11 +1413,7 @@ index 0000000..caa2e37
 +//AVOptions below): 2M bitrate, GOP 50, no B-frames, qmin/qmax unset, etc.
 +//Only the struct's name changed with the FFCodec split in libavcodec 60;
 +//the entries are identical.
-+#if LIBAVCODEC_VERSION_MAJOR >= 60
 +static const FFCodecDefault defaults[] = {
-+#else
-+static const AVCodecDefault defaults[] = {
-+#endif
 +	{ "b", "2M" },
 +	{ "qmin", "-1" },
 +	{ "qmax", "-1" },
@@ -1553,8 +1446,8 @@ index 0000000..caa2e37
 +	{ "main",     "",                         0,               AV_OPT_TYPE_CONST, { .i64 = FF_PROFILE_H264_MAIN },     0, 0, VE, "profile" },
 +	{ "high",     "",                         0,               AV_OPT_TYPE_CONST, { .i64 = FF_PROFILE_H264_HIGH },     0, 0, VE, "profile" },
 +
-+	/// Profile Level
-+	{ "level",          "Profile Level",        OFFSET(level),  AV_OPT_TYPE_INT,   { .i64 = 0  }, 0, 62, VE, "level" },
++	/// Profile Level (shared by H.264 and HEVC; level_idc convention: 51 = 5.1)
++	{ "level",          "Encoding level (e.g. 4.1, 5.1)",  OFFSET(level),  AV_OPT_TYPE_INT,   { .i64 = 0  }, 0, 62, VE, "level" },
 +	{ "auto",           "",                     0,              AV_OPT_TYPE_CONST, { .i64 = 0  }, 0, 0,  VE, "level" },
 +	{ "1.0",            "",                     0,              AV_OPT_TYPE_CONST, { .i64 = 10 }, 0, 0,  VE, "level" },
 +	{ "1.1",            "",                     0,              AV_OPT_TYPE_CONST, { .i64 = 11 }, 0, 0,  VE, "level" },
@@ -1571,6 +1464,10 @@ index 0000000..caa2e37
 +	{ "4.2",            "",                     0,              AV_OPT_TYPE_CONST, { .i64 = 42 }, 0, 0,  VE, "level" },
 +	{ "5.0",            "",                     0,              AV_OPT_TYPE_CONST, { .i64 = 50 }, 0, 0,  VE, "level" },
 +	{ "5.1",            "",                     0,              AV_OPT_TYPE_CONST, { .i64 = 51 }, 0, 0,  VE, "level" },
++	{ "5.2",            "",                     0,              AV_OPT_TYPE_CONST, { .i64 = 52 }, 0, 0,  VE, "level" },
++	{ "6.0",            "",                     0,              AV_OPT_TYPE_CONST, { .i64 = 60 }, 0, 0,  VE, "level" },
++	{ "6.1",            "",                     0,              AV_OPT_TYPE_CONST, { .i64 = 61 }, 0, 0,  VE, "level" },
++	{ "6.2",            "",                     0,              AV_OPT_TYPE_CONST, { .i64 = 62 }, 0, 0,  VE, "level" },
 +
 +	{ "rc",           "Override the preset rate-control",   OFFSET(rc),           AV_OPT_TYPE_INT,   { .i64 = -1 },                                  -1, INT_MAX, VE, "rc" },
 +	{ "cbr",          "Constant bitrate mode",              0,                    AV_OPT_TYPE_CONST, { .i64 = 0 },                       0, 0, VE, "rc" },
@@ -1601,68 +1498,27 @@ index 0000000..caa2e37
 +	};
 +
 +
-+//Codec registration, stamped out per codec by NVMPI_ENC(). Three encoder
-+//API eras are covered (paths A/B/C-D in https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Development-Guide):
-+//  - lavc >= 60 (FFmpeg 6.0+): FFCodec struct; public fields moved into
-+//    the .p sub-struct and the callback is wired through
-+//    FF_CODEC_RECEIVE_PACKET_CB(). Matching allcodecs.c extern is
-+//    "extern const FFCodec".
-+//  - lavc < 60 with NVMPI_FF_NEW_API (FFmpeg 4.4/5.x): plain AVCodec with
-+//    only .receive_packet set (the new pull-based encode API).
-+//  - lavc < 60 without NVMPI_FF_NEW_API (FFmpeg 4.2): plain AVCodec with
-+//    the old .send_frame/.receive_packet callback pair.
-+//Common traits: name "<codec>_nvmpi", wrapper_name "nvmpi", YUV420P input
-+//only, capabilities HARDWARE | DELAY (output lags input by the encoder
-+//pipeline depth), plus the shared 'defaults' table.
-+#if LIBAVCODEC_VERSION_MAJOR >= 60
-+	#define NVMPI_ENC(NAME, LONGNAME, CODEC) \
-+		NVMPI_ENC_CLASS(NAME) \
-+		FFCodec ff_ ## NAME ## _nvmpi_encoder = { \
-+			.p.name           = #NAME "_nvmpi" , \
-+			CODEC_LONG_NAME("nvmpi " LONGNAME " encoder wrapper"), \
-+			.p.type           = AVMEDIA_TYPE_VIDEO, \
-+			.p.id             = CODEC , \
-+			.priv_data_size = sizeof(nvmpiEncodeContext), \
-+			.p.priv_class     = &nvmpi_ ## NAME ##_enc_class, \
-+			.init           = nvmpi_encode_init, \
-+			FF_CODEC_RECEIVE_PACKET_CB(ff_nvmpi_receive_packet_async), \
-+			.close          = nvmpi_encode_close, \
-+			.p.pix_fmts       = (const enum AVPixelFormat[]) { AV_PIX_FMT_YUV420P, AV_PIX_FMT_NV12, AV_PIX_FMT_NONE },\
-+			.p.capabilities   = AV_CODEC_CAP_HARDWARE | AV_CODEC_CAP_DELAY, \
-+			.defaults       = defaults,\
-+			.p.wrapper_name   = "nvmpi", \
-+		};
-+#else
-+	//pre-FFCodec builds: select which callback set the AVCodec exposes
-+	#ifdef NVMPI_FF_NEW_API
-+		//FFmpeg 4.4/5.x: pull-based encode API, single callback
-+		#define NVMPI_ENC_API_CALLS \
-+				.receive_packet = ff_nvmpi_receive_packet_async
-+	#else
-+		//FFmpeg 4.2: legacy push/pull callback pair
-+		#define NVMPI_ENC_API_CALLS \
-+				.send_frame     = ff_nvmpi_send_frame, \
-+				.receive_packet = ff_nvmpi_receive_packet
-+	#endif
-+
-+	#define NVMPI_ENC(NAME, LONGNAME, CODEC) \
-+		NVMPI_ENC_CLASS(NAME) \
-+		AVCodec ff_ ## NAME ## _nvmpi_encoder = { \
-+			.name           = #NAME "_nvmpi" , \
-+			.long_name      = NULL_IF_CONFIG_SMALL("nvmpi " LONGNAME " encoder wrapper"), \
-+			.type           = AVMEDIA_TYPE_VIDEO, \
-+			.id             = CODEC , \
-+			.priv_data_size = sizeof(nvmpiEncodeContext), \
-+			.priv_class     = &nvmpi_ ## NAME ##_enc_class, \
-+			.init           = nvmpi_encode_init, \
-+			NVMPI_ENC_API_CALLS, \
-+			.close          = nvmpi_encode_close, \
-+			.pix_fmts       = (const enum AVPixelFormat[]) { AV_PIX_FMT_YUV420P, AV_PIX_FMT_NV12, AV_PIX_FMT_NONE },\
-+			.capabilities   = AV_CODEC_CAP_HARDWARE | AV_CODEC_CAP_DELAY, \
-+			.defaults       = defaults,\
-+			.wrapper_name   = "nvmpi", \
-+		};
-+#endif
++//Codec registration, stamped out per codec by NVMPI_ENC(). Covers paths C/D:
++//  - lavc >= 60 (FFmpeg 6.0–7.x, path C): FFCodec struct, pull-based receive_packet.
++//  - lavc >= 62.11 (FFmpeg 8.0, path D): same, plus AV_PROFILE_* aliases above.
++//Matching allcodecs.c extern is "extern const FFCodec".
++#define NVMPI_ENC(NAME, LONGNAME, CODEC) \
++	NVMPI_ENC_CLASS(NAME) \
++	const FFCodec ff_ ## NAME ## _nvmpi_encoder = { \
++		.p.name           = #NAME "_nvmpi" , \
++		CODEC_LONG_NAME("nvmpi " LONGNAME " encoder wrapper"), \
++		.p.type           = AVMEDIA_TYPE_VIDEO, \
++		.p.id             = CODEC , \
++		.priv_data_size = sizeof(nvmpiEncodeContext), \
++		.p.priv_class     = &nvmpi_ ## NAME ##_enc_class, \
++		.init           = nvmpi_encode_init, \
++		FF_CODEC_RECEIVE_PACKET_CB(ff_nvmpi_receive_packet_async), \
++		.close          = nvmpi_encode_close, \
++		.p.pix_fmts       = (const enum AVPixelFormat[]) { AV_PIX_FMT_YUV420P, AV_PIX_FMT_NV12, AV_PIX_FMT_NONE },\
++		.p.capabilities   = AV_CODEC_CAP_HARDWARE | AV_CODEC_CAP_DELAY, \
++		.defaults       = defaults,\
++		.p.wrapper_name   = "nvmpi", \
++	};
 +
 +//Instantiate the two nvmpi encoders. Each expansion must have a matching
 +//extern in allcodecs.c and CONFIG_*_NVMPI_ENCODER Makefile/configure
@@ -1671,10 +1527,10 @@ index 0000000..caa2e37
 +NVMPI_ENC(hevc, "HEVC", AV_CODEC_ID_HEVC);
 diff --git a/libavcodec/nvmpi_enc_jpeg.c b/libavcodec/nvmpi_enc_jpeg.c
 new file mode 100644
-index 0000000..0ae341b
+index 0000000..69fceac
 --- /dev/null
 +++ b/libavcodec/nvmpi_enc_jpeg.c
-@@ -0,0 +1,291 @@
+@@ -0,0 +1,251 @@
 +/*
 + * nvmpi_enc_jpeg.c — FFmpeg MJPEG encoder wrapper for libnvmpi JPEG encoder.
 + *
@@ -1684,9 +1540,8 @@ index 0000000..0ae341b
 + *   - No bitrate/GOP/profile/level options — only quality
 + *   - Uses NvJPEGEncoder, not NvVideoEncoder
 + *
-+ * One source supports FFmpeg 4.2 .. 8.0+ via preprocessor guards:
++ * One source supports FFmpeg 6.0 .. 8.0+ via preprocessor guards:
 + *   - LIBAVCODEC_VERSION_MAJOR >= 60: FFCodec + FF_CODEC_ENCODE_CB
-+ *   - LIBAVCODEC_VERSION_MAJOR < 60: plain AVCodec with .encode2
 + *
 + * Quality mapping: FFmpeg's global_quality (from -q:v) is in
 + * FF_QP2LAMBDA units. We convert: libjpeg_quality = 2 + (31 - qscale) * 98 / 30
@@ -1707,15 +1562,8 @@ index 0000000..0ae341b
 +
 +#include "version.h"
 +
-+/* libavcodec 58.134+ (FFmpeg 4.4+): encode.h provides ff_get_encode_buffer. */
-+#if (LIBAVCODEC_VERSION_MAJOR >= 59) || (LIBAVCODEC_VERSION_MAJOR >= 58 && LIBAVCODEC_VERSION_MINOR >= 134)
 +#include "encode.h"
-+#endif
-+
-+/* libavcodec 60+ (FFmpeg 6.0): FFCodec registration. */
-+#if (LIBAVCODEC_VERSION_MAJOR >= 60)
 +#include "codec_internal.h"
-+#endif
 +
 +/* Private encoder context — wraps the opaque libnvmpi JPEG encoder handle. */
 +typedef struct {
@@ -1829,13 +1677,8 @@ index 0000000..0ae341b
 + * Encode one frame. JPEG encoding is synchronous — one frame in,
 + * one packet out, no pipeline delay.
 + */
-+#if LIBAVCODEC_VERSION_MAJOR >= 60
 +static int nvmpi_jpegenc_encode(AVCodecContext *avctx, AVPacket *avpkt,
 +                                const AVFrame *frame, int *got_packet)
-+#else
-+static int nvmpi_jpegenc_encode(AVCodecContext *avctx, AVPacket *avpkt,
-+                                const AVFrame *frame, int *got_packet)
-+#endif
 +{
 +    nvmpiJpegEncContext *s = avctx->priv_data;
 +    nvFrame nv_frame = {0};
@@ -1882,13 +1725,7 @@ index 0000000..0ae341b
 +    }
 +
 +    /* Allocate the AVPacket data buffer. */
-+#if LIBAVCODEC_VERSION_MAJOR >= 60
 +    ret = ff_get_encode_buffer(avctx, avpkt, nv_packet.payload_size, 0);
-+#elif LIBAVCODEC_VERSION_MAJOR >= 59 || (LIBAVCODEC_VERSION_MAJOR >= 58 && LIBAVCODEC_VERSION_MINOR >= 134)
-+    ret = av_new_packet(avpkt, nv_packet.payload_size);
-+#else
-+    ret = ff_alloc_packet2(avctx, avpkt, nv_packet.payload_size, 0);
-+#endif
 +    if (ret < 0)
 +        return ret;
 +
@@ -1926,9 +1763,8 @@ index 0000000..0ae341b
 +/* ------------------------------------------------------------------ */
 +
 +/* JPEG is intra-only (no pipeline delay), so no AV_CODEC_CAP_DELAY.
-+ * Uses .encode2 (not .receive_packet) because it is synchronous. */
-+#if LIBAVCODEC_VERSION_MAJOR >= 60
-+FFCodec ff_mjpeg_nvmpi_encoder = {
++ * Uses FF_CODEC_ENCODE_CB (synchronous encode callback, libavcodec 60+). */
++const FFCodec ff_mjpeg_nvmpi_encoder = {
 +    .p.name           = "mjpeg_nvmpi",
 +    CODEC_LONG_NAME("mjpeg (nvmpi)"),
 +    .p.type           = AVMEDIA_TYPE_VIDEO,
@@ -1946,23 +1782,3 @@ index 0000000..0ae341b
 +    .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
 +    .p.wrapper_name   = "nvmpi",
 +};
-+#else
-+AVCodec ff_mjpeg_nvmpi_encoder = {
-+    .name           = "mjpeg_nvmpi",
-+    .long_name      = NULL_IF_CONFIG_SMALL("mjpeg (nvmpi)"),
-+    .type           = AVMEDIA_TYPE_VIDEO,
-+    .id             = AV_CODEC_ID_MJPEG,
-+    .priv_data_size = sizeof(nvmpiJpegEncContext),
-+    .priv_class     = &nvmpi_mjpeg_enc_class,
-+    .init           = nvmpi_jpegenc_init,
-+    .encode2        = nvmpi_jpegenc_encode,
-+    .close          = nvmpi_jpegenc_close,
-+    .pix_fmts       = (const enum AVPixelFormat[]) {
-+        AV_PIX_FMT_YUV420P,
-+        AV_PIX_FMT_NONE
-+    },
-+    .capabilities   = AV_CODEC_CAP_HARDWARE,
-+    .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
-+    .wrapper_name   = "nvmpi",
-+};
-+#endif
