@@ -17,7 +17,11 @@ void nvmpictx::updateFrameSizeParams()
 #else
 	NvBufferParams parm;
 	int ret = NvBufferGetParams(fb->dst_dma_fd, &parm);
-	TEST_ERROR(ret < 0, "Failed to get dst dma buf params", ret);
+	if (ret < 0) {
+		std::cerr << "[libnvmpi][E]: Failed to get dst dma buf params"
+		          << " (code=" << ret << ")" << std::endl;
+		return;
+	}
 #endif
 
 	num_planes = parm.num_planes;
@@ -292,13 +296,25 @@ nvmpictx* nvmpi_create_decoder(nvDecParam* param)
 	if(ctx->disable_dpb)
 	{
 		ret = ctx->dec->disableDPB();
-		TEST_ERROR(ret < 0, "Error in decoder disableDPB", ret);
+		if (ret < 0) {
+			std::cerr << "[libnvmpi][E]: Error in decoder disableDPB"
+			          << " (code=" << ret << ")" << std::endl;
+			delete ctx->dec;
+			delete ctx;
+			return NULL;
+		}
 	}
 
 	if(ctx->max_perf)
 	{
 		ret = ctx->dec->setMaxPerfMode(1);
-		TEST_ERROR(ret < 0, "Error while setting decoder to max perf", ret);
+		if (ret < 0) {
+			std::cerr << "[libnvmpi][E]: Error while setting decoder to max perf"
+			          << " (code=" << ret << ")" << std::endl;
+			delete ctx->dec;
+			delete ctx;
+			return NULL;
+		}
 	}
 
 	//10 USERPTR buffers on the OUTPUT plane; packet data is memcpy'd into

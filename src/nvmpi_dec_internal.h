@@ -21,13 +21,18 @@
 //upper bound for CAPTURE-plane DMA buffers (sizes the fd/surface arrays)
 #define MAX_BUFFERS 32
 
-//Error reporting helper: logs to stderr but does NOT abort or return —
-//decoding continues on a best-effort basis (errorCode is unused).
-#define TEST_ERROR(condition, message, errorCode)    \
-	if (condition)                               \
-{                                                    \
-	std::cerr<< message;			     \
-}
+//Error-check macro for decoder capture/plane paths: logs the error with the
+//actual error code (previously the errorCode parameter was silently ignored).
+//These void-returning capture-thread functions cannot propagate errors to the
+//caller, so logging is the best available response. The two call sites in
+//nvmpi_create_decoder (disableDPB, setMaxPerfMode) use inline error handling
+//with proper return-on-failure instead.
+#define TEST_ERROR(condition, message, errorCode)             \
+	if (condition) {                                         \
+		std::cerr << "[libnvmpi][E]: " << message            \
+		          << " (code=" << (errorCode) << ")"         \
+		          << std::endl;                               \
+	}
 
 using namespace std;
 

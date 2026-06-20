@@ -600,7 +600,11 @@ int nvmpi_encoder_put_frame(nvmpictx* ctx,nvFrame* frame)
 #endif
 
 	ret = ctx->enc->output_plane.qBuffer(v4l2_buf, NULL);
-	TEST_ERROR(ret < 0, "Error while queueing buffer at output plane", ret);
+	if (ret < 0) {
+		std::cerr << "[libnvmpi][E]: Error while queueing buffer at output plane"
+		          << " (code=" << ret << ")" << std::endl;
+		return ret;
+	}
 
 	return 0;
 }
