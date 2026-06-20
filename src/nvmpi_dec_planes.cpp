@@ -112,7 +112,7 @@ void nvmpictx::initDecoderCapturePlane(v4l2_format &format)
 	//NvUtils path: allocate all buffers in one call, then resolve the
 	//NvBufSurface view of each fd for use with NvBufSurfTransform.
 	ret = NvBufSurf::NvAllocate(&cParams, numberCaptureBuffers, dmaBufferFileDescriptor);
-	TEST_ERROR(ret < 0, "Failed to create buffers", error);
+	TEST_ERROR(ret < 0, "Failed to create buffers", ret);
 	for (int index = 0; index < numberCaptureBuffers; index++)
 	{
 		ret = NvBufSurfaceFromFd(dmaBufferFileDescriptor[index], (void**)(&(dmaBufferSurface[index])));

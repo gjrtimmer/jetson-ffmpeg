@@ -14,13 +14,16 @@
 #include <atomic>
 
 #define MAX_BUFFERS 32
-//Error reporting helper: logs to stderr but does NOT abort or return;
-//setup continues best-effort (errorCode is unused).
-#define TEST_ERROR(condition, message, errorCode)    \
-	if (condition)                               \
-{                                                    \
-	std::cerr<< message;                         \
-}
+//Error-check macro for encoder init: logs to stderr and jumps to the
+//function's cleanup label on failure. Every call site must be inside a
+//function that has a `cleanup:` label and an `int ret` in scope.
+#define TEST_ERROR(condition, message, errorCode)         \
+	if (condition) {                                     \
+		std::cerr << "[libnvmpi][E]: " << message        \
+		          << " (code=" << (errorCode) << ")"     \
+		          << std::endl;                           \
+		goto cleanup;                                    \
+	}
 
 //Compile-time choice of OUTPUT-plane (raw input) memory type:
 //MMAP = driver-allocated buffers mapped into userspace (current default),
