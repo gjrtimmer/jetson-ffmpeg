@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.0.0 - 2026-06-20
+
+### Bug Fixes
+
+- Make TEST_ERROR macro propagate errors instead of ignoring them (nvmpi)
+
+### Documentation
+
+- Update supported FFmpeg version range to 6.0+
+
+### Refactor
+
+- Drop FFmpeg 4.2 and 4.4 support (ffmpeg)
 ## 2.10.0 - 2026-06-19
 
 ### Bug Fixes
@@ -15,6 +28,7 @@
 
 - 0668aaa3 session findings, skill v15→v16 (retro)
 - 2d112242 session findings, skill v16 (no skill change) (retro)
+- Release 2.10.0
 
 ### Features
 
