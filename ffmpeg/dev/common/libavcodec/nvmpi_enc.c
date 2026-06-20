@@ -88,8 +88,7 @@ int nvmpienc_deinitPktPool(AVCodecContext *avctx);
 //Creates one pool packet: an nvPacket whose payload points into a real
 //AVPacket data buffer (kept in privData). This is what makes the later
 //handoff to FFmpeg zero-copy. Returns NULL on allocation failure.
-//Version guard: libavcodec 60 replaced ff_alloc_packet2() with
-//ff_get_encode_buffer() as the way encoders obtain packet buffers.
+//ff_get_encode_buffer() is how encoders obtain packet buffers (libavcodec 60+).
 nvPacket* nvmpienc_nvPacket_alloc(AVCodecContext *avctx, int bufSize)
 {
 	AVPacket* pkt = av_packet_alloc();
