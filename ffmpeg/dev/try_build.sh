@@ -9,7 +9,7 @@ set -u
 
 DEV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # <repo>/ffmpeg/dev
 
-VERSIONS="4.2 4.4 6.0 6.1 7.0 7.1 8.0"
+VERSIONS="6.0 6.1 7.0 7.1 8.0"
 
 # (Re)generate patches and clone the FFmpeg trees.
 "${DEV_DIR}/update_patch.sh"

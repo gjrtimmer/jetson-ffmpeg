@@ -159,16 +159,6 @@ build:nvmpi:
       - _ffmpeg/
     expire_in: 1 hour
 
-patch:ffmpeg-4.2:
-  <<: *patch-and-build
-  variables:
-    FFMPEG_BRANCH: "release/4.2"
-
-patch:ffmpeg-4.4:
-  <<: *patch-and-build
-  variables:
-    FFMPEG_BRANCH: "release/4.4"
-
 patch:ffmpeg-6.0:
   <<: *patch-and-build
   variables:
@@ -203,10 +193,8 @@ patch:ffmpeg-8.0:
 # The nvmpi FFmpeg wrapper compiles into a few DISTINCT builds by libavcodec
 # version (see "Wrapper code paths by FFmpeg version" in https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Development-Guide#wrapper-code-paths-by-ffmpeg-version):
 #
-#   4.2           -> path A (old AVCodec, old encode API)
-#   4.4           -> path B (old AVCodec, new receive_packet API)
 #   6.0,6.1,7.0,7.1 -> path C (FFCodec) — identical wrapper code
-#   8.0           -> path D (FFCodec + AV_PROFILE)
+#   8.0              -> path D (FFCodec + AV_PROFILE)
 #
 # 6.0–7.1 share wrapper code (path C) but are each hw-tested anyway, to also
 # cover FFmpeg ABI/runtime differences between those releases.
@@ -239,14 +227,6 @@ patch:ffmpeg-8.0:
     - export LD_LIBRARY_PATH="${FFMPEG_PREFIX}/lib:/usr/lib/aarch64-linux-gnu/tegra:${LD_LIBRARY_PATH:-}"
     - ldconfig || true
     - bash test/hw-all.sh
-
-test:hw-ffmpeg-4.2:           # path A
-  <<: *hw-test
-  needs: ["patch:ffmpeg-4.2"]
-
-test:hw-ffmpeg-4.4:           # path B
-  <<: *hw-test
-  needs: ["patch:ffmpeg-4.4"]
 
 test:hw-ffmpeg-6.0:           # path C
   <<: *hw-test
@@ -316,8 +296,6 @@ test:hw-ffmpeg-8.0:           # path D
       - dist/
     expire_in: 1 week
 
-package:ffmpeg-4.2: { extends: .package, variables: { FFVER: "4.2" } }
-package:ffmpeg-4.4: { extends: .package, variables: { FFVER: "4.4" } }
 package:ffmpeg-6.0: { extends: .package, variables: { FFVER: "6.0" } }
 package:ffmpeg-6.1: { extends: .package, variables: { FFVER: "6.1" } }
 package:ffmpeg-7.0: { extends: .package, variables: { FFVER: "7.0" } }
@@ -336,8 +314,6 @@ release:
     name: "${RELEASE_IMAGE}"
     pull_policy: always
   needs:
-    - "package:ffmpeg-4.2"
-    - "package:ffmpeg-4.4"
     - "package:ffmpeg-6.0"
     - "package:ffmpeg-6.1"
     - "package:ffmpeg-7.0"

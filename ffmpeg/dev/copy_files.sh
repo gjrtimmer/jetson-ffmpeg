@@ -8,7 +8,7 @@ set -eu
 
 DEV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"   # <repo>/ffmpeg/dev
 
-VERSIONS="4.2 4.4 6.0"
+VERSIONS="6.0"
 
 for ver in ${VERSIONS}; do
     src="${DEV_DIR}/ffmpeg${ver}"
