@@ -65,6 +65,13 @@ release (CHANGELOG.md update + tag), the code has already been validated by the
 MR pipeline. Push the release commit and tag directly to main without a local
 smoke-all run.
 
+**Push release commits with `-o ci.skip`.** The release commit (CHANGELOG.md
+update) only changes documentation — it does not need its own main pipeline.
+The tag push triggers the release pipeline, which is the one that matters.
+Without `-o ci.skip` on the main push, GitLab runs a redundant main pipeline
+alongside the tag pipeline, wasting runner time and competing for Jetson hw.
+Sequence: `git push origin main -o ci.skip` then `git push origin v<ver>`.
+
 **Never put `[ci skip]` or `[skip ci]` in commit messages.** These tokens
 poison every pipeline that includes the commit — branch pipelines AND MR
 pipelines. Use `-o ci.skip` on `git push` instead; that flag is scoped to the
