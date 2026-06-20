@@ -7,9 +7,8 @@
  *   - No bitrate/GOP/profile/level options — only quality
  *   - Uses NvJPEGEncoder, not NvVideoEncoder
  *
- * One source supports FFmpeg 4.2 .. 8.0+ via preprocessor guards:
+ * One source supports FFmpeg 6.0 .. 8.0+ via preprocessor guards:
  *   - LIBAVCODEC_VERSION_MAJOR >= 60: FFCodec + FF_CODEC_ENCODE_CB
- *   - LIBAVCODEC_VERSION_MAJOR < 60: plain AVCodec with .encode2
  *
  * Quality mapping: FFmpeg's global_quality (from -q:v) is in
  * FF_QP2LAMBDA units. We convert: libjpeg_quality = 2 + (31 - qscale) * 98 / 30
@@ -30,15 +29,8 @@
 
 #include "version.h"
 
-/* libavcodec 58.134+ (FFmpeg 4.4+): encode.h provides ff_get_encode_buffer. */
-#if (LIBAVCODEC_VERSION_MAJOR >= 59) || (LIBAVCODEC_VERSION_MAJOR >= 58 && LIBAVCODEC_VERSION_MINOR >= 134)
 #include "encode.h"
-#endif
-
-/* libavcodec 60+ (FFmpeg 6.0): FFCodec registration. */
-#if (LIBAVCODEC_VERSION_MAJOR >= 60)
 #include "codec_internal.h"
-#endif
 
 /* Private encoder context — wraps the opaque libnvmpi JPEG encoder handle. */
 typedef struct {
@@ -152,13 +144,8 @@ static int ensure_pkt_buf(nvmpiJpegEncContext *s, int width, int height)
  * Encode one frame. JPEG encoding is synchronous — one frame in,
  * one packet out, no pipeline delay.
  */
-#if LIBAVCODEC_VERSION_MAJOR >= 60
 static int nvmpi_jpegenc_encode(AVCodecContext *avctx, AVPacket *avpkt,
                                 const AVFrame *frame, int *got_packet)
-#else
-static int nvmpi_jpegenc_encode(AVCodecContext *avctx, AVPacket *avpkt,
-                                const AVFrame *frame, int *got_packet)
-#endif
 {
     nvmpiJpegEncContext *s = avctx->priv_data;
     nvFrame nv_frame = {0};
@@ -205,13 +192,7 @@ static int nvmpi_jpegenc_encode(AVCodecContext *avctx, AVPacket *avpkt,
     }
 
     /* Allocate the AVPacket data buffer. */
-#if LIBAVCODEC_VERSION_MAJOR >= 60
     ret = ff_get_encode_buffer(avctx, avpkt, nv_packet.payload_size, 0);
-#elif LIBAVCODEC_VERSION_MAJOR >= 59 || (LIBAVCODEC_VERSION_MAJOR >= 58 && LIBAVCODEC_VERSION_MINOR >= 134)
-    ret = av_new_packet(avpkt, nv_packet.payload_size);
-#else
-    ret = ff_alloc_packet2(avctx, avpkt, nv_packet.payload_size, 0);
-#endif
     if (ret < 0)
         return ret;
 
@@ -249,9 +230,8 @@ static const AVClass nvmpi_mjpeg_enc_class = {
 /* ------------------------------------------------------------------ */
 
 /* JPEG is intra-only (no pipeline delay), so no AV_CODEC_CAP_DELAY.
- * Uses .encode2 (not .receive_packet) because it is synchronous. */
-#if LIBAVCODEC_VERSION_MAJOR >= 60
-FFCodec ff_mjpeg_nvmpi_encoder = {
+ * Uses FF_CODEC_ENCODE_CB (synchronous encode callback, libavcodec 60+). */
+const FFCodec ff_mjpeg_nvmpi_encoder = {
     .p.name           = "mjpeg_nvmpi",
     CODEC_LONG_NAME("mjpeg (nvmpi)"),
     .p.type           = AVMEDIA_TYPE_VIDEO,
@@ -269,23 +249,3 @@ FFCodec ff_mjpeg_nvmpi_encoder = {
     .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
     .p.wrapper_name   = "nvmpi",
 };
-#else
-AVCodec ff_mjpeg_nvmpi_encoder = {
-    .name           = "mjpeg_nvmpi",
-    .long_name      = NULL_IF_CONFIG_SMALL("mjpeg (nvmpi)"),
-    .type           = AVMEDIA_TYPE_VIDEO,
-    .id             = AV_CODEC_ID_MJPEG,
-    .priv_data_size = sizeof(nvmpiJpegEncContext),
-    .priv_class     = &nvmpi_mjpeg_enc_class,
-    .init           = nvmpi_jpegenc_init,
-    .encode2        = nvmpi_jpegenc_encode,
-    .close          = nvmpi_jpegenc_close,
-    .pix_fmts       = (const enum AVPixelFormat[]) {
-        AV_PIX_FMT_YUV420P,
-        AV_PIX_FMT_NONE
-    },
-    .capabilities   = AV_CODEC_CAP_HARDWARE,
-    .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
-    .wrapper_name   = "nvmpi",
-};
-#endif

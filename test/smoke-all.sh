@@ -37,7 +37,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 DEST="${FFMPEG_SRC_DIR:-$HOME/ffmpeg-smoke}"
 JOBS="$(nproc)"
-VERSIONS="4.2 4.4 6.0 6.1 7.0 7.1 8.0"
+VERSIONS="6.0 6.1 7.0 7.1 8.0"
 BUILD_NVMPI=1
 
 while [ $# -gt 0 ]; do

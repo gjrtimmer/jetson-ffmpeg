@@ -13,10 +13,7 @@
  * the encoder's empty pool, and recycles them after each
  * avcodec_receive_packet().
  *
- * One source supports FFmpeg 4.2 .. 8.0+ via preprocessor guards:
- *  - NVMPI_FF_NEW_API   (lavc 58.134+/59+): "new" encode API — the codec
- *    exposes a single receive_packet callback that pulls input frames
- *    itself (ff_encode_get_frame) instead of send_frame/receive_packet.
+ * One source supports FFmpeg 6.0 .. 8.0+ via preprocessor guards:
  *  - LIBAVCODEC_VERSION_MAJOR >= 60: FFCodec registration +
  *    ff_get_encode_buffer replaces ff_alloc_packet2.
  *  - lavc >= 62.11 (FFmpeg 8.0): FF_PROFILE_* renamed to AV_PROFILE_*.
@@ -48,19 +45,8 @@
 #define FF_PROFILE_H264_MAIN AV_PROFILE_H264_MAIN
 #endif
 
-//"New" encode API detection: from libavcodec 58.134 (FFmpeg 4.4) /
-//any 59+ release, encoders register a receive_packet callback and pull
-//frames with ff_encode_get_frame() from encode.h. FFmpeg 4.2 (58.54) is
-//the only supported version on the old send_frame/receive_packet pair.
-#if (LIBAVCODEC_VERSION_MAJOR >= 58 && LIBAVCODEC_VERSION_MINOR>= 134) || (LIBAVCODEC_VERSION_MAJOR >= 59)
-#define NVMPI_FF_NEW_API
 #include "encode.h"
-#endif
-//libavcodec 60+ (FFmpeg 6.0): FFCodec registration lives in this private
-//header; older versions register a plain AVCodec.
-#if (LIBAVCODEC_VERSION_MAJOR >= 60)
 #include "codec_internal.h"
-#endif
 
 //libnvmpi exchanges timestamps in microseconds; used with av_rescale_q to
 //convert to/from the stream's AVCodecContext time_base.
@@ -102,19 +88,14 @@ int nvmpienc_deinitPktPool(AVCodecContext *avctx);
 //Creates one pool packet: an nvPacket whose payload points into a real
 //AVPacket data buffer (kept in privData). This is what makes the later
 //handoff to FFmpeg zero-copy. Returns NULL on allocation failure.
-//Version guard: libavcodec 60 replaced ff_alloc_packet2() with
-//ff_get_encode_buffer() as the way encoders obtain packet buffers.
+//ff_get_encode_buffer() is how encoders obtain packet buffers (libavcodec 60+).
 nvPacket* nvmpienc_nvPacket_alloc(AVCodecContext *avctx, int bufSize)
 {
 	AVPacket* pkt = av_packet_alloc();
 	nvPacket* nPkt = (nvPacket*)malloc(sizeof(nvPacket));
 	int res;
 	memset(nPkt, 0, sizeof(nvPacket));
-#if LIBAVCODEC_VERSION_MAJOR >= 60
 	if((res = ff_get_encode_buffer(avctx, pkt, bufSize, 0)))
-#else
-	if((res = ff_alloc_packet2(avctx,pkt,bufSize,bufSize)))
-#endif
 	{
 		av_packet_free(&pkt);
 		free(nPkt);
@@ -140,11 +121,7 @@ int nvmpienc_nvPacket_reset(nvPacket* nPkt, AVCodecContext *avctx, int bufSize)
 {
 	AVPacket* pkt = nPkt->privData;
 	int res;
-#if LIBAVCODEC_VERSION_MAJOR >= 60
 	if((res = ff_get_encode_buffer(avctx, pkt, bufSize, 0)))
-#else
-	if((res = ff_alloc_packet2(avctx,pkt,bufSize,bufSize)))
-#endif
 	{
 		return -1;
 	}
@@ -418,8 +395,7 @@ static av_cold int nvmpi_encode_init(AVCodecContext *avctx)
 //send_frame half of the encode API: wrap the AVFrame's planes in an
 //nvFrame (no copy here — libnvmpi memcpy's into its V4L2 buffer inside
 //put_frame, which may block briefly) and rescale pts to microseconds.
-//frame==NULL initiates flushing (EOS to libnvmpi). On <4.4 this is the
-//codec's .send_frame callback; on newer FFmpeg it is called internally by
+//frame==NULL initiates flushing (EOS to libnvmpi). Called internally by
 //ff_nvmpi_receive_packet_async().
 static int ff_nvmpi_send_frame(AVCodecContext *avctx,const AVFrame *frame)
 {
@@ -501,30 +477,7 @@ static int ff_nvmpi_receive_packet(AVCodecContext *avctx, AVPacket *pkt)
 	return 0;
 }
 
-/*
- * //old avcodec .encode2 api. TODO: remove it
-static int ff_nvmpi_encode_frame(AVCodecContext *avctx, AVPacket *pkt,const AVFrame *frame, int *got_packet)
-{
-	int res;
-	*got_packet = 0;
-
-	res = ff_nvmpi_send_frame(avctx, frame);
-
-	if(res < 0)
-	{
-		if(res != AVERROR_EOF && res != AVERROR(EAGAIN)) return res;
-	}
-
-	res = ff_nvmpi_receive_packet(avctx, pkt);
-	if(res<0) return res;
-	
-	*got_packet = 1;
-
-	return 0;
-}
-*/
-
-//New-API (lavc 58.134+/59+) single-callback encoder entry point: FFmpeg
+//Single-callback encoder entry point: FFmpeg
 //only calls receive_packet, and the encoder pulls its own input via
 //ff_encode_get_frame(). Flow per call:
 //  1. if no frame is pending, pull one (EAGAIN = nothing to send yet;
@@ -532,7 +485,6 @@ static int ff_nvmpi_encode_frame(AVCodecContext *avctx, AVPacket *pkt,const AVFr
 //  2. push it to libnvmpi via ff_nvmpi_send_frame() and unref on success
 //     (on failure the frame stays in nvmpi_context->frame for retry);
 //  3. try to return an encoded packet via ff_nvmpi_receive_packet().
-#ifdef NVMPI_FF_NEW_API
 static int ff_nvmpi_receive_packet_async(AVCodecContext *avctx, AVPacket *pkt)
 {
 	int res;
@@ -566,7 +518,6 @@ static int ff_nvmpi_receive_packet_async(AVCodecContext *avctx, AVPacket *pkt)
 
 	return 0;
 }
-#endif
 
 //AVCodec/FFCodec .close callback: make sure EOS was sent, drain remaining
 //packets (recycling pool buffers while doing so), then free the pool and
@@ -612,11 +563,7 @@ static av_cold int nvmpi_encode_close(AVCodecContext *avctx)
 //AVOptions below): 2M bitrate, GOP 50, no B-frames, qmin/qmax unset, etc.
 //Only the struct's name changed with the FFCodec split in libavcodec 60;
 //the entries are identical.
-#if LIBAVCODEC_VERSION_MAJOR >= 60
 static const FFCodecDefault defaults[] = {
-#else
-static const AVCodecDefault defaults[] = {
-#endif
 	{ "b", "2M" },
 	{ "qmin", "-1" },
 	{ "qmax", "-1" },
@@ -697,68 +644,27 @@ static const AVOption options[] = {
 	};
 
 
-//Codec registration, stamped out per codec by NVMPI_ENC(). Three encoder
-//API eras are covered (paths A/B/C-D in https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Development-Guide):
-//  - lavc >= 60 (FFmpeg 6.0+): FFCodec struct; public fields moved into
-//    the .p sub-struct and the callback is wired through
-//    FF_CODEC_RECEIVE_PACKET_CB(). Matching allcodecs.c extern is
-//    "extern const FFCodec".
-//  - lavc < 60 with NVMPI_FF_NEW_API (FFmpeg 4.4/5.x): plain AVCodec with
-//    only .receive_packet set (the new pull-based encode API).
-//  - lavc < 60 without NVMPI_FF_NEW_API (FFmpeg 4.2): plain AVCodec with
-//    the old .send_frame/.receive_packet callback pair.
-//Common traits: name "<codec>_nvmpi", wrapper_name "nvmpi", YUV420P input
-//only, capabilities HARDWARE | DELAY (output lags input by the encoder
-//pipeline depth), plus the shared 'defaults' table.
-#if LIBAVCODEC_VERSION_MAJOR >= 60
-	#define NVMPI_ENC(NAME, LONGNAME, CODEC) \
-		NVMPI_ENC_CLASS(NAME) \
-		FFCodec ff_ ## NAME ## _nvmpi_encoder = { \
-			.p.name           = #NAME "_nvmpi" , \
-			CODEC_LONG_NAME("nvmpi " LONGNAME " encoder wrapper"), \
-			.p.type           = AVMEDIA_TYPE_VIDEO, \
-			.p.id             = CODEC , \
-			.priv_data_size = sizeof(nvmpiEncodeContext), \
-			.p.priv_class     = &nvmpi_ ## NAME ##_enc_class, \
-			.init           = nvmpi_encode_init, \
-			FF_CODEC_RECEIVE_PACKET_CB(ff_nvmpi_receive_packet_async), \
-			.close          = nvmpi_encode_close, \
-			.p.pix_fmts       = (const enum AVPixelFormat[]) { AV_PIX_FMT_YUV420P, AV_PIX_FMT_NV12, AV_PIX_FMT_NONE },\
-			.p.capabilities   = AV_CODEC_CAP_HARDWARE | AV_CODEC_CAP_DELAY, \
-			.defaults       = defaults,\
-			.p.wrapper_name   = "nvmpi", \
-		};
-#else
-	//pre-FFCodec builds: select which callback set the AVCodec exposes
-	#ifdef NVMPI_FF_NEW_API
-		//FFmpeg 4.4/5.x: pull-based encode API, single callback
-		#define NVMPI_ENC_API_CALLS \
-				.receive_packet = ff_nvmpi_receive_packet_async
-	#else
-		//FFmpeg 4.2: legacy push/pull callback pair
-		#define NVMPI_ENC_API_CALLS \
-				.send_frame     = ff_nvmpi_send_frame, \
-				.receive_packet = ff_nvmpi_receive_packet
-	#endif
-
-	#define NVMPI_ENC(NAME, LONGNAME, CODEC) \
-		NVMPI_ENC_CLASS(NAME) \
-		AVCodec ff_ ## NAME ## _nvmpi_encoder = { \
-			.name           = #NAME "_nvmpi" , \
-			.long_name      = NULL_IF_CONFIG_SMALL("nvmpi " LONGNAME " encoder wrapper"), \
-			.type           = AVMEDIA_TYPE_VIDEO, \
-			.id             = CODEC , \
-			.priv_data_size = sizeof(nvmpiEncodeContext), \
-			.priv_class     = &nvmpi_ ## NAME ##_enc_class, \
-			.init           = nvmpi_encode_init, \
-			NVMPI_ENC_API_CALLS, \
-			.close          = nvmpi_encode_close, \
-			.pix_fmts       = (const enum AVPixelFormat[]) { AV_PIX_FMT_YUV420P, AV_PIX_FMT_NV12, AV_PIX_FMT_NONE },\
-			.capabilities   = AV_CODEC_CAP_HARDWARE | AV_CODEC_CAP_DELAY, \
-			.defaults       = defaults,\
-			.wrapper_name   = "nvmpi", \
-		};
-#endif
+//Codec registration, stamped out per codec by NVMPI_ENC(). Covers paths C/D:
+//  - lavc >= 60 (FFmpeg 6.0–7.x, path C): FFCodec struct, pull-based receive_packet.
+//  - lavc >= 62.11 (FFmpeg 8.0, path D): same, plus AV_PROFILE_* aliases above.
+//Matching allcodecs.c extern is "extern const FFCodec".
+#define NVMPI_ENC(NAME, LONGNAME, CODEC) \
+	NVMPI_ENC_CLASS(NAME) \
+	const FFCodec ff_ ## NAME ## _nvmpi_encoder = { \
+		.p.name           = #NAME "_nvmpi" , \
+		CODEC_LONG_NAME("nvmpi " LONGNAME " encoder wrapper"), \
+		.p.type           = AVMEDIA_TYPE_VIDEO, \
+		.p.id             = CODEC , \
+		.priv_data_size = sizeof(nvmpiEncodeContext), \
+		.p.priv_class     = &nvmpi_ ## NAME ##_enc_class, \
+		.init           = nvmpi_encode_init, \
+		FF_CODEC_RECEIVE_PACKET_CB(ff_nvmpi_receive_packet_async), \
+		.close          = nvmpi_encode_close, \
+		.p.pix_fmts       = (const enum AVPixelFormat[]) { AV_PIX_FMT_YUV420P, AV_PIX_FMT_NV12, AV_PIX_FMT_NONE },\
+		.p.capabilities   = AV_CODEC_CAP_HARDWARE | AV_CODEC_CAP_DELAY, \
+		.defaults       = defaults,\
+		.p.wrapper_name   = "nvmpi", \
+	};
 
 //Instantiate the two nvmpi encoders. Each expansion must have a matching
 //extern in allcodecs.c and CONFIG_*_NVMPI_ENCODER Makefile/configure

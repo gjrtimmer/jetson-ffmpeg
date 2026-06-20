@@ -58,6 +58,13 @@ if [ "$FF_LIBAVCODEC_VERSION_MAJOR" -eq 0 ]; then
 	exit 1
 fi
 
+#jetson-ffmpeg 3.x requires libavcodec >= 60 (FFmpeg 6.0+); FFmpeg 4.x/5.x
+#used AVCodec instead of FFCodec and are no longer supported.
+if [ "$FF_LIBAVCODEC_VERSION_MAJOR" -lt 60 ]; then
+	echo "[E]: FFmpeg with libavcodec $FF_LIBAVCODEC_VERSION_MAJOR is not supported. jetson-ffmpeg 3.x requires FFmpeg 6.0+ (libavcodec >= 60). Use jetson-ffmpeg v2.x for FFmpeg 4.x/5.x."
+	exit 1
+fi
+
 rm -rf "$BKP_DIR" 2>&1 > /dev/null
 if ! mkdir "$BKP_DIR" 2>&1 > /dev/null; then
 	echo "Can not create backup dir $BKP_DIR"
@@ -218,10 +225,7 @@ return 0;
 ################## MODIFY libavcodec/allcodecs.c ############################
 function path_ff_libavcodec_allcodecsc ()
 {
-FF_CODEC_INTERFACE="extern AVCodec"
-if [ "$FF_LIBAVCODEC_VERSION_MAJOR" -gt 59 ]; then
-	FF_CODEC_INTERFACE="extern const FFCodec"
-fi
+FF_CODEC_INTERFACE="extern const FFCodec"
 
 #add nvmpi avc/h264 encoder and decoder
 if ! grep -q 'ff_h264_nvmpi_decoder' "$BKP_FILE_LIBAVCODEC_ALLCODECSC"; then
