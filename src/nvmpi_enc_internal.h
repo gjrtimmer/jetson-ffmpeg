@@ -83,6 +83,10 @@ struct nvmpictx
 	std::atomic<bool> capPlaneGotEOS{false};
 	std::atomic<bool> flushing{false};
 
+	/* Blocking-wait ceiling for nvmpi_encoder_get_packet() when wait=true.
+	 * Mirrors the decoder's wait_timeout_ms (default 500ms). */
+	unsigned int wait_timeout_ms{500};
+
 	enum v4l2_mpeg_video_bitrate_mode ratecontrol; //CBR or VBR
 	/* V4L2 level enum — uint32_t so it can hold either
 	 * v4l2_mpeg_video_h264_level or v4l2_mpeg_video_hevc_level. */

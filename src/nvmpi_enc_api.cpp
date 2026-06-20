@@ -76,6 +76,13 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 	ctx->poc_type = param->poc_type;
 	ctx->vbv_buffer_size = param->vbv_buffer_size;
 
+	/* Blocking-wait timeout: 0 = default (500ms), otherwise clamp to
+	 * [100, 5000]ms — same range as the decoder (issue #10). */
+	if (param->wait_timeout > 0)
+		ctx->wait_timeout_ms = std::max(100u, std::min(param->wait_timeout, 5000u));
+	else
+		ctx->wait_timeout_ms = 500;
+
 	//Profile mapping: the caller passes FFmpeg-style H.264 profile ids
 	//(numeric values of FF_PROFILE_H264_*); translate to V4L2 enums.
 	//Unknown/unset values fall back to Main.
@@ -632,22 +639,30 @@ void nvmpi_encoder_qEmptyPacket(nvmpictx* ctx,nvPacket* packet)
 
 //Public API: fetch the next encoded packet.
 //While encoding: non-blocking, -1 when nothing is ready (wrapper maps this
-//to EAGAIN). While flushing: poll every 1ms until either a packet arrives
-//(0) or the DQ callback saw the EOS buffer and no packet remains (-2).
+//When wait=false: non-blocking, returns -1 immediately if no packet ready
+//(maps to EAGAIN). When wait=true: blocks up to wait_timeout_ms using the
+//pool's CV-based tiered wait. While flushing: poll every 1ms until either
+//a packet arrives (0) or the DQ callback saw the EOS buffer (-2).
 //On success the caller holds the packet until re-queueing it via
 //nvmpi_encoder_qEmptyPacket().
-int nvmpi_encoder_get_packet(nvmpictx* ctx,nvPacket** packet)
+int nvmpi_encoder_get_packet(nvmpictx* ctx, nvPacket** packet, bool wait)
 {
-	nvPacket* pkt = ctx->pktPool->dqFilledBuf();
+	nvPacket* pkt;
+
+	if (wait)
+		pkt = ctx->pktPool->dqFilledBuf(
+			std::chrono::milliseconds(ctx->wait_timeout_ms));
+	else
+		pkt = ctx->pktPool->dqFilledBuf();
 
 	if(!pkt)
 	{
 		if(!ctx->flushing.load(std::memory_order_acquire)) return -1;
-		bool wait = true;
-		while(wait)
+		bool spin = true;
+		while(spin)
 		{
 			pkt = ctx->pktPool->dqFilledBuf();
-			if(pkt || ctx->capPlaneGotEOS.load(std::memory_order_acquire)) wait = false;
+			if(pkt || ctx->capPlaneGotEOS.load(std::memory_order_acquire)) spin = false;
 			else std::this_thread::sleep_for(std::chrono::milliseconds(1));
 		}
 		if(!pkt) return -2; //if got eos
@@ -664,6 +679,12 @@ int nvmpi_encoder_get_packet(nvmpictx* ctx,nvPacket** packet)
 //FFmpeg wrapper drains and frees them first (nvmpienc_deinitPktPool).
 int nvmpi_encoder_close(nvmpictx* ctx)
 {
+	/* Shutdown the packet pool to unblock any thread waiting in
+	 * dqFilledBuf(timeout) — prevents hangs on early termination
+	 * (e.g. ffmpeg -t) when blocking wait is active. */
+	if (ctx->pktPool)
+		ctx->pktPool->shutdown();
+
 	/* Guard: only stop/join the DQ thread if it was actually started.
 	 * A half-initialized encoder (create failed after STREAMON but before
 	 * startDQThread) or a non-blocking-mode encoder never starts the DQ

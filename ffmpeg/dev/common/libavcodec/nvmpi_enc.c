@@ -52,6 +52,11 @@
 //convert to/from the stream's AVCodecContext time_base.
 static const AVRational NVENC_TIMEBASE = {1, 1000000};
 
+//valid range / default for the wait_timeout AVOption: how long (ms)
+//nvmpi_encoder_get_packet() blocks in low-delay mode. Matches decoder.
+#define OPT_wait_timeout_AUTO 0
+#define OPT_wait_timeout_MAX  5000
+
 //valid range / default for the packet_pool_size AVOption: how many encoded
 //packets may pile up before the libnvmpi DQ thread starts dropping output.
 #define OPT_packet_pool_size_MIN 1
@@ -72,6 +77,7 @@ typedef struct {
 	int max_perf;               //lift NVENC clock governor (default on)
 	int poc_type;               //H.264 picture order count type (0=default, 2=low-latency)
 	int insert_vui;             //embed VUI timing_info (fps) in the bitstream (default on)
+	int wait_timeout;           //blocking-wait ceiling in ms (0 = default 500ms)
 	int encoder_flushing;       //set after EOS was sent to libnvmpi
 	AVFrame *frame; //tmp frame
 	                //(holds the pulled-but-not-yet-sent input frame in the
@@ -172,7 +178,7 @@ int nvmpienc_deinitPktPool(AVCodecContext *avctx)
 		av_packet_free(&pkt);
 		free(nPkt);
 	}
-	while(nvmpi_encoder_get_packet(ctx, &nPkt) == 0)
+	while(nvmpi_encoder_get_packet(ctx, &nPkt, false) == 0)
 	{
 		AVPacket* pkt = nPkt->privData;
 		av_packet_free(&pkt);
@@ -217,6 +223,7 @@ static av_cold int nvmpi_encode_init(AVCodecContext *avctx)
 	//instead of being repeated in-band at every IDR
 	param.insert_spspps_idr=(avctx->flags & AV_CODEC_FLAG_GLOBAL_HEADER)?0:1;
 	param.insert_vui=nvmpi_context->insert_vui;
+	param.wait_timeout=nvmpi_context->wait_timeout;
 
 	//Raw input layout: NV12 routes to libnvmpi's V4L2 NV12M path, otherwise
 	//planar YUV420. Full-range (YUVJ420P / MJPEG) input is intentionally NOT
@@ -300,7 +307,7 @@ static av_cold int nvmpi_encode_init(AVCodecContext *avctx)
 
 			nvmpi_encoder_put_frame(_ctx,&_nvframe);
 
-			ret=nvmpi_encoder_get_packet(_ctx,&nPkt);
+			ret=nvmpi_encoder_get_packet(_ctx,&nPkt, avctx->flags & AV_CODEC_FLAG_LOW_DELAY);
 
 			if(ret<0)
 				continue;
@@ -350,7 +357,7 @@ static av_cold int nvmpi_encode_init(AVCodecContext *avctx)
 		// populated while draining)
 		while(true)
 		{
-			ret=nvmpi_encoder_get_packet(_ctx,&nPkt);
+			ret=nvmpi_encoder_get_packet(_ctx,&nPkt, false);
 			if(ret < 0)
 			{
 				if(ret == -2) break; //got eos
@@ -451,7 +458,8 @@ static int ff_nvmpi_receive_packet(AVCodecContext *avctx, AVPacket *pkt)
 	AVPacket *aPkt;
 	int res;
 
-	res = nvmpi_encoder_get_packet(nvmpi_context->ctx,&nPkt);
+	res = nvmpi_encoder_get_packet(nvmpi_context->ctx, &nPkt,
+		avctx->flags & AV_CODEC_FLAG_LOW_DELAY);
 	if(res<0)
 	{
 		//If the encoder is in flushing state, then get_packet will block and return either a packet or EOF
@@ -539,7 +547,7 @@ static av_cold int nvmpi_encode_close(AVCodecContext *avctx)
 		
 		while(1)
 		{
-			ret=nvmpi_encoder_get_packet(nvmpi_context->ctx,&nPkt);
+			ret=nvmpi_encoder_get_packet(nvmpi_context->ctx, &nPkt, false);
 			if(ret < 0)
 			{
 				if(ret == -2) break; //got eos
@@ -633,6 +641,7 @@ static const AVOption options[] = {
 	{ "max_perf", "Enable max performance mode (lifts NVENC clock governor)", OFFSET(max_perf), AV_OPT_TYPE_BOOL, {.i64 = 1 }, 0, 1, VE, "max_perf" },
 	{ "poc_type", "H.264 picture order count type (0=default, 2=decode-order for low-latency)", OFFSET(poc_type), AV_OPT_TYPE_INT, {.i64 = 0 }, 0, 2, VE, "poc_type" },
 	{ "insert_vui", "Embed VUI timing_info (fps) in the bitstream so players/muxers report the frame rate", OFFSET(insert_vui), AV_OPT_TYPE_BOOL, {.i64 = 1 }, 0, 1, VE, "insert_vui" },
+	{ "wait_timeout", "Blocking wait timeout in milliseconds for low-delay mode (0 = default 500ms)", OFFSET(wait_timeout), AV_OPT_TYPE_INT, {.i64 = OPT_wait_timeout_AUTO }, 0, OPT_wait_timeout_MAX, VE, "wait_timeout" },
 	{ NULL }
 };
 
