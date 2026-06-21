@@ -1,5 +1,13 @@
 # Changelog
 
+## 3.3.0 - 2026-06-21
+
+### Chores
+
+- Add structured logging macro `NVMPI_LOG` / `NVMPI_LOG_SUB` with compile-time threshold (nvmpi)
+- Migrate ~76 logging sites from cerr/cout/fprintf to structured macros (nvmpi)
+- Remove all `<iostream>` includes from libnvmpi (nvmpi)
+
 ## 3.2.0 - 2026-06-21
 
 ### Features
