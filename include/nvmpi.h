@@ -91,6 +91,7 @@ typedef struct _NVENCPARAM{
 	nvCodingType codingType;       //NV_VIDEO_CodingH264 or NV_VIDEO_CodingHEVC
 	int max_perf;                  //non-zero: lift NVENC clock governor (max clocks)
 	unsigned int poc_type;         //H.264 picture order count type (0=default, 2=low-latency)
+	unsigned int wait_timeout;     //blocking-wait timeout in ms (0 = default 500ms)
 } nvEncParam;
 
 //Decoder creation parameters, consumed once by nvmpi_create_decoder().
@@ -228,11 +229,13 @@ extern "C" {
 	//if already flushing.
 	int nvmpi_encoder_put_frame(nvmpictx* ctx, nvFrame* frame);
 	//get filled packet from encoder
-	//Non-blocking while encoding (-1 = nothing ready). While flushing it
-	//blocks until a packet arrives or EOS is reached (-2 = EOS, no packet).
+	//When wait=false: non-blocking, returns -1 immediately if no packet ready.
+	//When wait=true: blocks up to wait_timeout_ms using the pool's CV-based
+	//tiered wait. Returns -1 on timeout or shutdown.
+	//While flushing: blocks until a packet arrives or EOS (-2 = EOS).
 	//On success the caller owns the packet until it re-queues it with
 	//nvmpi_encoder_qEmptyPacket().
-	int nvmpi_encoder_get_packet(nvmpictx* ctx, nvPacket** packet);
+	int nvmpi_encoder_get_packet(nvmpictx* ctx, nvPacket** packet, bool wait);
 	//get empty packet with allocated buffer from encoder packet pool
 	//Non-blocking; returns -1 when the empty pool is exhausted. Used by the
 	//wrapper to drain/teardown the pool.
