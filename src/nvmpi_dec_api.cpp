@@ -18,8 +18,7 @@ void nvmpictx::updateFrameSizeParams()
 	NvBufferParams parm;
 	int ret = NvBufferGetParams(fb->dst_dma_fd, &parm);
 	if (ret < 0) {
-		std::cerr << "[libnvmpi][E]: Failed to get dst dma buf params"
-		          << " (code=" << ret << ")" << std::endl;
+		NVMPI_LOG(NVMPI_LOG_ERROR, "Failed to get dst dma buf params (code=%d)", ret);
 		return;
 	}
 #endif
@@ -111,9 +110,7 @@ void nvmpictx::initFramePool()
 	/* Validate pool size — zero or negative would allocate nothing, causing
 	 * downstream dqEmptyBuf() to block forever or return null. */
 	if (frame_pool_size <= 0) {
-		std::cerr << "[libnvmpi][E]: initFramePool: frame_pool_size="
-		          << frame_pool_size << " is invalid, skipping allocation"
-		          << std::endl;
+		NVMPI_LOG(NVMPI_LOG_ERROR, "initFramePool: frame_pool_size=%d is invalid, skipping allocation", frame_pool_size);
 		return;
 	}
 
@@ -121,10 +118,7 @@ void nvmpictx::initFramePool()
 	 * prior deinitFramePool), tear down the existing buffers first to prevent
 	 * leaking DMA buffer FDs. deinitFramePool is safe on an empty pool. */
 	if (!allocatedFrameBufs.empty()) {
-		std::cerr << "[libnvmpi][W]: initFramePool: pool already allocated ("
-		          << allocatedFrameBufs.size()
-		          << " buffers), deinitializing first to prevent DMA fd leak"
-		          << std::endl;
+		NVMPI_LOG(NVMPI_LOG_WARN, "initFramePool: pool already allocated (%zu buffers), deinitializing first to prevent DMA fd leak", allocatedFrameBufs.size());
 		deinitFramePool();
 	}
 
@@ -187,7 +181,7 @@ nvmpictx* nvmpi_create_decoder(nvDecParam* param)
 	//cannot honour it — fail loudly rather than emit corrupt 8-bit frames.
 	if(param->pixFormat == NV_PIX_P010)
 	{
-		std::cerr << "[libnvmpi][E]: P010 (10-bit) decode requires the NvUtils buffer API (JetPack 5+); not available in this build." << std::endl;
+		NVMPI_LOG(NVMPI_LOG_ERROR, "P010 (10-bit) decode requires the NvUtils buffer API (JetPack 5+); not available in this build.");
 		return NULL;
 	}
 #endif
@@ -203,17 +197,13 @@ nvmpictx* nvmpi_create_decoder(nvDecParam* param)
 		ctx->dec = NvVideoDecoder::createVideoDecoder("dec0");
 		if (ctx->dec) break;
 		if (attempt < 2) {
-			std::cerr << "[libnvmpi][W]: V4L2 decoder device busy, "
-			          << "retrying (" << (attempt + 1) << "/3)..."
-			          << std::endl;
+			NVMPI_LOG(NVMPI_LOG_WARN, "V4L2 decoder device busy, retrying (%d/3)...", attempt + 1);
 			usleep(100000);  /* 100ms backoff */
 		}
 	}
 	if (!ctx->dec)
 	{
-		std::cerr << "[libnvmpi][E]: Could not create decoder "
-		          << "after 3 attempts (V4L2 device unavailable)"
-		          << std::endl;
+		NVMPI_LOG(NVMPI_LOG_ERROR, "Could not create decoder after 3 attempts (V4L2 device unavailable)");
 		delete ctx;
 		return NULL;
 	}
@@ -221,8 +211,7 @@ nvmpictx* nvmpi_create_decoder(nvDecParam* param)
 	ret=ctx->dec->subscribeEvent(V4L2_EVENT_RESOLUTION_CHANGE, 0, 0);
 	if (ret < 0)
 	{
-		std::cerr << "[libnvmpi][E]: Could not subscribe to "
-		          << "V4L2_EVENT_RESOLUTION_CHANGE" << std::endl;
+		NVMPI_LOG(NVMPI_LOG_ERROR, "Could not subscribe to V4L2_EVENT_RESOLUTION_CHANGE");
 		delete ctx->dec;
 		delete ctx;
 		return NULL;
@@ -236,16 +225,14 @@ nvmpictx* nvmpi_create_decoder(nvDecParam* param)
 	if (param->wait_timeout >= 50 && param->wait_timeout <= 5000)
 		ctx->wait_timeout_ms = param->wait_timeout;
 	else if (param->wait_timeout != 0)
-		std::cerr << "[libnvmpi][W]: wait_timeout " << param->wait_timeout
-		          << " out of range [50, 5000]; using default " << ctx->wait_timeout_ms << std::endl;
+		NVMPI_LOG(NVMPI_LOG_WARN, "wait_timeout %d out of range [50, 5000]; using default %d", param->wait_timeout, ctx->wait_timeout_ms);
 
 	//0 keeps the default; out-of-range values (including garbage from
 	//callers built against an older nvDecParam layout) fall back too.
 	if(param->chunk_size >= 65536 && param->chunk_size <= 64u*1024*1024)
 		ctx->chunk_size = param->chunk_size;
 	else if(param->chunk_size != 0)
-		std::cerr << "[libnvmpi][W]: chunk_size " << param->chunk_size
-		          << " out of range [65536, 67108864]; using default " << ctx->chunk_size << std::endl;
+		NVMPI_LOG(NVMPI_LOG_WARN, "chunk_size %u out of range [65536, 67108864]; using default %u", param->chunk_size, ctx->chunk_size);
 
 	//map the API codec enum to the V4L2 compressed pixel format fourcc
 	switch(param->codingType)
@@ -277,7 +264,7 @@ nvmpictx* nvmpi_create_decoder(nvDecParam* param)
 	ret=ctx->dec->setOutputPlaneFormat(ctx->decoder_pixfmt, ctx->chunk_size);
 	if (ret < 0)
 	{
-		std::cerr << "[libnvmpi][E]: Could not set output plane format" << std::endl;
+		NVMPI_LOG(NVMPI_LOG_ERROR, "Could not set output plane format");
 		delete ctx->dec;
 		delete ctx;
 		return NULL;
@@ -287,7 +274,7 @@ nvmpictx* nvmpi_create_decoder(nvDecParam* param)
 	ret = ctx->dec->setFrameInputMode(0);
 	if (ret < 0)
 	{
-		std::cerr << "[libnvmpi][E]: Error in decoder setFrameInputMode" << std::endl;
+		NVMPI_LOG(NVMPI_LOG_ERROR, "Error in decoder setFrameInputMode");
 		delete ctx->dec;
 		delete ctx;
 		return NULL;
@@ -297,8 +284,7 @@ nvmpictx* nvmpi_create_decoder(nvDecParam* param)
 	{
 		ret = ctx->dec->disableDPB();
 		if (ret < 0) {
-			std::cerr << "[libnvmpi][E]: Error in decoder disableDPB"
-			          << " (code=" << ret << ")" << std::endl;
+			NVMPI_LOG(NVMPI_LOG_ERROR, "Error in decoder disableDPB (code=%d)", ret);
 			delete ctx->dec;
 			delete ctx;
 			return NULL;
@@ -309,8 +295,7 @@ nvmpictx* nvmpi_create_decoder(nvDecParam* param)
 	{
 		ret = ctx->dec->setMaxPerfMode(1);
 		if (ret < 0) {
-			std::cerr << "[libnvmpi][E]: Error while setting decoder to max perf"
-			          << " (code=" << ret << ")" << std::endl;
+			NVMPI_LOG(NVMPI_LOG_ERROR, "Error while setting decoder to max perf (code=%d)", ret);
 			delete ctx->dec;
 			delete ctx;
 			return NULL;
@@ -322,7 +307,7 @@ nvmpictx* nvmpi_create_decoder(nvDecParam* param)
 	ret = ctx->dec->output_plane.setupPlane(V4L2_MEMORY_USERPTR, 10, false, true);
 	if (ret < 0)
 	{
-		std::cerr << "[libnvmpi][E]: Error while setting up output plane" << std::endl;
+		NVMPI_LOG(NVMPI_LOG_ERROR, "Error while setting up output plane");
 		delete ctx->dec;
 		delete ctx;
 		return NULL;
@@ -333,7 +318,7 @@ nvmpictx* nvmpi_create_decoder(nvDecParam* param)
 	ret = ctx->dec->output_plane.setStreamStatus(true);
 	if (ret < 0)
 	{
-		std::cerr << "[libnvmpi][E]: Error in output plane stream on" << std::endl;
+		NVMPI_LOG(NVMPI_LOG_ERROR, "Error in output plane stream on");
 		ctx->dec->output_plane.deinitPlane();
 		delete ctx->dec;
 		delete ctx;
@@ -375,9 +360,7 @@ int nvmpi_decoder_put_packet(nvmpictx* ctx,nvPacket* packet)
 	//transient/hardware failure (the FFmpeg wrapper maps it accordingly).
 	if (packet->payload_size > ctx->chunk_size)
 	{
-		std::cerr << "[libnvmpi][E]: input packet (" << packet->payload_size
-		          << " bytes) exceeds chunk_size (" << ctx->chunk_size
-		          << "); dropping. Increase the chunk_size option." << std::endl;
+		NVMPI_LOG(NVMPI_LOG_ERROR, "input packet (%zu bytes) exceeds chunk_size (%u); dropping. Increase the chunk_size option.", packet->payload_size, ctx->chunk_size);
 		return -3;
 	}
 
@@ -397,7 +380,7 @@ int nvmpi_decoder_put_packet(nvmpictx* ctx,nvPacket* packet)
 		ret = ctx->dec->output_plane.dqBuffer(v4l2_buf, &nvBuffer, NULL, -1);
 		if (ret < 0)
 		{
-			cerr << "Error DQing buffer at output plane" << std::endl;
+			NVMPI_LOG(NVMPI_LOG_ERROR, "Error DQing buffer at output plane");
 			return -1;
 		}
 	}
@@ -413,7 +396,7 @@ int nvmpi_decoder_put_packet(nvmpictx* ctx,nvPacket* packet)
 	ret = ctx->dec->output_plane.qBuffer(v4l2_buf, NULL);
 	if (ret < 0)
 	{
-		std::cerr << "Error Qing buffer at output plane" << std::endl;
+		NVMPI_LOG(NVMPI_LOG_ERROR, "Error Qing buffer at output plane");
 		ctx->index--;
 		return -2;
 	}
@@ -421,7 +404,7 @@ int nvmpi_decoder_put_packet(nvmpictx* ctx,nvPacket* packet)
 	if (v4l2_buf.m.planes[0].bytesused == 0)
 	{
 		ctx->eos.store(true);
-		//std::cout << "Input file read complete" << std::endl; //TODO log it
+		NVMPI_LOG(NVMPI_LOG_INFO, "input EOS detected");
 	}
 
 	return 0;
@@ -455,7 +438,7 @@ int copyNvBufToFrame(nvmpictx* ctx, nvmpi_frame_buffer *nvmpiBuf, nvFrame* frame
 #endif
 		if(ret != 0)
 		{
-			fprintf(stderr, "NvBufferMap failed \n");
+			NVMPI_LOG(NVMPI_LOG_ERROR, "NvBufferMap failed");
 			return ret;
 		}
 		

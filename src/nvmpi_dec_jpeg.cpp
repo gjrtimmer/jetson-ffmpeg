@@ -31,8 +31,7 @@
 void nvmpictx_jpeg::initFramePool(uint32_t width, uint32_t height)
 {
 	if (frame_pool_size <= 0) {
-		std::cerr << "[libnvmpi][jpeg][E]: initFramePool: frame_pool_size="
-		          << frame_pool_size << " is invalid" << std::endl;
+		NVMPI_LOG_SUB(NVMPI_LOG_ERROR, "jpeg", "initFramePool: frame_pool_size=%d is invalid", frame_pool_size);
 		return;
 	}
 
@@ -61,8 +60,7 @@ void nvmpictx_jpeg::initFramePool(uint32_t width, uint32_t height)
 		nvmpi_frame_buffer* fb = new nvmpi_frame_buffer();
 		if (!fb->alloc(input_params)) {
 			/* Allocation failure: clean up what we have. */
-			std::cerr << "[libnvmpi][jpeg][E]: failed to allocate DMA buffer "
-			          << i << "/" << frame_pool_size << std::endl;
+			NVMPI_LOG_SUB(NVMPI_LOG_ERROR, "jpeg", "failed to allocate DMA buffer %d/%d", i, frame_pool_size);
 			delete fb;
 			break;
 		}
@@ -112,7 +110,7 @@ void nvmpictx_jpeg::updateFrameSizeParams()
 	NvBufferParams parm;
 	int ret = NvBufferGetParams(fb->dst_dma_fd, &parm);
 	if (ret < 0) {
-		std::cerr << "[libnvmpi][jpeg][E]: NvBufferGetParams failed" << std::endl;
+		NVMPI_LOG_SUB(NVMPI_LOG_ERROR, "jpeg", "NvBufferGetParams failed");
 		return;
 	}
 #endif
@@ -183,7 +181,7 @@ static int jpegCopyToFrame(nvmpictx_jpeg* ctx, nvmpi_frame_buffer *buf, nvFrame*
 		dataSrc = (char *)psrc_data;
 #endif
 		if (ret != 0) {
-			std::cerr << "[libnvmpi][jpeg][E]: NvBufferMap failed" << std::endl;
+			NVMPI_LOG_SUB(NVMPI_LOG_ERROR, "jpeg", "NvBufferMap failed");
 			return ret;
 		}
 
@@ -287,8 +285,7 @@ nvmpictx* nvmpi_create_jpeg_decoder(void)
 	/* Allocated here; freed in nvmpi_jpeg_decoder_close() via delete. */
 	ctx->jpegdec = NvJPEGDecoder::createJPEGDecoder("jpegdec");
 	if (!ctx->jpegdec) {
-		std::cerr << "[libnvmpi][jpeg][E]: NvJPEGDecoder creation failed"
-		          << std::endl;
+		NVMPI_LOG_SUB(NVMPI_LOG_ERROR, "jpeg", "NvJPEGDecoder creation failed");
 		delete ctx;
 		return NULL;
 	}
@@ -332,8 +329,7 @@ int nvmpi_jpeg_decoder_put_packet(nvmpictx* handle, nvPacket* packet)
 	}
 
 	if (!packet->payload) {
-		std::cerr << "[libnvmpi][jpeg][E]: null payload with non-zero size"
-		          << std::endl;
+		NVMPI_LOG_SUB(NVMPI_LOG_ERROR, "jpeg", "null payload with non-zero size");
 		return -1;
 	}
 
@@ -342,8 +338,7 @@ int nvmpi_jpeg_decoder_put_packet(nvmpictx* handle, nvPacket* packet)
 
 	/* Reject progressive JPEG (SOF2) — NVJPG engine supports baseline only. */
 	if (jpegIsProgressive(packet->payload, packet->payload_size)) {
-		std::cerr << "[libnvmpi][jpeg][E]: progressive JPEG not supported by "
-		          << "hardware decoder (SOF2 marker detected)" << std::endl;
+		NVMPI_LOG_SUB(NVMPI_LOG_ERROR, "jpeg", "progressive JPEG not supported by hardware decoder (SOF2 marker detected)");
 		return -1;
 	}
 
@@ -358,14 +353,13 @@ int nvmpi_jpeg_decoder_put_packet(nvmpictx* handle, nvPacket* packet)
 		pixfmt, width, height);
 
 	if (ret != 0) {
-		std::cerr << "[libnvmpi][jpeg][E]: decodeToFd failed" << std::endl;
+		NVMPI_LOG_SUB(NVMPI_LOG_ERROR, "jpeg", "decodeToFd failed");
 		return -1;
 	}
 
 	/* Validate dimensions against hardware limits. */
 	if (width == 0 || height == 0 || width > NVJPEG_MAX_DIM || height > NVJPEG_MAX_DIM) {
-		std::cerr << "[libnvmpi][jpeg][E]: decoded dimensions " << width
-		          << "x" << height << " out of range" << std::endl;
+		NVMPI_LOG_SUB(NVMPI_LOG_ERROR, "jpeg", "decoded dimensions %ux%u out of range", width, height);
 		return -1;
 	}
 
@@ -373,8 +367,7 @@ int nvmpi_jpeg_decoder_put_packet(nvmpictx* handle, nvPacket* packet)
 	if (width != ctx->last_width || height != ctx->last_height) {
 		ctx->initFramePool(width, height);
 		if (ctx->allocatedFrameBufs.empty()) {
-			std::cerr << "[libnvmpi][jpeg][E]: frame pool allocation failed"
-			          << std::endl;
+			NVMPI_LOG_SUB(NVMPI_LOG_ERROR, "jpeg", "frame pool allocation failed");
 			return -1;
 		}
 		ctx->updateFrameSizeParams();
@@ -386,8 +379,7 @@ int nvmpi_jpeg_decoder_put_packet(nvmpictx* handle, nvPacket* packet)
 		std::chrono::milliseconds(500));
 	if (!fb) {
 		/* Backpressure: consumer hasn't drained frames fast enough. */
-		std::cerr << "[libnvmpi][jpeg][W]: frame pool exhausted, dropping frame"
-		          << std::endl;
+		NVMPI_LOG_SUB(NVMPI_LOG_WARN, "jpeg", "frame pool exhausted, dropping frame");
 		return -1;
 	}
 
@@ -398,8 +390,7 @@ int nvmpi_jpeg_decoder_put_packet(nvmpictx* handle, nvPacket* packet)
 	NvBufSurface *decode_surface = NULL;
 	ret = NvBufSurfaceFromFd(decode_fd, (void**)&decode_surface);
 	if (ret < 0) {
-		std::cerr << "[libnvmpi][jpeg][E]: NvBufSurfaceFromFd failed"
-		          << std::endl;
+		NVMPI_LOG_SUB(NVMPI_LOG_ERROR, "jpeg", "NvBufSurfaceFromFd failed");
 		ctx->framePool->qEmptyBuf(fb);
 		return -1;
 	}
@@ -410,7 +401,7 @@ int nvmpi_jpeg_decoder_put_packet(nvmpictx* handle, nvPacket* packet)
 	                        &(ctx->transform_params));
 #endif
 	if (ret != 0) {
-		std::cerr << "[libnvmpi][jpeg][E]: VIC transform failed" << std::endl;
+		NVMPI_LOG_SUB(NVMPI_LOG_ERROR, "jpeg", "VIC transform failed");
 		ctx->framePool->qEmptyBuf(fb);
 		return -1;
 	}

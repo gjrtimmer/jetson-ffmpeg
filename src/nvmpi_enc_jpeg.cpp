@@ -55,8 +55,7 @@ bool nvmpictx_jpegenc::allocInputBuffer(uint32_t w, uint32_t h)
 #endif
 
 	if (!input_buf.alloc(params)) {
-		std::cerr << "[libnvmpi][jpegenc][E]: failed to allocate input DMA buffer "
-		          << w << "x" << h << std::endl;
+		NVMPI_LOG_SUB(NVMPI_LOG_ERROR, "jpegenc", "failed to allocate input DMA buffer %ux%u", w, h);
 		return false;
 	}
 
@@ -101,8 +100,7 @@ void nvmpictx_jpegenc::updatePlaneParams()
 	NvBufferParams parm;
 	int ret = NvBufferGetParams(input_buf.dst_dma_fd, &parm);
 	if (ret < 0) {
-		std::cerr << "[libnvmpi][jpegenc][E]: NvBufferGetParams failed"
-		          << std::endl;
+		NVMPI_LOG_SUB(NVMPI_LOG_ERROR, "jpegenc", "NvBufferGetParams failed");
 		return;
 	}
 #endif
@@ -138,8 +136,7 @@ static int jpegCopyFromFrame(nvmpictx_jpegenc *ctx, const nvFrame *frame)
 		NvBufSurface *nvbuf_surf = ctx->input_buf.dst_dma_surface;
 		ret = NvBufSurfaceMap(nvbuf_surf, 0, plane, NVBUF_MAP_READ_WRITE);
 		if (ret != 0) {
-			std::cerr << "[libnvmpi][jpegenc][E]: NvBufSurfaceMap failed plane="
-			          << plane << std::endl;
+			NVMPI_LOG_SUB(NVMPI_LOG_ERROR, "jpegenc", "NvBufSurfaceMap failed plane=%u", plane);
 			return ret;
 		}
 		dataDst = (char *)nvbuf_surf->surfaceList[0].mappedAddr.addr[plane];
@@ -148,8 +145,7 @@ static int jpegCopyFromFrame(nvmpictx_jpegenc *ctx, const nvFrame *frame)
 		ret = NvBufferMemMap(ctx->input_buf.dst_dma_fd, plane,
 		                     NvBufferMem_Read_Write, &pdst_data);
 		if (ret != 0) {
-			std::cerr << "[libnvmpi][jpegenc][E]: NvBufferMemMap failed plane="
-			          << plane << std::endl;
+			NVMPI_LOG_SUB(NVMPI_LOG_ERROR, "jpegenc", "NvBufferMemMap failed plane=%u", plane);
 			return ret;
 		}
 		dataDst = (char *)pdst_data;
@@ -224,10 +220,7 @@ nvmpictx* nvmpi_create_jpeg_encoder(int quality)
 	 * Returns NULL on Orin Nano (no NVJPG encode engine). */
 	ctx->jpegenc = NvJPEGEncoder::createJPEGEncoder("jpegenc");
 	if (!ctx->jpegenc) {
-		std::cerr << "[libnvmpi][jpegenc][E]: NvJPEGEncoder creation failed. "
-		          << "This module may not have NVJPG encode capability "
-		          << "(e.g. Orin Nano). Use software mjpeg encoder as fallback."
-		          << std::endl;
+		NVMPI_LOG_SUB(NVMPI_LOG_ERROR, "jpegenc", "NvJPEGEncoder creation failed. This module may not have NVJPG encode capability (e.g. Orin Nano). Use software mjpeg encoder as fallback.");
 		delete ctx;
 		return NULL;
 	}
@@ -267,17 +260,13 @@ int nvmpi_jpeg_encoder_put_frame(nvmpictx *handle, nvFrame *frame)
 	/* Validate frame dimensions against hardware limits. */
 	if (frame->width == 0 || frame->height == 0 ||
 	    frame->width > NVJPEG_ENC_MAX_DIM || frame->height > NVJPEG_ENC_MAX_DIM) {
-		std::cerr << "[libnvmpi][jpegenc][E]: frame dimensions "
-		          << frame->width << "x" << frame->height
-		          << " out of range (max " << NVJPEG_ENC_MAX_DIM << ")"
-		          << std::endl;
+		NVMPI_LOG_SUB(NVMPI_LOG_ERROR, "jpegenc", "frame dimensions %ux%u out of range (max %u)", frame->width, frame->height, (unsigned)NVJPEG_ENC_MAX_DIM);
 		return -1;
 	}
 
 	/* Validate that frame planes are non-NULL. */
 	if (!frame->payload[0] || !frame->payload[1] || !frame->payload[2]) {
-		std::cerr << "[libnvmpi][jpegenc][E]: null frame plane pointer"
-		          << std::endl;
+		NVMPI_LOG_SUB(NVMPI_LOG_ERROR, "jpegenc", "null frame plane pointer");
 		return -1;
 	}
 
@@ -294,8 +283,7 @@ int nvmpi_jpeg_encoder_put_frame(nvmpictx *handle, nvFrame *frame)
 	/* ---- (Re)allocate input DMA buffer on resolution change ---- */
 	if (frame->width != ctx->width || frame->height != ctx->height) {
 		if (!ctx->allocInputBuffer(frame->width, frame->height)) {
-			std::cerr << "[libnvmpi][jpegenc][E]: input buffer allocation failed"
-			          << std::endl;
+			NVMPI_LOG_SUB(NVMPI_LOG_ERROR, "jpegenc", "input buffer allocation failed");
 			return -1;
 		}
 	}
@@ -303,8 +291,7 @@ int nvmpi_jpeg_encoder_put_frame(nvmpictx *handle, nvFrame *frame)
 	/* ---- Copy caller's frame into DMA buffer ---- */
 	int ret = jpegCopyFromFrame(ctx, frame);
 	if (ret != 0) {
-		std::cerr << "[libnvmpi][jpegenc][E]: frame copy to DMA buffer failed"
-		          << std::endl;
+		NVMPI_LOG_SUB(NVMPI_LOG_ERROR, "jpegenc", "frame copy to DMA buffer failed");
 		return -1;
 	}
 
@@ -326,8 +313,7 @@ int nvmpi_jpeg_encoder_put_frame(nvmpictx *handle, nvFrame *frame)
 	unsigned long jpeg_alloc = (unsigned long)ctx->width * ctx->height * 2 + 65536;
 	unsigned char *jpeg_buf = (unsigned char *)malloc(jpeg_alloc);
 	if (!jpeg_buf) {
-		std::cerr << "[libnvmpi][jpegenc][E]: failed to allocate JPEG output buffer ("
-		          << jpeg_alloc << " bytes)" << std::endl;
+		NVMPI_LOG_SUB(NVMPI_LOG_ERROR, "jpegenc", "failed to allocate JPEG output buffer (%lu bytes)", jpeg_alloc);
 		return -1;
 	}
 	/* Zero-initialize — prevent information leak if encode partially fills
@@ -352,7 +338,7 @@ int nvmpi_jpeg_encoder_put_frame(nvmpictx *handle, nvFrame *frame)
 	                                 &jpeg_buf, jpeg_size,
 	                                 ctx->quality);
 	if (ret < 0) {
-		std::cerr << "[libnvmpi][jpegenc][E]: encodeFromFd failed" << std::endl;
+		NVMPI_LOG_SUB(NVMPI_LOG_ERROR, "jpegenc", "encodeFromFd failed");
 		if (jpeg_buf) {
 			/* Zero out before freeing — may contain partial frame data. */
 			memset(jpeg_buf, 0, jpeg_size);

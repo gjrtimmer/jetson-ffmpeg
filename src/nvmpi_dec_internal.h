@@ -6,7 +6,7 @@
 #include "NVMPI_bufPool.hpp"
 #include "nvmpi_frame_buffer.hpp"
 #include <vector>
-#include <iostream>
+#include "nvmpi_log.h"
 #include <thread>
 #include <unistd.h>
 #include <queue>
@@ -29,9 +29,8 @@
 //with proper return-on-failure instead.
 #define TEST_ERROR(condition, message, errorCode)             \
 	if (condition) {                                         \
-		std::cerr << "[libnvmpi][E]: " << message            \
-		          << " (code=" << (errorCode) << ")"         \
-		          << std::endl;                               \
+		NVMPI_LOG(NVMPI_LOG_ERROR, "%s (code=%d)",           \
+		          message, (int)(errorCode));                 \
 	}
 
 using namespace std;

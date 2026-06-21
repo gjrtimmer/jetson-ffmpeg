@@ -7,7 +7,7 @@
  * NvUtils/NvBufSurface (WITH_NVUTILS, JetPack 5+) vs legacy nvbuf_utils.
  */
 #include "nvmpi_frame_buffer.hpp"
-#include <iostream> //LOG. TODO: add some LOG() define
+#include "nvmpi_log.h"
 
 //Allocate one hardware DMA buffer according to input_params and take
 //ownership of it. Returns true on success. On the NvUtils path the
@@ -23,7 +23,7 @@ bool nvmpi_frame_buffer::alloc(NvBufferCreateParams& input_params)
 	ret = NvBufSurf::NvAllocate(&input_params, 1, &dst_dma_fd);
 	if(ret<0)
 	{
-		std::cerr << "Failed to allocate buffer" << std::endl;
+		NVMPI_LOG(NVMPI_LOG_ERROR, "Failed to allocate buffer");
 		return false;
 	}
 
@@ -32,7 +32,7 @@ bool nvmpi_frame_buffer::alloc(NvBufferCreateParams& input_params)
 	ret = NvBufSurfaceFromFd(dst_dma_fd, (void**)(&dst_dma_surface));
 	if(ret<0)
 	{
-		std::cerr << "Failed to get surface for buffer" << std::endl;
+		NVMPI_LOG(NVMPI_LOG_ERROR, "Failed to get surface for buffer");
 		NvBufferDestroy(dst_dma_fd);
 		dst_dma_fd = -1;
 		return false;
@@ -43,7 +43,7 @@ bool nvmpi_frame_buffer::alloc(NvBufferCreateParams& input_params)
 	ret = NvBufferCreateEx(&dst_dma_fd, &input_params);
 	if(ret<0)
 	{
-		std::cerr << "Failed to allocate buffer" << std::endl;
+		NVMPI_LOG(NVMPI_LOG_ERROR, "Failed to allocate buffer");
 		return false;
 	}
 #endif
@@ -64,7 +64,7 @@ bool nvmpi_frame_buffer::destroy()
 		ret = NvBufferDestroy(dst_dma_fd);
 		if(ret<0)
 		{
-			std::cerr << "Failed to Destroy NvBuffer" << std::endl;
+			NVMPI_LOG(NVMPI_LOG_ERROR, "Failed to Destroy NvBuffer");
 			return false;
 		}
 		dst_dma_fd = -1;
