@@ -458,13 +458,19 @@ static int ff_nvmpi_receive_packet(AVCodecContext *avctx, AVPacket *pkt)
 	AVPacket *aPkt;
 	int res;
 
+	/* During flushing, use blocking get_packet to avoid CPU spin while
+	 * waiting for the DQ thread to deliver final encoded packets. */
 	res = nvmpi_encoder_get_packet(nvmpi_context->ctx, &nPkt,
-		avctx->flags & AV_CODEC_FLAG_LOW_DELAY);
+		(avctx->flags & AV_CODEC_FLAG_LOW_DELAY) || nvmpi_context->encoder_flushing);
 	if(res<0)
 	{
-		//If the encoder is in flushing state, then get_packet will block and return either a packet or EOF
-		if(nvmpi_context->encoder_flushing) return AVERROR_EOF;
-		return AVERROR(EAGAIN); //nvmpi get_packet returns -1 if no packets are pending
+		/* -2 = actual EOS from the V4L2 DQ thread (all packets drained).
+		 * -1 = no packet ready yet (DQ thread still processing); return
+		 * EAGAIN so FFmpeg keeps calling receive_packet during flush.
+		 * Previously, -1 during flushing was treated as EOF, causing
+		 * final packets to be dropped (see #15). */
+		if(res == -2) return AVERROR_EOF;
+		return AVERROR(EAGAIN);
 	}
 	
 	aPkt = (AVPacket*)(nPkt->privData);
