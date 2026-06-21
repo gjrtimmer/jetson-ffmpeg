@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.4.0 - 2026-06-21
+
+### Features
+
+- Accept stream dimensions at decoder creation from FFmpeg container headers (decoder)
+- Pre-allocate frame pool when dimensions are known, reducing first-frame latency (decoder)
+- Skip frame pool rebuild on resolution-change when dimensions match the hint (decoder)
+- Wire `avctx->width`/`avctx->height` through FFmpeg decoder wrapper (ffmpeg)
+
 ## 3.3.0 - 2026-06-21
 
 ### Chores
