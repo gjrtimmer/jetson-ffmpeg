@@ -141,6 +141,7 @@ build:nvmpi:
     - bash ./scripts/ffpatch.sh /tmp/ffmpeg
     - cd /tmp/ffmpeg
     - export PKG_CONFIG_PATH="${NVMPI_PREFIX}/lib/pkgconfig:${NVMPI_PREFIX}/share/pkgconfig"
+    - DAV1D_FLAG=""; if pkg-config --exists 'dav1d >= 1.0.0' 2>/dev/null; then DAV1D_FLAG="--enable-libdav1d"; fi
     - >-
       ./configure
       --prefix="${FFMPEG_PREFIX}"
@@ -149,7 +150,7 @@ build:nvmpi:
       --extra-cflags="-I${CI_PROJECT_DIR}/include"
       --extra-ldflags="-L${CI_PROJECT_DIR}/build -L${CI_PROJECT_DIR}/stubs -Wl,-rpath-link,${CI_PROJECT_DIR}/stubs"
       --enable-libx264 --enable-libx265 --enable-libvpx --enable-libopus
-      --enable-libmp3lame --enable-libvorbis --enable-libdav1d
+      --enable-libmp3lame --enable-libvorbis ${DAV1D_FLAG}
       --enable-libass --enable-libfreetype --enable-gnutls
     - make -j"$(nproc)"
     - make install
@@ -290,11 +291,12 @@ test:hw-ffmpeg-8.1:           # path D
   script:
     - export VERSION="${CI_COMMIT_TAG#v}"
     - PFX="${CI_PROJECT_DIR}/_pkg"
+    - DAV1D_FLAG=""; if pkg-config --exists 'dav1d >= 1.0.0' 2>/dev/null; then DAV1D_FLAG="--enable-libdav1d"; fi
     - >-
       bash ./scripts/build.sh --no-stubs --ffmpeg "${FFVER}" --install
       --prefix "${PFX}" --ffmpeg-prefix "${PFX}" -j"$(nproc)"
       --ffmpeg-args "--enable-shared --disable-static --enable-libx265 --enable-libvpx
-      --enable-libopus --enable-libmp3lame --enable-libvorbis --enable-libdav1d
+      --enable-libopus --enable-libmp3lame --enable-libvorbis ${DAV1D_FLAG}
       --enable-libass --enable-libfreetype --enable-gnutls"
     - LD_LIBRARY_PATH="${PFX}/lib:/usr/lib/aarch64-linux-gnu/tegra" "${PFX}/bin/ffmpeg" -hide_banner -encoders 2>/dev/null | grep -E 'h264_nvmpi|hevc_nvmpi'
     - >-
