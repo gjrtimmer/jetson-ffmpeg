@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.2.0 - 2026-06-21
+
+### Features
+
+- Add blocking wait to `nvmpi_encoder_get_packet()` mirroring decoder pattern (encoder)
+- Activate via `-flags low_delay` in FFmpeg; configurable `wait_timeout` AVOption 0-5000ms (ffmpeg)
+- Pool `shutdown()` called before DQ thread stop for clean teardown (encoder)
+
+### Testing
+
+- Add hw-encoder-blocking suite: low_delay H264/HEVC, default path, custom timeout, early termination (encoder)
+
 ## 3.1.0 - 2026-06-20
 
 ### Features
