@@ -121,6 +121,12 @@ static int nvmpi_init_decoder(AVCodecContext *avctx)
 	param.disable_dpb = nvmpi_context->disable_dpb;
 	param.wait_timeout = nvmpi_context->wait_timeout;
 
+	/* Pass container-reported dimensions to libnvmpi so it can pre-allocate
+	 * the frame pool before the first resolution-change event, reducing
+	 * first-frame latency. Zero values (unknown) = no hint, existing behavior. */
+	param.width = avctx->width;
+	param.height = avctx->height;
+
 	//Output pixel-format negotiation. The decoder can emit YUV420P, NV12, or
 	//(HEVC Main10 only) 10-bit P010LE, all produced natively by the VIC
 	//transform — no software conversion. Selection precedence:
