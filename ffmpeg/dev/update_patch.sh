@@ -13,7 +13,7 @@ REPO_ROOT="$(cd "${DEV_DIR}/../.." && pwd)"
 PATCH_DIR="${REPO_ROOT}/ffmpeg/patches"
 FFPATCH="${REPO_ROOT}/scripts/ffpatch.sh"
 
-VERSIONS="6.0 6.1 7.0 7.1 8.0"
+VERSIONS="6.0 6.1 7.0 7.1 8.0 8.1"
 
 for ver in ${VERSIONS}; do
     src="${DEV_DIR}/ffmpeg${ver}"

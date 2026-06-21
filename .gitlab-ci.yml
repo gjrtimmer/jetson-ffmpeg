@@ -184,6 +184,11 @@ patch:ffmpeg-8.0:
   variables:
     FFMPEG_BRANCH: "release/8.0"
 
+patch:ffmpeg-8.1:
+  <<: *patch-and-build
+  variables:
+    FFMPEG_BRANCH: "release/8.1"
+
 # ---------------------------------------------------------------------------
 # Stage: test — HW encode/decode on real Jetson hardware.
 #
@@ -194,7 +199,7 @@ patch:ffmpeg-8.0:
 # version (see "Wrapper code paths by FFmpeg version" in https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Development-Guide#wrapper-code-paths-by-ffmpeg-version):
 #
 #   6.0,6.1,7.0,7.1 -> path C (FFCodec) — identical wrapper code
-#   8.0              -> path D (FFCodec + AV_PROFILE)
+#   8.0,8.1          -> path D (FFCodec + AV_PROFILE)
 #
 # 6.0–7.1 share wrapper code (path C) but are each hw-tested anyway, to also
 # cover FFmpeg ABI/runtime differences between those releases.
@@ -247,6 +252,10 @@ test:hw-ffmpeg-7.1:           # path C
 test:hw-ffmpeg-8.0:           # path D
   <<: *hw-test
   needs: ["patch:ffmpeg-8.0"]
+
+test:hw-ffmpeg-8.1:           # path D
+  <<: *hw-test
+  needs: ["patch:ffmpeg-8.1"]
 
 # ---------------------------------------------------------------------------
 # Stage: package — build REAL libnvmpi + ffmpeg per version and tar each one
@@ -301,6 +310,7 @@ package:ffmpeg-6.1: { extends: .package, variables: { FFVER: "6.1" } }
 package:ffmpeg-7.0: { extends: .package, variables: { FFVER: "7.0" } }
 package:ffmpeg-7.1: { extends: .package, variables: { FFVER: "7.1" } }
 package:ffmpeg-8.0: { extends: .package, variables: { FFVER: "8.0" } }
+package:ffmpeg-8.1: { extends: .package, variables: { FFVER: "8.1" } }
 
 # ---------------------------------------------------------------------------
 # Stage: release — changelog + GitLab Release (+ generic package assets), then
@@ -319,6 +329,7 @@ release:
     - "package:ffmpeg-7.0"
     - "package:ffmpeg-7.1"
     - "package:ffmpeg-8.0"
+    - "package:ffmpeg-8.1"
   variables:
     GIT_DEPTH: "0"   # full history + tags for git-cliff
   before_script: []

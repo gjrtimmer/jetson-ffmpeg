@@ -18,7 +18,7 @@ set -euo pipefail
 
 DEST="${FFMPEG_SRC_DIR:-$HOME/ffmpeg-smoke}"
 URL="https://git.ffmpeg.org/ffmpeg.git"
-DEFAULT_VERSIONS="6.0 6.1 7.0 7.1 8.0"
+DEFAULT_VERSIONS="6.0 6.1 7.0 7.1 8.0 8.1"
 
 while [ $# -gt 0 ]; do
     case "$1" in
