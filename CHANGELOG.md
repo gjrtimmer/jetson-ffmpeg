@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.5.0 - 2026-06-21
+
+### Bug Fixes
+
+- Correct encoder EOS drain path: distinguish "no packet yet" from "stream fully drained" during flush (ffmpeg)
+- Use blocking `get_packet` during encoder flush to prevent CPU spin on EAGAIN (ffmpeg)
+
 ## 3.4.0 - 2026-06-21
 
 ### Features
