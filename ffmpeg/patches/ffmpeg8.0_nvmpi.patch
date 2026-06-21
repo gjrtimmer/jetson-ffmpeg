@@ -205,10 +205,10 @@ index f5ec2e0..61cd793 100644
  extern const FFCodec ff_vqa_decoder;
 diff --git a/libavcodec/nvmpi_dec.c b/libavcodec/nvmpi_dec.c
 new file mode 100644
-index 0000000..4134b6e
+index 0000000..d3bd79d
 --- /dev/null
 +++ b/libavcodec/nvmpi_dec.c
-@@ -0,0 +1,633 @@
+@@ -0,0 +1,639 @@
 +/*
 + * nvmpi_dec.c — FFmpeg decoder wrapper for libnvmpi (layer 2 of
 + * jetson-ffmpeg, the FFmpeg integration layer).
@@ -331,6 +331,12 @@ index 0000000..4134b6e
 +	param.max_perf = nvmpi_context->max_perf;
 +	param.disable_dpb = nvmpi_context->disable_dpb;
 +	param.wait_timeout = nvmpi_context->wait_timeout;
++
++	/* Pass container-reported dimensions to libnvmpi so it can pre-allocate
++	 * the frame pool before the first resolution-change event, reducing
++	 * first-frame latency. Zero values (unknown) = no hint, existing behavior. */
++	param.width = avctx->width;
++	param.height = avctx->height;
 +
 +	//Output pixel-format negotiation. The decoder can emit YUV420P, NV12, or
 +	//(HEVC Main10 only) 10-bit P010LE, all produced natively by the VIC

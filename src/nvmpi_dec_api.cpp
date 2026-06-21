@@ -161,7 +161,6 @@ void nvmpictx::initFramePool()
 //the CAPTURE plane and the destination frame pool, and refresh the cached
 //transform/copy parameters. Runs on the capture thread.
 
-//TODO: accept in nvmpi_create_decoder input stream params (width and height, etc...) from ffmpeg.
 //Public API: create and start a decoder.
 //Opens the V4L2 decoder device, subscribes to resolution-change events,
 //configures the OUTPUT (bitstream) plane with USERPTR buffers and starts
@@ -327,12 +326,31 @@ nvmpictx* nvmpi_create_decoder(nvDecParam* param)
 
 	ctx->out_pixfmt=param->pixFormat;
 	ctx->resized = param->resized;
+	ctx->hint_width = param->width;
+	ctx->hint_height = param->height;
 	ctx->framePool = new NVMPI_bufPool<nvmpi_frame_buffer*>();
 	ctx->eos.store(false);
 	ctx->index=0;
 	for(int index=0;index<MAX_BUFFERS;index++)
 		ctx->dmaBufferFileDescriptor[index]=-1;
 	ctx->numberCaptureBuffers=0;
+
+	/* Pre-allocate the frame pool when container-reported dimensions are
+	 * available. This reduces first-frame latency by having destination
+	 * DMA buffers ready before the capture thread's resolution-change
+	 * event fires. If the actual stream dimensions differ, the capture
+	 * thread rebuilds the pool at the correct size via respondToResolutionEvent.
+	 * The resize target takes precedence when set. */
+	if (ctx->hint_width > 0 && ctx->hint_height > 0)
+	{
+		ctx->output_width = ctx->resized.width ? ctx->resized.width : ctx->hint_width;
+		ctx->output_height = ctx->resized.height ? ctx->resized.height : ctx->hint_height;
+		ctx->initFramePool();
+		ctx->updateFrameSizeParams();
+		NVMPI_LOG(NVMPI_LOG_INFO, "pre-allocated frame pool at %ux%u from container hints",
+		          ctx->output_width, ctx->output_height);
+	}
+
 	ctx->dec_capture_loop = std::thread(dec_capture_loop_fcn,ctx);
 	pthread_setname_np(ctx->dec_capture_loop.native_handle(), "dec_capture");
 

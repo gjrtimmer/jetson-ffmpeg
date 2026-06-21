@@ -51,6 +51,8 @@ struct nvmpictx
 	unsigned int output_width{0};       //resolution delivered to the user (resized or coded)
 	unsigned int output_height{0};
 	nvSize resized{0, 0};               //requested hw downscale target; {0,0} = no resize
+	unsigned int hint_width{0};         //container-reported stream width (0 = unknown)
+	unsigned int hint_height{0};        //container-reported stream height (0 = unknown)
 
 	int numberCaptureBuffers{0};        //actual CAPTURE-plane DMA buffer count (min + 5)
 

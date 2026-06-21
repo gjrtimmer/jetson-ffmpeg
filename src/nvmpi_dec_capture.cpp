@@ -41,10 +41,24 @@ void respondToResolutionEvent(v4l2_format &format, v4l2_crop &crop,nvmpictx* ctx
 	ctx->session = NvBufferSessionCreate();
 #endif
 
-	ctx->deinitFramePool();
-	ctx->initFramePool();
-	//get dst_dma buffer params and set corresponding frame size and linesize in nvmpictx
-	ctx->updateFrameSizeParams();
+	/* Skip frame pool rebuild if the pool was pre-allocated at the same
+	 * dimensions by nvmpi_create_decoder (hint path). The first resolution-change
+	 * event will match when container headers were accurate — saves one
+	 * alloc/free cycle and reduces first-frame latency. On mismatch (or
+	 * mid-stream resolution changes) the pool is rebuilt at the correct size. */
+	if (!ctx->allocatedFrameBufs.empty() &&
+	    ctx->output_width == (ctx->resized.width ? ctx->resized.width : crop.c.width) &&
+	    ctx->output_height == (ctx->resized.height ? ctx->resized.height : crop.c.height))
+	{
+		NVMPI_LOG(NVMPI_LOG_DEBUG, "frame pool already allocated at %ux%u, skipping rebuild",
+		          ctx->output_width, ctx->output_height);
+	}
+	else
+	{
+		ctx->deinitFramePool();
+		ctx->initFramePool();
+		ctx->updateFrameSizeParams();
+	}
 
 	//reset buffer transformation params based on new resolution data
 	ctx->updateBufferTransformParams();

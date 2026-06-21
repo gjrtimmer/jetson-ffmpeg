@@ -105,6 +105,8 @@ typedef struct _NVDECPARAM{
 	int max_perf;            //non-zero: lift NVDEC clock governor (max clocks)
 	int disable_dpb;         //non-zero: skip decoded-picture-buffer reordering (low-latency)
 	int wait_timeout;        //blocking wait timeout in ms (0 = use default 500ms)
+	unsigned int width;      //stream width from container headers (0 = unknown/use resolution-change events)
+	unsigned int height;     //stream height from container headers (0 = unknown/use resolution-change events)
 } nvDecParam;
 
 //Compressed packet exchanged across the API boundary.
