@@ -45,7 +45,6 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 {
 	int ret;
 	log_level = LOG_LEVEL_INFO;
-	//log_level = LOG_LEVEL_DEBUG;
 	nvmpictx *ctx=new nvmpictx;
 	ctx->index=0;
 	ctx->width=param->width;
@@ -203,16 +202,13 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 			ctx->enc.reset(NvVideoEncoder::createVideoEncoder("enc0", O_NONBLOCK));
 		if (ctx->enc) break;
 		if (attempt < 2) {
-			std::cerr << "[libnvmpi][W]: V4L2 encoder device busy, "
-			          << "retrying (" << (attempt + 1) << "/3)..."
-			          << std::endl;
+			NVMPI_LOG(NVMPI_LOG_WARN, "V4L2 encoder device busy, retrying (%d/3)...", attempt + 1);
 			usleep(100000);  /* 100ms backoff */
 		}
 	}
 	if (!ctx->enc)
 	{
-		std::cerr << "[libnvmpi][E]: Could not create encoder "
-		          << "after 3 attempts" << std::endl;
+		NVMPI_LOG(NVMPI_LOG_ERROR, "Could not create encoder after 3 attempts");
 		delete ctx;
 		return NULL;
 	}
@@ -226,8 +222,7 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 	//NVMPI_ENC_CHUNK_SIZE — the same constant the wrapper uses for packets
 	ret = ctx->enc->setCapturePlaneFormat(ctx->encoder_pixfmt, ctx->width,ctx->height, NVMPI_ENC_CHUNK_SIZE);
 	if (ret < 0) {
-		std::cerr << "[libnvmpi][E]: Could not set capture plane format"
-		          << std::endl;
+		NVMPI_LOG(NVMPI_LOG_ERROR, "Could not set capture plane format");
 		goto cleanup;
 	}
 
@@ -257,8 +252,7 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 		ret = ctx->enc->setOutputPlaneFormat(ctx->raw_pixfmt, ctx->width,ctx->height);
 	}
 	if (ret < 0) {
-		std::cerr << "[libnvmpi][E]: Could not set output plane format"
-		          << std::endl;
+		NVMPI_LOG(NVMPI_LOG_ERROR, "Could not set output plane format");
 		goto cleanup;
 	}
 
@@ -317,11 +311,12 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 		if (ctx->ratecontrol == V4L2_MPEG_VIDEO_BITRATE_MODE_VBR)
 		{
 			uint32_t peak_bitrate;
-			//TODO log warning?
-			//peak must be >= target; derive 1.2x target if unset/invalid
-			if (ctx->peak_bitrate < ctx->bitrate)
+			/* peak must be >= target; derive 1.2x target if unset/invalid */
+			if (ctx->peak_bitrate < ctx->bitrate) {
 				peak_bitrate = 1.2f * ctx->bitrate;
-			else
+				NVMPI_LOG(NVMPI_LOG_WARN, "peak_bitrate %u below bitrate %u, auto-corrected to %u",
+				          ctx->peak_bitrate, ctx->bitrate, peak_bitrate);
+			} else
 				peak_bitrate = ctx->peak_bitrate;
 			ret = ctx->enc->setPeakBitrate(peak_bitrate);
 			TEST_ERROR(ret < 0, "Could not set encoder peak bitrate", ret);
@@ -380,31 +375,31 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 	ret = setup_output_dmabuf(ctx,ctx->packets_num); //V4L2_MEMORY_DMABUF
 #endif
 	if (ret < 0) {
-		std::cerr << "[libnvmpi][E]: Could not setup output plane" << std::endl;
+		NVMPI_LOG(NVMPI_LOG_ERROR, "Could not setup output plane");
 		goto cleanup;
 	}
 
 	ret = ctx->enc->capture_plane.setupPlane(V4L2_MEMORY_MMAP, ctx->packets_num, true, false);
 	if (ret < 0) {
-		std::cerr << "[libnvmpi][E]: Could not setup capture plane" << std::endl;
+		NVMPI_LOG(NVMPI_LOG_ERROR, "Could not setup capture plane");
 		goto cleanup;
 	}
 
 	ret = ctx->enc->subscribeEvent(V4L2_EVENT_EOS,0,0);
 	if (ret < 0) {
-		std::cerr << "[libnvmpi][E]: Could not subscribe EOS event" << std::endl;
+		NVMPI_LOG(NVMPI_LOG_ERROR, "Could not subscribe EOS event");
 		goto cleanup;
 	}
 
 	ret = ctx->enc->output_plane.setStreamStatus(true);
 	if (ret < 0) {
-		std::cerr << "[libnvmpi][E]: Error in output plane streamon" << std::endl;
+		NVMPI_LOG(NVMPI_LOG_ERROR, "Error in output plane streamon");
 		goto cleanup;
 	}
 
 	ret = ctx->enc->capture_plane.setStreamStatus(true);
 	if (ret < 0) {
-		std::cerr << "[libnvmpi][E]: Error in capture plane streamon" << std::endl;
+		NVMPI_LOG(NVMPI_LOG_ERROR, "Error in capture plane streamon");
 		goto cleanup;
 	}
 
@@ -413,8 +408,7 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 		ctx->enc->capture_plane.setDQThreadCallback(encoder_capture_plane_dq_callback);
 		ret = ctx->enc->capture_plane.startDQThread(ctx);
 		if (ret < 0) {
-			std::cerr << "[libnvmpi][E]: Could not start DQ thread"
-			          << std::endl;
+			NVMPI_LOG(NVMPI_LOG_ERROR, "Could not start DQ thread");
 			goto cleanup;
 		}
 		ctx->dq_thread_started = true;
@@ -427,7 +421,7 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
         // Set encoder poll thread for non-blocking io mode
         pthread_create(&ctx->enc_pollthread, NULL, encoder_pollthread_fcn, ctx);
         pthread_setname_np(ctx->enc_pollthread, "EncPollThread");
-        cout << "Created the PollThread and Encoder Thread \n";
+        NVMPI_LOG(NVMPI_LOG_DEBUG, "created poll thread and encoder thread");
         */
     }
 
@@ -443,8 +437,7 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 
 		ret = ctx->enc->capture_plane.qBuffer(v4l2_buf, NULL);
 		if (ret < 0) {
-			std::cerr << "[libnvmpi][E]: Error while queueing buffer at "
-			          << "capture plane (buf " << i << ")" << std::endl;
+			NVMPI_LOG(NVMPI_LOG_ERROR, "Error while queueing buffer at capture plane (buf %u)", i);
 			goto cleanup;
 		}
 	}
@@ -539,7 +532,7 @@ int nvmpi_encoder_put_frame(nvmpictx* ctx,nvFrame* frame)
 		ret = ctx->enc->output_plane.mapOutputBuffers(v4l2_buf, ctx->output_plane_fd[v4l2_buf.index]);
 		if (ret < 0)
 		{
-			cerr << "Error while mapping buffer at output plane" << endl;
+			NVMPI_LOG(NVMPI_LOG_ERROR, "Error while mapping buffer at output plane");
 		}
 #endif
 	}
@@ -552,7 +545,7 @@ int nvmpi_encoder_put_frame(nvmpictx* ctx,nvFrame* frame)
 		ret = ctx->enc->output_plane.dqBuffer(v4l2_buf, &nvBuffer, NULL, -1);
 		if (ret < 0)
 		{
-			cerr << "Error DQing buffer at output plane" << std::endl;
+			NVMPI_LOG(NVMPI_LOG_ERROR, "Error DQing buffer at output plane");
 			return false;
 		}
 	}
@@ -583,18 +576,18 @@ int nvmpi_encoder_put_frame(nvmpictx* ctx,nvFrame* frame)
 		ret = NvBufSurfaceFromFd (nvBuffer->planes[j].fd, (void**)(&nvbuf_surf));
 		if (ret < 0)
 		{
-			cerr << "Error while NvBufSurfaceFromFd" << endl;
+			NVMPI_LOG(NVMPI_LOG_ERROR, "Error while NvBufSurfaceFromFd");
 		}
 		ret = NvBufSurfaceSyncForDevice (nvbuf_surf, 0, j);
 		if (ret < 0)
 		{
-			cerr << "Error while NvBufSurfaceSyncForDevice at output plane for V4L2_MEMORY_DMABUF" << endl;
+			NVMPI_LOG(NVMPI_LOG_ERROR, "Error while NvBufSurfaceSyncForDevice at output plane for V4L2_MEMORY_DMABUF");
 		}
 #else
 		ret = NvBufferMemSyncForDevice (nvBuffer->planes[j].fd, j, (void **)&nvBuffer->planes[j].data);
 		if (ret < 0)
 		{
-			cerr << "Error while NvBufferMemSyncForDevice at output plane for V4L2_MEMORY_DMABUF" << endl;
+			NVMPI_LOG(NVMPI_LOG_ERROR, "Error while NvBufferMemSyncForDevice at output plane for V4L2_MEMORY_DMABUF");
 		}
 #endif
 	}
@@ -609,8 +602,7 @@ int nvmpi_encoder_put_frame(nvmpictx* ctx,nvFrame* frame)
 
 	ret = ctx->enc->output_plane.qBuffer(v4l2_buf, NULL);
 	if (ret < 0) {
-		std::cerr << "[libnvmpi][E]: Error while queueing buffer at output plane"
-		          << " (code=" << ret << ")" << std::endl;
+		NVMPI_LOG(NVMPI_LOG_ERROR, "Error while queueing buffer at output plane (code=%d)", ret);
 		return ret;
 	}
 
@@ -711,14 +703,14 @@ int nvmpi_encoder_close(nvmpictx* ctx)
             ret = ctx->enc->output_plane.unmapOutputBuffers(i, ctx->output_plane_fd[i]);
             if (ret < 0)
             {
-                cerr << "Error while unmapping buffer at output plane" << endl;
+                NVMPI_LOG(NVMPI_LOG_ERROR, "Error while unmapping buffer at output plane");
             }
 
             ret = NvBufSurf::NvDestroy(ctx->output_plane_fd[i]);
             ctx->output_plane_fd[i] = -1;
             if(ret < 0)
             {
-                cerr << "Failed to Destroy NvBuffer\n" << endl;
+                NVMPI_LOG(NVMPI_LOG_ERROR, "Failed to Destroy NvBuffer");
                 return ret;
             }
         }

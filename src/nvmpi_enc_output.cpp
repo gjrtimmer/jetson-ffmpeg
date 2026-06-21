@@ -15,14 +15,14 @@ bool encoder_capture_plane_dq_callback(struct v4l2_buffer *v4l2_buf, NvBuffer * 
 
 	if (v4l2_buf == NULL)
 	{
-		cerr << "Error while dequeing buffer from output plane" << endl;
+		NVMPI_LOG(NVMPI_LOG_ERROR, "error while dequeing buffer from output plane");
 		return false;
 	}
 
 	if (buffer->planes[0].bytesused == 0)
 	{
 		ctx->capPlaneGotEOS.store(true, std::memory_order_release);
-		//cout << "Got 0 size buffer in capture \n"; //TODO  log it
+		NVMPI_LOG(NVMPI_LOG_DEBUG, "got 0-size buffer in capture (EOS signal)");
 		return false;
 	}
 
@@ -35,14 +35,13 @@ bool encoder_capture_plane_dq_callback(struct v4l2_buffer *v4l2_buf, NvBuffer * 
 	if(!pkt)
 	{
 		//TODO wait for user to read buffer. make send_frame return AVERROR(EAGAIN) until avcodec_receive_packet() is called
-		//TODO pass warning to avlog
-		fprintf(stderr, "[libnvmpi][W]: EAGAIN. User must read output. nvmpi encoder packet memory pool is empty! Packet will be dropped. There may be artifacts in the output video.\n");
+		NVMPI_LOG(NVMPI_LOG_WARN, "EAGAIN: user must read output; encoder packet pool empty; packet dropped; there may be artifacts in output video");
 	}
 	else if (buffer->planes[0].bytesused > NVMPI_ENC_CHUNK_SIZE)
 	{
 		//pool packet buffers are NVMPI_ENC_CHUNK_SIZE bytes; copying a
 		//larger encoded frame would overflow them
-		fprintf(stderr, "[libnvmpi][E]: encoded frame (%u bytes) exceeds packet buffer (%u); frame dropped. There will be artifacts in the output video.\n",
+		NVMPI_LOG(NVMPI_LOG_ERROR, "encoded frame (%u bytes) exceeds packet buffer (%u); frame dropped; there will be artifacts in output video",
 			buffer->planes[0].bytesused, (unsigned)(NVMPI_ENC_CHUNK_SIZE));
 		ctx->pktPool->qEmptyBuf(pkt);
 	}
@@ -80,7 +79,7 @@ int setup_output_dmabuf(nvmpictx *ctx, uint32_t num_buffers )
     ret = ctx->enc->output_plane.reqbufs(V4L2_MEMORY_DMABUF,num_buffers);
     if(ret)
     {
-        cerr << "reqbufs failed for output plane V4L2_MEMORY_DMABUF" << endl;
+        NVMPI_LOG(NVMPI_LOG_ERROR, "reqbufs failed for output plane V4L2_MEMORY_DMABUF");
         return ret;
     }
     for (uint32_t i = 0; i < ctx->enc->output_plane.getNumBuffers(); i++)
@@ -143,7 +142,7 @@ int setup_output_dmabuf(nvmpictx *ctx, uint32_t num_buffers )
         ret = NvBufSurf::NvAllocate(&cParams, 1, &fd);
         if(ret < 0)
         {
-            cerr << "Failed to create NvBuffer" << endl;
+            NVMPI_LOG(NVMPI_LOG_ERROR, "failed to create NvBuffer");
             return ret;
         }
         ctx->output_plane_fd[i]=fd;

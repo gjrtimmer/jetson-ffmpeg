@@ -19,7 +19,7 @@
 #include "NVMPI_bufPool.hpp"
 #include "nvmpi_frame_buffer.hpp"
 #include <vector>
-#include <iostream>
+#include "nvmpi_log.h"
 #include <atomic>
 #include <cstring>
 
@@ -36,10 +36,9 @@
 
 /* Reuse the error-reporting macro from the V4L2 decoder. */
 #define JPEG_ERROR(condition, message)    \
-	if (condition)                    \
-{                                         \
-	std::cerr << "[libnvmpi][jpeg] " << message << std::endl; \
-}
+	if (condition) {                     \
+		NVMPI_LOG_SUB(NVMPI_LOG_ERROR, "jpeg", "%s", message); \
+	}
 
 /*
  * JPEG decoder context.

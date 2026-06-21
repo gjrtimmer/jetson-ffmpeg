@@ -7,7 +7,7 @@
 #include <fcntl.h>
 #include <malloc.h>
 #include <vector>
-#include <iostream>
+#include "nvmpi_log.h"
 #include <thread>
 #include <unistd.h>
 #include <memory>
@@ -19,9 +19,8 @@
 //function that has a `cleanup:` label and an `int ret` in scope.
 #define TEST_ERROR(condition, message, errorCode)         \
 	if (condition) {                                     \
-		std::cerr << "[libnvmpi][E]: " << message        \
-		          << " (code=" << (errorCode) << ")"     \
-		          << std::endl;                           \
+		NVMPI_LOG(NVMPI_LOG_ERROR, "%s (code=%d)",       \
+		          message, (int)(errorCode));             \
 		goto cleanup;                                    \
 	}
 

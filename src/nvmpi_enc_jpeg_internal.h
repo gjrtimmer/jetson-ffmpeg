@@ -18,7 +18,7 @@
 #include "NvJpegEncoder.h"
 #include "nvUtils2NvBuf.h"
 #include "nvmpi_frame_buffer.hpp"
-#include <iostream>
+#include "nvmpi_log.h"
 #include <atomic>
 #include <cstring>
 
