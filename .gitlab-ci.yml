@@ -196,6 +196,7 @@ build:nvmpi:jp5:
     - cd /tmp/ffmpeg
     - export PKG_CONFIG_PATH="${NVMPI_PREFIX}/lib/pkgconfig:${NVMPI_PREFIX}/share/pkgconfig"
     - DAV1D_FLAG=""; if pkg-config --exists 'dav1d >= 1.0.0' 2>/dev/null; then DAV1D_FLAG="--enable-libdav1d"; fi
+    - GNUTLS_FLAG=""; if pkg-config --exists gnutls 2>/dev/null; then GNUTLS_FLAG="--enable-gnutls"; fi
     - >-
       ./configure
       --prefix="${FFMPEG_PREFIX}"
@@ -205,7 +206,7 @@ build:nvmpi:jp5:
       --extra-ldflags="-L${CI_PROJECT_DIR}/build -L${CI_PROJECT_DIR}/stubs -Wl,-rpath-link,${CI_PROJECT_DIR}/stubs"
       --enable-libx264 --enable-libx265 --enable-libvpx --enable-libopus
       --enable-libmp3lame --enable-libvorbis ${DAV1D_FLAG}
-      --enable-libass --enable-libfreetype --enable-gnutls
+      --enable-libass --enable-libfreetype ${GNUTLS_FLAG}
     - make -j"$(nproc)"
     - make install
     - cp -a ${NVMPI_PREFIX}/lib/libnvmpi* ${FFMPEG_PREFIX}/lib/
