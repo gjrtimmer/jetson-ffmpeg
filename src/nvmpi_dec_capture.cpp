@@ -167,8 +167,9 @@ void dec_capture_loop_fcn(void *arg)
      * Keyed on got_resolution_change (not eos): even when EOS arrived
      * early, the capture plane MUST be set up so the V4L2 decoder has
      * valid destination buffers for any frames it has already decoded. */
-    if (got_resolution_change)
+    if (got_resolution_change) {
         respondToResolutionEvent(v4l2Format, v4l2Crop, ctx);
+    }
 
 	while (!(ctx->eos.load() || dec->isInError()))
 	{

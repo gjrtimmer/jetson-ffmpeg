@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.9)
+cmake_minimum_required(VERSION 3.10)
 project(nvmpi VERSION 3.0.0 DESCRIPTION "nvidia multimedia api")
 
 set(JETSON_MULTIMEDIA_API_DIR_DEFAULT "/usr/src/jetson_multimedia_api")
