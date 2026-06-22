@@ -1,14 +1,16 @@
 #!/usr/bin/env bash
-# Create the release: changelog -> GitLab Release (+ generic package assets)
-# -> optional GitHub mirror. Intended to run inside the release-tools image on
-# a tag pipeline (see .gitlab-ci.yml "release" job). Not meant for local use,
-# but every external dependency is an env var so it can be dry-run.
+# Create the release: changelog -> S3 upload -> GitLab Release (+ generic
+# package assets). Intended to run inside the release-tools image on a tag
+# pipeline (see .gitlab-ci.yml "release" job). Not meant for local use, but
+# every external dependency is an env var so it can be dry-run.
 #
 # Required (provided by GitLab CI on a tag pipeline):
 #   CI_COMMIT_TAG, CI_API_V4_URL, CI_PROJECT_ID, CI_JOB_TOKEN, CI_PROJECT_URL
-# Optional (enables the GitHub mirror when both are set):
-#   GITHUB_REPO   - owner/repo, owner/repo.git, or https://github.com/owner/repo
-#   GITHUB_TOKEN  - PAT with contents:write
+# Required (S3/MinIO upload):
+#   S3_HOST          - MinIO endpoint (https://... or http://... for in-cluster)
+#   S3_CLIENT_ID     - MinIO access key
+#   S3_CLIENT_SECRET - MinIO secret key
+#   S3_BUCKET        - target bucket name
 # Inputs:
 #   dist/*.tar.gz - per-version archives produced by scripts/package.sh
 set -euo pipefail
@@ -35,10 +37,47 @@ git-cliff --config cliff.toml --latest --strip header -o NOTES.md || {
 }
 echo "----- NOTES.md -----"; cat NOTES.md; echo "--------------------"
 
-# --- 2. upload archives to the GitLab generic package registry -----------
+# --- 2. upload archives + changelog to S3 (MinIO) -----------------------
 shopt -s nullglob
 ARCHIVES=( "${DIST}"/*.tar.gz )
 if [ ${#ARCHIVES[@]} -eq 0 ]; then echo "[E] no archives in ${DIST}" >&2; exit 1; fi
+
+: "${S3_HOST:?S3_HOST is required}"
+: "${S3_CLIENT_ID:?S3_CLIENT_ID is required}"
+: "${S3_CLIENT_SECRET:?S3_CLIENT_SECRET is required}"
+: "${S3_BUCKET:?S3_BUCKET is required}"
+
+# Determine secure/insecure based on endpoint scheme
+MC_SECURE="true"
+if [[ "${S3_HOST}" == http://* ]]; then
+    MC_SECURE="false"
+    echo "[i] S3 endpoint uses http — insecure mode (in-cluster)"
+fi
+
+# Configure mc alias for this pipeline run
+ALIAS_FLAGS=(--api S3v4 --path auto)
+[ "${MC_SECURE}" = "false" ] && ALIAS_FLAGS+=(--insecure)
+mc alias set s3 "${S3_HOST}" "${S3_CLIENT_ID}" "${S3_CLIENT_SECRET}" \
+    "${ALIAS_FLAGS[@]}" 2>/dev/null
+
+S3_PREFIX="s3/${S3_BUCKET}/releases/${VERSION}"
+MC_FLAGS=()
+[ "${MC_SECURE}" = "false" ] && MC_FLAGS+=(--insecure)
+
+echo "[i] uploading ${#ARCHIVES[@]} archives to ${S3_PREFIX}/"
+for f in "${ARCHIVES[@]}"; do
+    name="$(basename "$f")"
+    echo "  -> ${name}"
+    mc cp "${MC_FLAGS[@]}" "$f" "${S3_PREFIX}/${name}"
+done
+
+echo "[i] uploading CHANGELOG.md to ${S3_PREFIX}/"
+mc cp "${MC_FLAGS[@]}" NOTES.md "${S3_PREFIX}/CHANGELOG.md"
+
+echo "[i] verifying S3 upload"
+mc ls "${MC_FLAGS[@]}" "${S3_PREFIX}/" | head -20
+
+# --- 3. upload archives to GitLab generic package registry ---------------
 
 ASSET_ARGS=()
 PKG_BASE="${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/generic/jetson-ffmpeg/${VERSION}"
@@ -52,7 +91,7 @@ for f in "${ARCHIVES[@]}"; do
     ASSET_ARGS+=( --assets-link "{\"name\":\"${name}\",\"url\":\"${url}\",\"link_type\":\"package\"}" )
 done
 
-# --- 3. GitLab release ---------------------------------------------------
+# --- 4. GitLab release ---------------------------------------------------
 # Idempotent: delete any existing release for this tag before creating.
 # Retried pipelines and manual re-runs hit a 409 "Release already exists"
 # without this. Packages (step 2) are registry-scoped and unaffected.
@@ -71,21 +110,5 @@ release-cli create \
     --description "NOTES.md" \
     "${ASSET_ARGS[@]}"
 
-# --- 4. GitHub mirror (optional) -----------------------------------------
-if [ -n "${GITHUB_REPO:-}" ] && [ -n "${GITHUB_TOKEN:-}" ]; then
-    repo="${GITHUB_REPO#https://github.com/}"; repo="${repo%.git}"; repo="${repo%/}"
-    echo "[i] mirroring release to GitHub repo ${repo}"
-    export GH_TOKEN="${GITHUB_TOKEN}"
-    if gh release create "${TAG}" "${ARCHIVES[@]}" \
-            --repo "${repo}" --title "jetson-ffmpeg ${VERSION}" --notes-file NOTES.md; then
-        echo "[OK] GitHub release created"
-    else
-        echo "[!] gh release create failed (release may exist?) — trying asset upload"
-        gh release upload "${TAG}" "${ARCHIVES[@]}" --repo "${repo}" --clobber || \
-            echo "[!] GitHub mirror failed; GitLab release is unaffected"
-    fi
-else
-    echo "[i] GITHUB_REPO/GITHUB_TOKEN not set — skipping GitHub mirror"
-fi
 
 echo "=== release ${TAG} done ==="

@@ -362,9 +362,12 @@ package:ffmpeg-8.0: { extends: .package, variables: { FFVER: "8.0" } }
 package:ffmpeg-8.1: { extends: .package, variables: { FFVER: "8.1" } }
 
 # ---------------------------------------------------------------------------
-# Stage: release — changelog + GitLab Release (+ generic package assets), then
-# mirror to GitHub. Runs in the release-tools image from DockerHub (rebuilt
-# weekly by scheduled pipeline). Tag pipelines only.
+# Stage: release — changelog + S3 upload + GitLab Release (+ generic package
+# assets). Runs in the release-tools image from DockerHub
+# (rebuilt weekly by scheduled pipeline). Tag pipelines only.
+#
+# S3/MinIO CI variables (masked, project-level):
+#   S3_HOST, S3_CLIENT_ID, S3_CLIENT_SECRET, S3_BUCKET
 # ---------------------------------------------------------------------------
 release:
   stage: release
@@ -381,7 +384,12 @@ release:
     - "package:ffmpeg-8.1"
   variables:
     GIT_DEPTH: "0"   # full history + tags for git-cliff
-  before_script: []
+  before_script:
+    - |
+      echo "[i] installing mc (MinIO client)"
+      curl -fsSL https://dl.min.io/client/mc/release/linux-arm64/mc -o /usr/local/bin/mc
+      chmod +x /usr/local/bin/mc
+      mc --version
   script:
     - git fetch --tags --force || true
     - bash ./scripts/release.sh
