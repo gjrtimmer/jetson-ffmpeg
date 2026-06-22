@@ -396,6 +396,14 @@ and wait for them to confirm before continuing.
 validates against the live GitLab instance (resolves YAML anchors, `extends`,
 `rules`, etc.), which a plain YAML parse cannot.
 
+**Audit CI trigger rules holistically.** When editing `.gitlab-ci.yml`, review
+`rules:` for ALL jobs — not just those directly modified. Check for unintended
+auto-triggers, missing variable gates, and `changes:paths` rules that fire
+when renamed/new files land on the default branch. Lesson: docker image build
+jobs had `changes:paths` rules that bypassed the `BUILD_IMAGES` variable gate,
+causing hour-long builds to auto-trigger on every main push that touched a
+Dockerfile.
+
 ## Working agreements
 
 - A "go" approves the plan **as presented**. If execution reveals the plan is
@@ -486,6 +494,13 @@ validates against the live GitLab instance (resolves YAML anchors, `extends`,
   push, invoke `/retro` first to capture this session's lessons and improve the
   rules/skills, THEN push. The pre-push gate order is: smoke-all green →
   `/retro` → push.
+- **Verify current branch before file edits.** Run `git branch --show-current`
+  before any Write/Edit to a tracked file. Wrong-branch edits are expensive to
+  undo and may corrupt an in-progress release or MR.
+- **Validate release scope before tagging.** Before creating a release tag,
+  list all planned items (issues, MRs, fixes) and verify each has landed on
+  main via `git log`. A premature release requires retraction — deleting tags,
+  releases on both GitLab and GitHub, and re-creating everything.
 
 ## Upstream notification rule
 
