@@ -1,0 +1,1806 @@
+diff --git a/configure b/configure
+index 1759694..9e80156 100755
+--- a/configure
++++ b/configure
+@@ -371,6 +371,7 @@ External library support:
+   --disable-vaapi          disable Video Acceleration API (mainly Unix/Intel) code [autodetect]
+   --disable-vdpau          disable Nvidia Video Decode and Presentation API for Unix code [autodetect]
+   --disable-videotoolbox   disable VideoToolbox code [autodetect]
++  --enable-nvmpi           enable nvmpi code [no]
+   --disable-vulkan         disable Vulkan code [autodetect]
+   --enable-vulkan-static   statically link to libvulkan [no]
+ 
+@@ -2156,6 +2157,7 @@ HWACCEL_LIBRARY_NONFREE_LIST="
+ "
+ 
+ HWACCEL_LIBRARY_LIST="
++    nvmpi
+     $HWACCEL_LIBRARY_NONFREE_LIST
+     libmfx
+     libvpl
+@@ -3580,6 +3582,9 @@ h264_mediacodec_encoder_deps="mediacodec"
+ h264_mediacodec_encoder_select="extract_extradata_bsf h264_metadata"
+ h264_mf_encoder_deps="mediafoundation"
+ h264_mmal_decoder_deps="mmal"
++h264_nvmpi_encoder_deps="nvmpi"
++h264_nvmpi_decoder_deps="nvmpi"
++h264_nvmpi_decoder_select="h264_mp4toannexb_bsf"
+ h264_nvenc_encoder_deps="nvenc"
+ h264_nvenc_encoder_select="atsc_a53"
+ h264_oh_decoder_deps="ohcodec"
+@@ -3606,6 +3611,9 @@ hevc_mediacodec_decoder_select="hevc_mp4toannexb_bsf hevc_parser"
+ hevc_mediacodec_encoder_deps="mediacodec"
+ hevc_mediacodec_encoder_select="extract_extradata_bsf hevc_metadata"
+ hevc_mf_encoder_deps="mediafoundation"
++hevc_nvmpi_encoder_deps="nvmpi"
++hevc_nvmpi_decoder_deps="nvmpi"
++hevc_nvmpi_decoder_select="hevc_mp4toannexb_bsf"
+ hevc_nvenc_encoder_deps="nvenc"
+ hevc_nvenc_encoder_select="atsc_a53"
+ hevc_oh_decoder_deps="ohcodec"
+@@ -3623,6 +3631,8 @@ hevc_v4l2m2m_decoder_deps="v4l2_m2m hevc_v4l2_m2m"
+ hevc_v4l2m2m_decoder_select="hevc_mp4toannexb_bsf"
+ hevc_v4l2m2m_encoder_deps="v4l2_m2m hevc_v4l2_m2m"
+ mjpeg_cuvid_decoder_deps="cuvid"
++mjpeg_nvmpi_decoder_deps="nvmpi"
++mjpeg_nvmpi_encoder_deps="nvmpi"
+ mjpeg_qsv_decoder_select="qsvdec"
+ mjpeg_qsv_encoder_deps="libmfx"
+ mjpeg_qsv_encoder_select="qsvenc"
+@@ -3634,6 +3644,7 @@ mp3_mediacodec_decoder_select="mpegaudioheader"
+ mpeg1_cuvid_decoder_deps="cuvid"
+ mpeg1_v4l2m2m_decoder_deps="v4l2_m2m mpeg1_v4l2_m2m"
+ mpeg2_cuvid_decoder_deps="cuvid"
++mpeg2_nvmpi_decoder_deps="nvmpi"
+ mpeg2_mmal_decoder_deps="mmal"
+ mpeg2_mediacodec_decoder_deps="mediacodec"
+ mpeg2_qsv_decoder_select="qsvdec"
+@@ -3641,6 +3652,7 @@ mpeg2_qsv_encoder_select="qsvenc"
+ mpeg2_vaapi_encoder_select="cbs_mpeg2 vaapi_encode"
+ mpeg2_v4l2m2m_decoder_deps="v4l2_m2m mpeg2_v4l2_m2m"
+ mpeg4_cuvid_decoder_deps="cuvid"
++mpeg4_nvmpi_decoder_deps="nvmpi"
+ mpeg4_mediacodec_decoder_deps="mediacodec"
+ mpeg4_mediacodec_encoder_deps="mediacodec"
+ mpeg4_mediacodec_encoder_select="extract_extradata_bsf"
+@@ -3653,6 +3665,7 @@ vc1_mmal_decoder_deps="mmal"
+ vc1_qsv_decoder_select="qsvdec"
+ vc1_v4l2m2m_decoder_deps="v4l2_m2m vc1_v4l2_m2m"
+ vp8_cuvid_decoder_deps="cuvid"
++vp8_nvmpi_decoder_deps="nvmpi"
+ vp8_mediacodec_decoder_deps="mediacodec"
+ vp8_mediacodec_encoder_deps="mediacodec"
+ vp8_qsv_decoder_select="qsvdec"
+@@ -3663,6 +3676,7 @@ vp8_v4l2m2m_decoder_deps="v4l2_m2m vp8_v4l2_m2m"
+ vp8_v4l2m2m_encoder_deps="v4l2_m2m vp8_v4l2_m2m"
+ vp9_amf_decoder_deps="amf"
+ vp9_cuvid_decoder_deps="cuvid"
++vp9_nvmpi_decoder_deps="nvmpi"
+ vp9_mediacodec_decoder_deps="mediacodec"
+ vp9_mediacodec_encoder_deps="mediacodec"
+ vp9_qsv_decoder_select="qsvdec"
+@@ -7423,6 +7437,7 @@ enabled libvvenc          && require_pkg_config libvvenc "libvvenc >= 1.6.1" "vv
+ enabled libwebp           && {
+     enabled libwebp_encoder      && require_pkg_config libwebp "libwebp >= 0.2.0" webp/encode.h WebPGetEncoderVersion
+     enabled libwebp_anim_encoder && check_pkg_config libwebp_anim_encoder "libwebpmux >= 0.4.0" webp/mux.h WebPAnimEncoderOptionsInit; }
++enabled nvmpi		  && require_pkg_config nvmpi nvmpi nvmpi.h nvmpi_create_decoder
+ enabled libx264           && require_pkg_config libx264 x264 "stdint.h x264.h" x264_encoder_encode &&
+                              require_cpp_condition libx264 x264.h "X264_BUILD >= 155" && {
+                              [ "$toolchain" != "msvc" ] ||
+diff --git a/libavcodec/Makefile b/libavcodec/Makefile
+index 1410bd8..962ded6 100644
+--- a/libavcodec/Makefile
++++ b/libavcodec/Makefile
+@@ -439,6 +439,8 @@ OBJS-$(CONFIG_H264_MEDIACODEC_DECODER) += mediacodecdec.o
+ OBJS-$(CONFIG_H264_MEDIACODEC_ENCODER) += mediacodecenc.o
+ OBJS-$(CONFIG_H264_MF_ENCODER)         += mfenc.o mf_utils.o
+ OBJS-$(CONFIG_H264_MMAL_DECODER)       += mmaldec.o
++OBJS-$(CONFIG_H264_NVMPI_DECODER)      += nvmpi_dec.o
++OBJS-$(CONFIG_H264_NVMPI_ENCODER)      += nvmpi_enc.o
+ OBJS-$(CONFIG_H264_NVENC_ENCODER)      += nvenc_h264.o nvenc.o
+ OBJS-$(CONFIG_H264_OH_DECODER)         += ohcodec.o ohdec.o
+ OBJS-$(CONFIG_H264_OH_ENCODER)         += ohcodec.o ohenc.o
+@@ -470,6 +472,8 @@ OBJS-$(CONFIG_HEVC_D3D12VA_ENCODER)    += d3d12va_encode_hevc.o h265_profile_lev
+ OBJS-$(CONFIG_HEVC_MEDIACODEC_DECODER) += mediacodecdec.o
+ OBJS-$(CONFIG_HEVC_MEDIACODEC_ENCODER) += mediacodecenc.o
+ OBJS-$(CONFIG_HEVC_MF_ENCODER)         += mfenc.o mf_utils.o
++OBJS-$(CONFIG_HEVC_NVMPI_DECODER)      += nvmpi_dec.o
++OBJS-$(CONFIG_HEVC_NVMPI_ENCODER)      += nvmpi_enc.o
+ OBJS-$(CONFIG_HEVC_NVENC_ENCODER)      += nvenc_hevc.o nvenc.o
+ OBJS-$(CONFIG_HEVC_OH_DECODER)         += ohcodec.o ohdec.o
+ OBJS-$(CONFIG_HEVC_OH_ENCODER)         += ohcodec.o ohenc.o
+@@ -537,6 +541,8 @@ OBJS-$(CONFIG_MJPEG_QSV_DECODER)       += qsvdec.o
+ OBJS-$(CONFIG_MJPEG_ENCODER)           += mjpegenc.o mjpegenc_common.o \
+                                           mjpegenc_huffman.o
+ OBJS-$(CONFIG_MJPEGB_DECODER)          += mjpegbdec.o
++OBJS-$(CONFIG_MJPEG_NVMPI_DECODER)      += nvmpi_dec.o
++OBJS-$(CONFIG_MJPEG_NVMPI_ENCODER)      += nvmpi_enc_jpeg.o
+ OBJS-$(CONFIG_MJPEG_CUVID_DECODER)     += cuviddec.o
+ OBJS-$(CONFIG_MJPEG_QSV_ENCODER)       += qsvenc_jpeg.o
+ OBJS-$(CONFIG_MJPEG_VAAPI_ENCODER)     += vaapi_encode_mjpeg.o
+@@ -577,6 +583,7 @@ OBJS-$(CONFIG_MPEG2_QSV_DECODER)       += qsvdec.o
+ OBJS-$(CONFIG_MPEG2_QSV_ENCODER)       += qsvenc_mpeg2.o
+ OBJS-$(CONFIG_MPEG2VIDEO_DECODER)      += mpeg12dec.o mpeg12.o mpeg12data.o
+ OBJS-$(CONFIG_MPEG2VIDEO_ENCODER)      += mpeg12enc.o
++OBJS-$(CONFIG_MPEG2_NVMPI_DECODER)      += nvmpi_dec.o
+ OBJS-$(CONFIG_MPEG2_CUVID_DECODER)     += cuviddec.o
+ OBJS-$(CONFIG_MPEG2_MEDIACODEC_DECODER) += mediacodecdec.o
+ OBJS-$(CONFIG_MPEG2_VAAPI_ENCODER)     += vaapi_encode_mpeg2.o
+@@ -584,6 +591,7 @@ OBJS-$(CONFIG_MPEG2_V4L2M2M_DECODER)   += v4l2_m2m_dec.o
+ OBJS-$(CONFIG_MPEG4_DECODER)           += mpeg4videodec.o mpeg4videodsp.o \
+                                           xvididct.o
+ OBJS-$(CONFIG_MPEG4_ENCODER)           += mpeg4videoenc.o
++OBJS-$(CONFIG_MPEG4_NVMPI_DECODER)      += nvmpi_dec.o
+ OBJS-$(CONFIG_MPEG4_CUVID_DECODER)     += cuviddec.o
+ OBJS-$(CONFIG_MPEG4_MEDIACODEC_DECODER) += mediacodecdec.o
+ OBJS-$(CONFIG_MPEG4_MEDIACODEC_ENCODER) += mediacodecenc.o
+@@ -813,6 +821,7 @@ OBJS-$(CONFIG_VP6_DECODER)             += vp6.o vp56.o vp56data.o \
+                                           vp6dsp.o vpx_rac.o
+ OBJS-$(CONFIG_VP7_DECODER)             += vp8.o vp8data.o vpx_rac.o
+ OBJS-$(CONFIG_VP8_DECODER)             += vp8.o vp8data.o vpx_rac.o
++OBJS-$(CONFIG_VP8_NVMPI_DECODER)      += nvmpi_dec.o
+ OBJS-$(CONFIG_VP8_CUVID_DECODER)       += cuviddec.o
+ OBJS-$(CONFIG_VP8_MEDIACODEC_DECODER)  += mediacodecdec.o
+ OBJS-$(CONFIG_VP8_MEDIACODEC_ENCODER)  += mediacodecenc.o
+@@ -825,6 +834,7 @@ OBJS-$(CONFIG_VP9_DECODER)             += vp9.o vp9data.o vp9dsp.o vp9lpf.o vp9r
+                                           vp9block.o vp9prob.o vp9mvs.o vpx_rac.o \
+                                           vp9dsp_8bpp.o vp9dsp_10bpp.o vp9dsp_12bpp.o
+ OBJS-$(CONFIG_VP9_AMF_DECODER)         += amfdec.o
++OBJS-$(CONFIG_VP9_NVMPI_DECODER)      += nvmpi_dec.o
+ OBJS-$(CONFIG_VP9_CUVID_DECODER)       += cuviddec.o
+ OBJS-$(CONFIG_VP9_MEDIACODEC_DECODER)  += mediacodecdec.o
+ OBJS-$(CONFIG_VP9_MEDIACODEC_ENCODER)  += mediacodecenc.o
+diff --git a/libavcodec/allcodecs.c b/libavcodec/allcodecs.c
+index 695214f..7c6340c 100644
+--- a/libavcodec/allcodecs.c
++++ b/libavcodec/allcodecs.c
+@@ -152,6 +152,8 @@ extern const FFCodec ff_h263p_encoder;
+ extern const FFCodec ff_h263p_decoder;
+ extern const FFCodec ff_h263_v4l2m2m_decoder;
+ extern const FFCodec ff_h264_decoder;
++extern const FFCodec ff_h264_nvmpi_decoder;
++extern const FFCodec ff_h264_nvmpi_encoder;
+ extern const FFCodec ff_h264_v4l2m2m_decoder;
+ extern const FFCodec ff_h264_mediacodec_decoder;
+ extern const FFCodec ff_h264_mediacodec_encoder;
+@@ -162,6 +164,8 @@ extern const FFCodec ff_h264_rkmpp_encoder;
+ extern const FFCodec ff_hap_encoder;
+ extern const FFCodec ff_hap_decoder;
+ extern const FFCodec ff_hevc_decoder;
++extern const FFCodec ff_hevc_nvmpi_decoder;
++extern const FFCodec ff_hevc_nvmpi_encoder;
+ extern const FFCodec ff_hevc_qsv_decoder;
+ extern const FFCodec ff_hevc_rkmpp_decoder;
+ extern const FFCodec ff_hevc_rkmpp_encoder;
+@@ -202,6 +206,8 @@ extern const FFCodec ff_media100_decoder;
+ extern const FFCodec ff_mimic_decoder;
+ extern const FFCodec ff_mjpeg_encoder;
+ extern const FFCodec ff_mjpeg_decoder;
++extern const FFCodec ff_mjpeg_nvmpi_decoder;
++extern const FFCodec ff_mjpeg_nvmpi_encoder;
+ extern const FFCodec ff_mjpegb_decoder;
+ extern const FFCodec ff_mmvideo_decoder;
+ extern const FFCodec ff_mobiclip_decoder;
+@@ -210,8 +216,10 @@ extern const FFCodec ff_mpeg1video_encoder;
+ extern const FFCodec ff_mpeg1video_decoder;
+ extern const FFCodec ff_mpeg2video_encoder;
+ extern const FFCodec ff_mpeg2video_decoder;
++extern const FFCodec ff_mpeg2_nvmpi_decoder;
+ extern const FFCodec ff_mpeg4_encoder;
+ extern const FFCodec ff_mpeg4_decoder;
++extern const FFCodec ff_mpeg4_nvmpi_decoder;
+ extern const FFCodec ff_mpeg4_v4l2m2m_decoder;
+ extern const FFCodec ff_mpeg4_mmal_decoder;
+ extern const FFCodec ff_mpegvideo_decoder;
+@@ -385,9 +393,11 @@ extern const FFCodec ff_vp6a_decoder;
+ extern const FFCodec ff_vp6f_decoder;
+ extern const FFCodec ff_vp7_decoder;
+ extern const FFCodec ff_vp8_decoder;
++extern const FFCodec ff_vp8_nvmpi_decoder;
+ extern const FFCodec ff_vp8_rkmpp_decoder;
+ extern const FFCodec ff_vp8_v4l2m2m_decoder;
+ extern const FFCodec ff_vp9_decoder;
++extern const FFCodec ff_vp9_nvmpi_decoder;
+ extern const FFCodec ff_vp9_rkmpp_decoder;
+ extern const FFCodec ff_vp9_v4l2m2m_decoder;
+ extern const FFCodec ff_vqa_decoder;
+diff --git a/libavcodec/nvmpi_dec.c b/libavcodec/nvmpi_dec.c
+new file mode 100644
+index 0000000..d3bd79d
+--- /dev/null
++++ b/libavcodec/nvmpi_dec.c
+@@ -0,0 +1,639 @@
++/*
++ * nvmpi_dec.c — FFmpeg decoder wrapper for libnvmpi (layer 2 of
++ * jetson-ffmpeg, the FFmpeg integration layer).
++ *
++ * This file is NOT built in this repository: it is patched into a vanilla
++ * FFmpeg source tree (libavcodec/) by scripts/ffpatch.sh or the generated
++ * patches in ffmpeg/patches/, and compiled as part of FFmpeg itself. It
++ * implements FFmpeg decoder codecs (h264_nvmpi, hevc_nvmpi, mpeg2_nvmpi,
++ * mpeg4_nvmpi, vp8_nvmpi, vp9_nvmpi) by delegating all real work to the
++ * libnvmpi C API (<nvmpi.h>, implemented in src/nvmpi_dec.cpp).
++ *
++ * One source file supports FFmpeg 6.0 through 8.0+: API differences are
++ * handled with LIBAVCODEC_VERSION_MAJOR preprocessor guards (see
++ * https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Development-Guide "Wrapper code paths by FFmpeg version").
++ */
++#include <stdio.h>
++#include <stdlib.h>
++#include <sys/time.h>
++
++#include <nvmpi.h>
++#include "avcodec.h"
++#include "decode.h"
++#include "internal.h"
++#include "libavutil/buffer.h"
++#include "libavutil/common.h"
++#include "libavutil/frame.h"
++#include "libavutil/hwcontext.h"
++#include "libavutil/hwcontext_drm.h"
++#include "libavutil/imgutils.h"
++#include "libavutil/log.h"
++#include "libavutil/opt.h"
++
++#include "codec_internal.h"
++
++//valid range / default for the frame_pool_size AVOption (mirrors the size
++//of libnvmpi's decoded-frame pool, i.e. how many frames may buffer up
++//before the user must call avcodec_receive_frame())
++#define OPT_frame_pool_size_MIN 1
++#define OPT_frame_pool_size_MAX 32
++#define OPT_frame_pool_size_DEFAULT 5
++
++//valid range for the chunk_size AVOption (bytes per compressed-input
++//buffer inside libnvmpi). 0 = auto (libnvmpi default, 10 MiB). One input
++//packet (access unit) must fit in one chunk; 4K high-bitrate I-frames
++//can exceed the old 4 MB limit.
++#define OPT_chunk_size_MIN 65536
++#define OPT_chunk_size_MAX (64*1024*1024)
++#define OPT_chunk_size_AUTO 0
++
++#define OPT_wait_timeout_MIN 50
++#define OPT_wait_timeout_MAX 5000
++#define OPT_wait_timeout_AUTO 0
++
++//Per-instance private context (priv_data of the AVCodecContext).
++//AVClass must stay discoverable for the AVOption system; resize_expr and
++//frame_pool_size are set via AVOptions before init.
++typedef struct {
++	char eos_reached;      //unused at present
++	nvmpictx* ctx;         //libnvmpi decoder handle
++	AVClass *av_class;
++	AVFrame *bufFrame;     //pre-allocated frame the next decode copies into
++	char *resize_expr;     //"-resize WxH" option (hw downscale in libnvmpi)
++	int frame_pool_size;   //"-frame_pool_size N" option
++	int chunk_size;        //"-chunk_size N" option (bytes; 0 = auto)
++	int max_perf;          //lift NVDEC clock governor (default on)
++	int disable_dpb;       //skip DPB reordering (low-latency, default off)
++	int wait_timeout;      //blocking wait timeout in ms (0 = default 500ms)
++	int output_format;     //requested output pixel format (AVPixelFormat; NONE = auto)
++} nvmpiDecodeContext;
++
++//Translate FFmpeg's codec id into libnvmpi's coding type enum.
++//Returns NV_VIDEO_CodingUnused for anything libnvmpi cannot decode.
++static nvCodingType nvmpi_get_codingtype(AVCodecContext *avctx)
++{
++	switch (avctx->codec_id) {
++		case AV_CODEC_ID_H264:          return NV_VIDEO_CodingH264;
++		case AV_CODEC_ID_HEVC:          return NV_VIDEO_CodingHEVC;
++		case AV_CODEC_ID_VP8:           return NV_VIDEO_CodingVP8;
++		case AV_CODEC_ID_VP9:           return NV_VIDEO_CodingVP9;
++		case AV_CODEC_ID_MPEG4:		return NV_VIDEO_CodingMPEG4;
++		case AV_CODEC_ID_MPEG2VIDEO:    return NV_VIDEO_CodingMPEG2;
++		case AV_CODEC_ID_MJPEG:         return NV_VIDEO_CodingMJPEG;
++		default:                        return NV_VIDEO_CodingUnused;
++	}
++};
++
++
++//AVCodec/FFCodec .init callback: validate options/pix_fmt, build the
++//nvDecParam from the AVOptions, pre-allocate the first output AVFrame
++//(bufFrame) and create the libnvmpi decoder (which starts its internal
++//capture thread). Returns 0 or an AVERROR code.
++static int nvmpi_init_decoder(AVCodecContext *avctx)
++{
++	nvmpiDecodeContext *nvmpi_context = avctx->priv_data;
++	nvDecParam param={0};
++	enum AVPixelFormat choices[4];
++	int nchoices;
++
++	param.codingType =nvmpi_get_codingtype(avctx);
++	if (param.codingType == NV_VIDEO_CodingUnused)
++	{
++		av_log(avctx, AV_LOG_ERROR, "Unknown codec type (%d).\n", avctx->codec_id);
++		return AVERROR_UNKNOWN;
++	}
++	
++	param.frame_pool_size = nvmpi_context->frame_pool_size;
++	if(param.frame_pool_size < OPT_frame_pool_size_MIN || param.frame_pool_size > OPT_frame_pool_size_MAX)
++	{
++		av_log(avctx, AV_LOG_WARNING, "Incorrect frame_pool_size specified: %d. Default (%d) will be used.\n", param.frame_pool_size, OPT_frame_pool_size_DEFAULT);
++		param.frame_pool_size = OPT_frame_pool_size_DEFAULT;
++	}
++
++	param.chunk_size = nvmpi_context->chunk_size;
++	if(param.chunk_size != OPT_chunk_size_AUTO && (param.chunk_size < OPT_chunk_size_MIN || param.chunk_size > OPT_chunk_size_MAX))
++	{
++		av_log(avctx, AV_LOG_WARNING, "Incorrect chunk_size specified: %d. Auto (libnvmpi default) will be used.\n", nvmpi_context->chunk_size);
++		param.chunk_size = OPT_chunk_size_AUTO;
++	}
++
++	param.max_perf = nvmpi_context->max_perf;
++	param.disable_dpb = nvmpi_context->disable_dpb;
++	param.wait_timeout = nvmpi_context->wait_timeout;
++
++	/* Pass container-reported dimensions to libnvmpi so it can pre-allocate
++	 * the frame pool before the first resolution-change event, reducing
++	 * first-frame latency. Zero values (unknown) = no hint, existing behavior. */
++	param.width = avctx->width;
++	param.height = avctx->height;
++
++	//Output pixel-format negotiation. The decoder can emit YUV420P, NV12, or
++	//(HEVC Main10 only) 10-bit P010LE, all produced natively by the VIC
++	//transform — no software conversion. Selection precedence:
++	//  1. explicit -output_format option (the reliable CLI knob; non-hwaccel
++	//     decoders otherwise always get pix_fmts[0] from default get_format);
++	//  2. a usable avctx->pix_fmt already set by the caller (programmatic API
++	//     consumers) — YUVJ420P is normalized to YUV420P + JPEG color range;
++	//  3. downstream negotiation via ff_get_format, defaulting to YUV420P.
++	//Whether the installed libnvmpi actually supports P010 (it needs the
++	//NvUtils/JetPack-5+ buffer API) is enforced in nvmpi_create_decoder,
++	//which returns NULL otherwise — handled below.
++	nchoices = 0;
++	choices[nchoices++] = AV_PIX_FMT_YUV420P;
++	choices[nchoices++] = AV_PIX_FMT_NV12;
++	if(avctx->codec_id == AV_CODEC_ID_HEVC)
++		choices[nchoices++] = AV_PIX_FMT_P010LE;
++	choices[nchoices] = AV_PIX_FMT_NONE;
++
++	if(nvmpi_context->output_format != AV_PIX_FMT_NONE)
++	{
++		avctx->pix_fmt = nvmpi_context->output_format;
++	}
++	else if(avctx->pix_fmt == AV_PIX_FMT_YUVJ420P)
++	{
++		//Deprecated full-range alias: route as YUV420P. The decoder does not
++		//probe the stream's range, so no color_range is asserted here.
++		avctx->pix_fmt = AV_PIX_FMT_YUV420P;
++	}
++	else if(avctx->pix_fmt != AV_PIX_FMT_YUV420P &&
++	        avctx->pix_fmt != AV_PIX_FMT_NV12 &&
++	        avctx->pix_fmt != AV_PIX_FMT_P010LE)
++	{
++		enum AVPixelFormat got = ff_get_format(avctx, choices);
++		avctx->pix_fmt = (got != AV_PIX_FMT_NONE) ? got : AV_PIX_FMT_YUV420P;
++	}
++
++	if(avctx->pix_fmt == AV_PIX_FMT_P010LE && avctx->codec_id != AV_CODEC_ID_HEVC)
++	{
++		av_log(avctx, AV_LOG_ERROR, "P010LE (10-bit) output is only supported for HEVC streams.\n");
++		return AVERROR_INVALIDDATA;
++	}
++
++	switch(avctx->pix_fmt)
++	{
++		case AV_PIX_FMT_YUV420P:
++			param.pixFormat = NV_PIX_YUV420;
++			break;
++		case AV_PIX_FMT_NV12:
++			param.pixFormat = NV_PIX_NV12;
++			break;
++		case AV_PIX_FMT_P010LE:
++			param.pixFormat = NV_PIX_P010;
++			break;
++		default:
++			av_log(avctx, AV_LOG_ERROR, "Invalid Pix_FMT for NVMPI: only YUV420P, YUVJ420P, NV12 and P010LE are supported\n");
++			return AVERROR_INVALIDDATA;
++	}
++
++    if (nvmpi_context->resize_expr && sscanf(nvmpi_context->resize_expr, "%dx%d",
++                                             &param.resized.width, &param.resized.height) != 2)
++	{
++        av_log(avctx, AV_LOG_ERROR, "Invalid resize expressions\n");
++        return AVERROR(EINVAL);
++    }
++	
++	//overwrite avctx w and h if resize option is used
++	if(param.resized.width && param.resized.height)
++	{
++		avctx->width = param.resized.width;
++		avctx->height = param.resized.height;
++	}
++
++	//Pre-allocate the destination frame via FFmpeg's buffer pool so
++	//nvmpi_decode() can copy decoded planes straight into it. A fresh
++	//bufFrame is re-acquired after each frame is handed to the user.
++	nvmpi_context->bufFrame = av_frame_alloc();
++	nvmpi_context->bufFrame->width = avctx->width;
++	nvmpi_context->bufFrame->height = avctx->height;
++	if (ff_get_buffer(avctx, nvmpi_context->bufFrame, 0) < 0)
++	{
++		av_frame_free(&(nvmpi_context->bufFrame));
++		nvmpi_context->bufFrame = NULL;
++		return AVERROR(ENOMEM);
++	}
++
++	nvmpi_context->ctx=nvmpi_create_decoder(&param);
++
++	if(!nvmpi_context->ctx)
++	{
++		av_frame_free(&(nvmpi_context->bufFrame));
++		nvmpi_context->bufFrame = NULL;
++		av_log(avctx, AV_LOG_ERROR, "Failed to nvmpi_create_decoder (code = %d).\n", AVERROR_EXTERNAL);
++		return AVERROR_EXTERNAL;
++	}
++
++	//Prime the decoder with out-of-band parameter sets (SPS/PPS), if any.
++	//RTSP/RTP streams commonly carry them only in the SDP
++	//(sprop-parameter-sets): FFmpeg stores those in avctx->extradata and
++	//never injects them into the packet stream (the *_mp4toannexb BSFs are
++	//pass-through for Annex-B input). The hardware decoder configures its
++	//capture plane only after parsing an in-band SPS, so without priming
++	//such streams decode zero frames (upstream Keylost/jetson-ffmpeg#14).
++	//Only Annex-B extradata (00 00 01 / 00 00 00 01 start code, plus at
++	//least one NAL byte) may be fed: avcC/hvcC extradata (MP4/MKV) is not
++	//parseable by the hardware and not needed — for those inputs the
++	//mp4toannexb BSF inserts the parameter sets in-band at every IDR.
++	//mpeg2/mpeg4 sequence/VOS headers are start-code-prefixed too and
++	//intentionally primed (same out-of-band failure class). Other
++	//CodecPrivate shapes (e.g. Matroska VP9 feature triples, VFW
++	//BITMAPINFOHEADER) never start with a start code and must not reach
++	//the parser. An empty payload must never be sent here: libnvmpi
++	//treats it as the EOS marker. The size cap protects libnvmpi's
++	//fixed-size bitstream buffers (4 MB) from hostile extradata — real
++	//parameter sets are tens of bytes.
++	if(avctx->extradata && avctx->extradata_size >= 4 &&
++	   avctx->extradata_size < (1 << 20) &&
++	   avctx->extradata[0] == 0 && avctx->extradata[1] == 0 &&
++	   (avctx->extradata[2] == 1 ||
++	    (avctx->extradata_size >= 5 && avctx->extradata[2] == 0 && avctx->extradata[3] == 1)))
++	{
++		nvPacket packet = {0};
++		packet.payload_size=avctx->extradata_size;
++		packet.payload=avctx->extradata;
++		packet.pts=0;
++
++		if(nvmpi_decoder_put_packet(nvmpi_context->ctx, &packet) < 0)
++		{
++			//not fatal: the stream may still carry in-band parameter sets
++			av_log(avctx, AV_LOG_WARNING, "Failed to prime decoder with extradata.\n");
++		}
++	}
++
++   return 0;
++}
++
++//AVCodec/FFCodec .close callback: drop the buffered output frame and shut
++//down the libnvmpi decoder (joins its capture thread, frees DMA buffers).
++static int nvmpi_close(AVCodecContext *avctx)
++{
++	nvmpiDecodeContext *nvmpi_context = avctx->priv_data;
++	if(nvmpi_context->bufFrame)
++	{
++		av_frame_free(&(nvmpi_context->bufFrame));
++		nvmpi_context->bufFrame = NULL;
++	}
++	/* Guard against NULL ctx — nvmpi_create_decoder may have returned NULL
++	 * (V4L2 device unavailable) and .close is called during init cleanup
++	 * when FF_CODEC_CAP_INIT_CLEANUP is set. */
++	if(!nvmpi_context->ctx)
++		return 0;
++	return nvmpi_decoder_close(nvmpi_context->ctx);
++}
++
++//Classic .decode callback (wired up via FF_CODEC_DECODE_CB on >= 60):
++//one call feeds one compressed packet to libnvmpi and, if a decoded frame
++//is already available, returns it via *data/got_frame. Asymmetric latency
++//(decoder pipeline depth) is absorbed by libnvmpi's frame pool.
++//Signature: libavcodec 60 changed the decode callback's output argument
++//from void* to a typed AVFrame*; since 6.0+ is required, we use AVFrame*.
++static int nvmpi_decode(AVCodecContext *avctx, AVFrame *data, int *got_frame, AVPacket *avpkt)
++{
++	nvmpiDecodeContext *nvmpi_context = avctx->priv_data;
++	AVFrame *frame = data;
++	AVFrame *bufFrame = nvmpi_context->bufFrame;
++	nvFrame _nvframe={0};
++	nvPacket packet;
++	int res;
++	int decode_ret = avpkt->size;
++
++	//Feed the compressed packet (if any — FFmpeg sends empty packets while
++	//draining). libnvmpi memcpy's the payload, so avpkt stays caller-owned.
++	if(avpkt->size)
++	{
++		packet.payload_size=avpkt->size;
++		packet.payload=avpkt->data;
++		packet.pts=avpkt->pts;
++
++		res=nvmpi_decoder_put_packet(nvmpi_context->ctx,&packet);
++		if(res < 0)
++		{
++			//A decode callback must never return AVERROR(EAGAIN) for a
++			//consumed packet — libavcodec >= 6.1 asserts on it
++			//(decode.c: "Assertion consumed != AVERROR(EAGAIN)").
++			//-3 = packet exceeds chunk_size: invalid input data, the
++			//decoder stays usable. Anything else is a V4L2 queue/dequeue
++			//failure.
++			av_log(avctx, AV_LOG_ERROR,
++			       "nvmpi_decoder_put_packet failed (code=%d, packet=%d bytes).\n",
++			       res, avpkt->size);
++			return (res == -3) ? AVERROR_INVALIDDATA : AVERROR_EXTERNAL;
++		}
++	}
++
++	//Point the nvFrame at bufFrame's pre-allocated planes; on success
++	//libnvmpi copies the decoded frame directly into FFmpeg-owned memory.
++	_nvframe.payload[0] = bufFrame->data[0];
++	_nvframe.payload[1] = bufFrame->data[1];
++	_nvframe.payload[2] = bufFrame->data[2];
++	_nvframe.linesize[0] = bufFrame->linesize[0];
++	_nvframe.linesize[1] = bufFrame->linesize[1];
++	_nvframe.linesize[2] = bufFrame->linesize[2];
++
++	res=nvmpi_decoder_get_frame(nvmpi_context->ctx,&_nvframe,avctx->flags & AV_CODEC_FLAG_LOW_DELAY);
++
++	if(res<0)
++	{
++		//no decoded frame ready yet — not an error, just got_frame == 0
++		return decode_ret;
++	}
++
++	//Hand the filled bufFrame to the caller (zero-copy move of the ref).
++	//Output format mirrors the negotiated avctx->pix_fmt (YUV420P / NV12 /
++	//P010LE) — the bufFrame was allocated against it via ff_get_buffer.
++	bufFrame->format=avctx->pix_fmt;
++	bufFrame->pts=_nvframe.timestamp;
++	bufFrame->pkt_dts = AV_NOPTS_VALUE;
++	av_frame_move_ref(frame, bufFrame);
++
++	*got_frame = 1;
++
++	//...and immediately acquire a fresh buffer for the next decode call.
++	bufFrame->width = avctx->width;
++	bufFrame->height = avctx->height;
++	if (ff_get_buffer(avctx, bufFrame, 0) < 0)
++	{
++		av_log(avctx, AV_LOG_ERROR, "ff_get_buffer failed\n");
++		return AVERROR(ENOMEM);
++	}
++	
++	//keep the metadata that belonged to the returned frame, not the new one
++	frame->metadata = bufFrame->metadata;
++	bufFrame->metadata = NULL;
++
++	return decode_ret;
++}
++
++
++
++//AVCodec/FFCodec .flush callback: reset the libnvmpi decoder pipeline
++//(stops capture thread, drains stale frames, restarts) and re-prime
++//the hardware with extradata (SPS/PPS) so it can reconfigure its capture
++//plane. Called by avcodec_flush_buffers() on seek / stream restart.
++static void nvmpi_flush_decoder(AVCodecContext *avctx)
++{
++	nvmpiDecodeContext *nvmpi_context = avctx->priv_data;
++
++	nvmpi_decoder_flush(nvmpi_context->ctx);
++
++	if(avctx->extradata && avctx->extradata_size >= 4 &&
++	   avctx->extradata_size < (1 << 20) &&
++	   avctx->extradata[0] == 0 && avctx->extradata[1] == 0 &&
++	   (avctx->extradata[2] == 1 ||
++	    (avctx->extradata_size >= 5 && avctx->extradata[2] == 0 && avctx->extradata[3] == 1)))
++	{
++		nvPacket packet = {0};
++		packet.payload_size=avctx->extradata_size;
++		packet.payload=avctx->extradata;
++		packet.pts=0;
++		nvmpi_decoder_put_packet(nvmpi_context->ctx, &packet);
++	}
++}
++
++/* ------------------------------------------------------------------ */
++/* MJPEG-specific callbacks (NvJPEGDecoder, not V4L2)                  */
++/* ------------------------------------------------------------------ */
++
++//MJPEG .init: create the JPEG decoder (no V4L2 device, no capture thread).
++//Output is always YUV420P with JPEG (full) color range.
++static int nvmpi_init_mjpeg_decoder(AVCodecContext *avctx)
++{
++	nvmpiDecodeContext *nvmpi_context = avctx->priv_data;
++
++	avctx->pix_fmt = AV_PIX_FMT_YUV420P;
++	avctx->color_range = AVCOL_RANGE_JPEG;
++
++	nvmpi_context->bufFrame = av_frame_alloc();
++	if (!nvmpi_context->bufFrame)
++		return AVERROR(ENOMEM);
++
++	nvmpi_context->ctx = nvmpi_create_jpeg_decoder();
++	if (!nvmpi_context->ctx)
++	{
++		av_frame_free(&(nvmpi_context->bufFrame));
++		nvmpi_context->bufFrame = NULL;
++		av_log(avctx, AV_LOG_ERROR, "Failed to create JPEG hardware decoder.\n");
++		return AVERROR_EXTERNAL;
++	}
++
++	return 0;
++}
++
++//MJPEG .close: destroy the JPEG decoder.
++static int nvmpi_close_mjpeg(AVCodecContext *avctx)
++{
++	nvmpiDecodeContext *nvmpi_context = avctx->priv_data;
++	if (nvmpi_context->bufFrame)
++	{
++		av_frame_free(&(nvmpi_context->bufFrame));
++		nvmpi_context->bufFrame = NULL;
++	}
++	if (!nvmpi_context->ctx)
++		return 0;
++	return nvmpi_jpeg_decoder_close(nvmpi_context->ctx);
++}
++
++//MJPEG .decode: synchronous per-frame decode.
++static int nvmpi_decode_mjpeg(AVCodecContext *avctx, AVFrame *data, int *got_frame, AVPacket *avpkt)
++{
++	nvmpiDecodeContext *nvmpi_context = avctx->priv_data;
++	AVFrame *frame = data;
++	nvFrame _nvframe = {0};
++	nvPacket packet;
++	int res;
++
++	if (!avpkt->size)
++	{
++		*got_frame = 0;
++		return 0;
++	}
++
++	packet.payload_size = avpkt->size;
++	packet.payload = avpkt->data;
++	packet.pts = avpkt->pts;
++
++	res = nvmpi_jpeg_decoder_put_packet(nvmpi_context->ctx, &packet);
++	if (res < 0)
++	{
++		av_log(avctx, AV_LOG_ERROR,
++		       "nvmpi_jpeg_decoder_put_packet failed (code=%d).\n", res);
++		return AVERROR_EXTERNAL;
++	}
++
++	//Allocate or refresh bufFrame at the decoded resolution.
++	//JPEG dimensions come from the bitstream; we must update avctx once known.
++	AVFrame *bufFrame = nvmpi_context->bufFrame;
++	if (!bufFrame->data[0] || bufFrame->width != avctx->width || bufFrame->height != avctx->height)
++	{
++		av_frame_unref(bufFrame);
++		bufFrame->format = avctx->pix_fmt;
++		bufFrame->width = avctx->width ? avctx->width : 1280;
++		bufFrame->height = avctx->height ? avctx->height : 720;
++		if (ff_get_buffer(avctx, bufFrame, 0) < 0)
++			return AVERROR(ENOMEM);
++	}
++
++	_nvframe.payload[0] = bufFrame->data[0];
++	_nvframe.payload[1] = bufFrame->data[1];
++	_nvframe.payload[2] = bufFrame->data[2];
++	_nvframe.linesize[0] = bufFrame->linesize[0];
++	_nvframe.linesize[1] = bufFrame->linesize[1];
++	_nvframe.linesize[2] = bufFrame->linesize[2];
++
++	res = nvmpi_jpeg_decoder_get_frame(nvmpi_context->ctx, &_nvframe, 1);
++	if (res < 0)
++	{
++		*got_frame = 0;
++		return avpkt->size;
++	}
++
++	//Update avctx dimensions from the decoded frame (JPEG is self-describing).
++	if (_nvframe.width && _nvframe.height &&
++	    ((int)_nvframe.width != avctx->width || (int)_nvframe.height != avctx->height))
++	{
++		avctx->width = _nvframe.width;
++		avctx->height = _nvframe.height;
++
++		//Reallocate bufFrame at new resolution.
++		av_frame_unref(bufFrame);
++		bufFrame->format = avctx->pix_fmt;
++		bufFrame->width = avctx->width;
++		bufFrame->height = avctx->height;
++		if (ff_get_buffer(avctx, bufFrame, 0) < 0)
++			return AVERROR(ENOMEM);
++
++		//Re-decode into new buffer.
++		_nvframe.payload[0] = bufFrame->data[0];
++		_nvframe.payload[1] = bufFrame->data[1];
++		_nvframe.payload[2] = bufFrame->data[2];
++		_nvframe.linesize[0] = bufFrame->linesize[0];
++		_nvframe.linesize[1] = bufFrame->linesize[1];
++		_nvframe.linesize[2] = bufFrame->linesize[2];
++
++		//Re-submit the same packet and get the frame at the correct resolution.
++		res = nvmpi_jpeg_decoder_put_packet(nvmpi_context->ctx, &packet);
++		if (res < 0)
++		{
++			av_log(avctx, AV_LOG_ERROR,
++			       "nvmpi_jpeg_decoder_put_packet failed on resolution-change re-decode (code=%d).\n", res);
++			return AVERROR_EXTERNAL;
++		}
++		res = nvmpi_jpeg_decoder_get_frame(nvmpi_context->ctx, &_nvframe, 1);
++		if (res < 0)
++		{
++			av_log(avctx, AV_LOG_ERROR,
++			       "nvmpi_jpeg_decoder_get_frame failed on resolution-change re-decode (code=%d).\n", res);
++			*got_frame = 0;
++			return avpkt->size;
++		}
++	}
++
++	bufFrame->format = avctx->pix_fmt;
++	bufFrame->pts = _nvframe.timestamp;
++	bufFrame->pkt_dts = AV_NOPTS_VALUE;
++	av_frame_move_ref(frame, bufFrame);
++
++	*got_frame = 1;
++
++	//Re-acquire a fresh bufFrame for the next decode.
++	bufFrame->width = avctx->width;
++	bufFrame->height = avctx->height;
++	bufFrame->format = avctx->pix_fmt;
++	if (ff_get_buffer(avctx, bufFrame, 0) < 0)
++	{
++		av_log(avctx, AV_LOG_ERROR, "ff_get_buffer failed\n");
++		return AVERROR(ENOMEM);
++	}
++
++	frame->metadata = bufFrame->metadata;
++	bufFrame->metadata = NULL;
++
++	return avpkt->size;
++}
++
++//MJPEG .flush: JPEG is stateless per-picture, nothing to reset.
++static void nvmpi_flush_mjpeg(AVCodecContext *avctx)
++{
++	(void)avctx;
++}
++
++//AVOption table: user-settable private options, resolved into
++//nvmpiDecodeContext fields by FFmpeg's option system before .init runs.
++//OFFSET locates the field inside the priv_data struct; VD restricts the
++//options to video decoding.
++#define OFFSET(x) offsetof(nvmpiDecodeContext, x)
++#define VD AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_DECODING_PARAM
++static const AVOption options[] = {
++    { "resize",   "Resize (width)x(height)", OFFSET(resize_expr), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, VD, "resize" },
++    { "frame_pool_size", "Number of frames that could be buffered in the decoder before user must read it with avcodec_receive_frame()", OFFSET(frame_pool_size), AV_OPT_TYPE_INT, {.i64 = OPT_frame_pool_size_DEFAULT }, OPT_frame_pool_size_MIN, OPT_frame_pool_size_MAX, VD, "frame_pool_size" },
++    { "chunk_size", "Bytes per compressed-input buffer; one input packet must fit in one chunk (0 = auto, 10 MiB)", OFFSET(chunk_size), AV_OPT_TYPE_INT, {.i64 = OPT_chunk_size_AUTO }, 0, OPT_chunk_size_MAX, VD, "chunk_size" },
++    { "max_perf", "Enable max performance mode (lifts NVDEC clock governor)", OFFSET(max_perf), AV_OPT_TYPE_BOOL, {.i64 = 1 }, 0, 1, VD, "max_perf" },
++    { "disable_dpb", "Disable decoded-picture-buffer reordering (low-latency, B-frame-free streams only)", OFFSET(disable_dpb), AV_OPT_TYPE_BOOL, {.i64 = 0 }, 0, 1, VD, "disable_dpb" },
++    { "wait_timeout", "Blocking wait timeout in milliseconds for low-delay mode (0 = default 500ms)", OFFSET(wait_timeout), AV_OPT_TYPE_INT, {.i64 = OPT_wait_timeout_AUTO }, 0, OPT_wait_timeout_MAX, VD, "wait_timeout" },
++    { "output_format", "Decoder output pixel format (default auto=yuv420p; nv12; p010le for 10-bit HEVC)", OFFSET(output_format), AV_OPT_TYPE_PIXEL_FMT, {.i64 = AV_PIX_FMT_NONE }, -1, INT_MAX, VD },
++    { NULL }
++};
++
++//Per-codec AVClass: binds the shared option table above to each decoder
++//instance (referenced by priv_class in the registration struct below).
++#define NVMPI_DEC_CLASS(NAME) \
++	static const AVClass nvmpi_##NAME##_dec_class = { \
++		.class_name = "nvmpi_" #NAME "_dec", \
++		.option     = options, \
++		.version    = LIBAVUTIL_VERSION_INT, \
++	};
++
++//Codec registration struct, stamped out once per codec by NVMPI_DEC().
++//FFCodec variant for libavcodec >= 60 (FFmpeg 6.0+). The matching extern in
++//allcodecs.c is "extern const FFCodec". Capabilities: DELAY, AVOID_PROBING,
++//HARDWARE. BSFS inserts h264/hevc mp4toannexb for Annex-B NAL units.
++#define NVMPI_DEC(NAME, ID, BSFS) \
++	NVMPI_DEC_CLASS(NAME) \
++	const FFCodec ff_##NAME##_nvmpi_decoder = { \
++		.p.name           = #NAME "_nvmpi", \
++		CODEC_LONG_NAME(#NAME " (nvmpi)"), \
++		.p.type           = AVMEDIA_TYPE_VIDEO, \
++		.p.id             = ID, \
++		.priv_data_size = sizeof(nvmpiDecodeContext), \
++		.init           = nvmpi_init_decoder, \
++		.close          = nvmpi_close, \
++		FF_CODEC_DECODE_CB(nvmpi_decode), \
++		.flush          = nvmpi_flush_decoder, \
++		.p.priv_class     = &nvmpi_##NAME##_dec_class, \
++		.p.capabilities   = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_AVOID_PROBING | AV_CODEC_CAP_HARDWARE, \
++		.caps_internal  = FF_CODEC_CAP_INIT_CLEANUP, \
++		.p.pix_fmts	=(const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P,AV_PIX_FMT_NV12,AV_PIX_FMT_P010LE,AV_PIX_FMT_NONE},\
++		.bsfs           = BSFS, \
++		.p.wrapper_name   = "nvmpi", \
++	};
++
++
++//Instantiate the six nvmpi decoders. Each expansion must have a matching
++//extern in allcodecs.c and a CONFIG_*_NVMPI_DECODER Makefile/configure
++//entry (added by ffpatch.sh / the version overlays).
++NVMPI_DEC(h264,  AV_CODEC_ID_H264,"h264_mp4toannexb");
++NVMPI_DEC(hevc,  AV_CODEC_ID_HEVC,"hevc_mp4toannexb");
++NVMPI_DEC(mpeg2, AV_CODEC_ID_MPEG2VIDEO,NULL);
++NVMPI_DEC(mpeg4, AV_CODEC_ID_MPEG4,NULL);
++NVMPI_DEC(vp9,  AV_CODEC_ID_VP9,NULL);
++NVMPI_DEC(vp8, AV_CODEC_ID_VP8,NULL);
++
++//MJPEG decoder — uses NvJPEGDecoder, not V4L2 M2M. Separate init/decode/
++//close/flush callbacks, and only YUV420P output (no NV12/P010).
++NVMPI_DEC_CLASS(mjpeg)
++const FFCodec ff_mjpeg_nvmpi_decoder = {
++	.p.name           = "mjpeg_nvmpi",
++	CODEC_LONG_NAME("mjpeg (nvmpi)"),
++	.p.type           = AVMEDIA_TYPE_VIDEO,
++	.p.id             = AV_CODEC_ID_MJPEG,
++	.priv_data_size = sizeof(nvmpiDecodeContext),
++	.init           = nvmpi_init_mjpeg_decoder,
++	.close          = nvmpi_close_mjpeg,
++	FF_CODEC_DECODE_CB(nvmpi_decode_mjpeg),
++	.flush          = nvmpi_flush_mjpeg,
++	.p.priv_class     = &nvmpi_mjpeg_dec_class,
++	.p.capabilities   = AV_CODEC_CAP_AVOID_PROBING | AV_CODEC_CAP_HARDWARE,
++	.caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
++	.p.pix_fmts     = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NONE},
++	.p.wrapper_name   = "nvmpi",
++};
++
+diff --git a/libavcodec/nvmpi_enc.c b/libavcodec/nvmpi_enc.c
+new file mode 100644
+index 0000000..17acdbc
+--- /dev/null
++++ b/libavcodec/nvmpi_enc.c
+@@ -0,0 +1,692 @@
++/*
++ * nvmpi_enc.c — FFmpeg encoder wrapper for libnvmpi (layer 2 of
++ * jetson-ffmpeg, the FFmpeg integration layer).
++ *
++ * Like nvmpi_dec.c, this file is patched into a vanilla FFmpeg tree and
++ * compiled inside FFmpeg. It implements the h264_nvmpi and hevc_nvmpi
++ * encoders by delegating to the libnvmpi C API (src/nvmpi_enc.cpp).
++ *
++ * Key responsibility beyond plain forwarding: packet memory pooling.
++ * libnvmpi's encoder never allocates packet memory — this wrapper
++ * pre-allocates nvPackets whose payload is backed by real AVPacket buffers
++ * (so delivering a packet to FFmpeg is a zero-copy move), queues them into
++ * the encoder's empty pool, and recycles them after each
++ * avcodec_receive_packet().
++ *
++ * One source supports FFmpeg 6.0 .. 8.0+ via preprocessor guards:
++ *  - LIBAVCODEC_VERSION_MAJOR >= 60: FFCodec registration +
++ *    ff_get_encode_buffer replaces ff_alloc_packet2.
++ *  - lavc >= 62.11 (FFmpeg 8.0): FF_PROFILE_* renamed to AV_PROFILE_*.
++ * See https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Development-Guide "Wrapper code paths by FFmpeg version".
++ */
++#include <nvmpi.h>
++#include "avcodec.h"
++#include "internal.h"
++#include <stdio.h>
++#include "libavutil/avstring.h"
++#include "libavutil/avutil.h"
++#include "libavutil/common.h"
++#include "libavutil/imgutils.h"
++#include "libavutil/log.h"
++#include "libavutil/opt.h"
++#include "libavutil/mem.h"
++
++#include "version.h"
++
++//compatibility with ffmpeg 8.0+. FF_PROFILE renamed with AV_PROFILE
++//(libavcodec 62.11 deprecated the FF_PROFILE_* names; mapping the old
++//spellings here lets the rest of the file use FF_PROFILE_* everywhere.
++//The ">= 100" clause is future-proofing in case the minor resets.)
++#if (LIBAVCODEC_VERSION_MAJOR >= 62 && LIBAVCODEC_VERSION_MINOR>= 11) || (LIBAVCODEC_VERSION_MAJOR >= 100)
++#define FF_PROFILE_H264_INTRA AV_PROFILE_H264_INTRA
++#define FF_PROFILE_UNKNOWN AV_PROFILE_UNKNOWN
++#define FF_PROFILE_H264_HIGH AV_PROFILE_H264_HIGH
++#define FF_PROFILE_H264_BASELINE AV_PROFILE_H264_BASELINE
++#define FF_PROFILE_H264_MAIN AV_PROFILE_H264_MAIN
++#endif
++
++#include "encode.h"
++#include "codec_internal.h"
++
++//libnvmpi exchanges timestamps in microseconds; used with av_rescale_q to
++//convert to/from the stream's AVCodecContext time_base.
++static const AVRational NVENC_TIMEBASE = {1, 1000000};
++
++//valid range / default for the wait_timeout AVOption: how long (ms)
++//nvmpi_encoder_get_packet() blocks in low-delay mode. Matches decoder.
++#define OPT_wait_timeout_AUTO 0
++#define OPT_wait_timeout_MAX  5000
++
++//valid range / default for the packet_pool_size AVOption: how many encoded
++//packets may pile up before the libnvmpi DQ thread starts dropping output.
++#define OPT_packet_pool_size_MIN 1
++#define OPT_packet_pool_size_MAX 32
++#define OPT_packet_pool_size_DEFAULT 10
++
++//Per-instance private context (priv_data of the AVCodecContext). The int
++//option fields are populated from the AVOption table before .init runs.
++typedef struct {
++	const AVClass *class;       //must be first for the AVOption system
++	nvmpictx* ctx;              //libnvmpi encoder handle
++	int num_capture_buffers;    //V4L2 buffer count option
++	int packet_pool_size;       //packet pool depth option
++	int profile;                //FF_PROFILE_H264_* numeric value or UNKNOWN
++	int level;                  //level option (10*level, 0 = auto)
++	int rc;                     //rate control option: -1 default, 0 CBR, 1 VBR
++	int preset;                 //hw preset option: 1=ultrafast .. 4=slow
++	int max_perf;               //lift NVENC clock governor (default on)
++	int poc_type;               //H.264 picture order count type (0=default, 2=low-latency)
++	int insert_vui;             //embed VUI timing_info (fps) in the bitstream (default on)
++	int wait_timeout;           //blocking-wait ceiling in ms (0 = default 500ms)
++	int encoder_flushing;       //set after EOS was sent to libnvmpi
++	AVFrame *frame; //tmp frame
++	                //(holds the pulled-but-not-yet-sent input frame in the
++	                // new-API receive_packet path)
++}nvmpiEncodeContext;
++
++nvPacket* nvmpienc_nvPacket_alloc(AVCodecContext *avctx, int bufSize);
++void nvmpienc_nvPacket_free(nvPacket* nPkt);
++int nvmpienc_nvPacket_reset(nvPacket* nPkt, AVCodecContext *avctx, int bufSize);
++int nvmpienc_initPktPool(AVCodecContext *avctx, int pktNum);
++int nvmpienc_deinitPktPool(AVCodecContext *avctx);
++
++//alloc nvPacket and AVPacket buffer;
++//Creates one pool packet: an nvPacket whose payload points into a real
++//AVPacket data buffer (kept in privData). This is what makes the later
++//handoff to FFmpeg zero-copy. Returns NULL on allocation failure.
++//ff_get_encode_buffer() is how encoders obtain packet buffers (libavcodec 60+).
++nvPacket* nvmpienc_nvPacket_alloc(AVCodecContext *avctx, int bufSize)
++{
++	AVPacket* pkt = av_packet_alloc();
++	nvPacket* nPkt = (nvPacket*)malloc(sizeof(nvPacket));
++	int res;
++	memset(nPkt, 0, sizeof(nvPacket));
++	if((res = ff_get_encode_buffer(avctx, pkt, bufSize, 0)))
++	{
++		av_packet_free(&pkt);
++		free(nPkt);
++		return NULL;
++	}
++	nPkt->privData = pkt;
++	nPkt->payload = pkt->data;
++	return nPkt;
++}
++
++//Free one pool packet: both the backing AVPacket and the nvPacket shell.
++void nvmpienc_nvPacket_free(nvPacket* nPkt)
++{
++	AVPacket* pkt = nPkt->privData;
++	av_packet_free(&pkt);
++	free(nPkt);
++}
++
++//Re-arm a pool packet after its previous buffer was moved into the user's
++//AVPacket: acquire a fresh encode buffer for the (now empty) AVPacket and
++//clear the nvPacket bookkeeping. Returns 0 or -1 on allocation failure.
++int nvmpienc_nvPacket_reset(nvPacket* nPkt, AVCodecContext *avctx, int bufSize)
++{
++	AVPacket* pkt = nPkt->privData;
++	int res;
++	if((res = ff_get_encode_buffer(avctx, pkt, bufSize, 0)))
++	{
++		return -1;
++	}
++	nPkt->payload = pkt->data;
++	nPkt->payload_size = 0;
++	nPkt->flags = 0;
++	nPkt->pts = 0;
++	return 0;
++}
++
++//must call after nvmpi_create_encoder() to preallocate buffers
++//Seeds libnvmpi's empty-packet pool with pktNum packets of
++//NVMPI_ENC_CHUNK_SIZE each; the encoder's DQ thread fills them as encoded
++//frames appear.
++int nvmpienc_initPktPool(AVCodecContext *avctx, int pktNum)
++{
++	nvmpiEncodeContext * nvmpi_context = avctx->priv_data;
++	for(int i=0;i<pktNum;i++)
++	{
++		nvPacket* nPkt = nvmpienc_nvPacket_alloc(avctx, NVMPI_ENC_CHUNK_SIZE);
++		if (!nPkt)
++		{
++			/* Allocation failed mid-pool: drain and free all previously
++			 * queued packets to avoid a partially populated pool. */
++			av_log(avctx, AV_LOG_ERROR,
++			       "nvmpi: packet pool allocation failed at %d/%d\n", i, pktNum);
++			nvmpienc_deinitPktPool(avctx);
++			return AVERROR(ENOMEM);
++		}
++		nvmpi_encoder_qEmptyPacket(nvmpi_context->ctx, nPkt);
++	}
++	return 0;
++}
++
++//must call before nvmpi_encoder_close() too free buffers memory
++//Drains BOTH pool queues (empty and filled) and frees every packet, since
++//libnvmpi itself never deallocates packet memory. Safe only after the
++//encoder has been fully drained (no packet checked out by the DQ thread).
++int nvmpienc_deinitPktPool(AVCodecContext *avctx)
++{
++	nvmpiEncodeContext * nvmpi_context = avctx->priv_data;
++	nvmpictx *ctx = nvmpi_context->ctx;
++	nvPacket* nPkt;
++	
++	while(nvmpi_encoder_dqEmptyPacket(ctx, &nPkt) == 0)
++	{
++		AVPacket* pkt = nPkt->privData;
++		av_packet_free(&pkt);
++		free(nPkt);
++	}
++	while(nvmpi_encoder_get_packet(ctx, &nPkt, false) == 0)
++	{
++		AVPacket* pkt = nPkt->privData;
++		av_packet_free(&pkt);
++		free(nPkt);
++	}
++	
++	//TODO check that all mem returned to nothing
++	return 0;
++}
++
++//AVCodec/FFCodec .init callback: translate AVCodecContext settings and
++//AVOptions into an nvEncParam, optionally pre-generate global extradata
++//(SPS/PPS), then create the real libnvmpi encoder and seed its packet
++//pool. The numeric profile/level/rc/preset conventions used here are
++//decoded on the libnvmpi side (src/nvmpi_enc.cpp).
++static av_cold int nvmpi_encode_init(AVCodecContext *avctx)
++{
++	nvmpiEncodeContext * nvmpi_context = avctx->priv_data;
++
++	nvEncParam param={0};
++
++	param.width=avctx->width;
++	param.height=avctx->height;
++	param.bitrate=avctx->bit_rate;
++	param.vbv_buffer_size = avctx->rc_buffer_size;
++	//TODO use rc_initial_buffer_occupancy or ignore?
++	param.mode_vbr=0;
++	param.idr_interval=60;
++	param.iframe_interval=30;
++	param.peak_bitrate=avctx->rc_max_rate;
++	param.fps_n=avctx->framerate.num;
++	param.fps_d=avctx->framerate.den;
++	//strip the INTRA flag bit so only the base profile id is passed down
++	param.profile=nvmpi_context->profile& ~FF_PROFILE_H264_INTRA;
++	param.level=nvmpi_context->level;
++	param.capture_num=nvmpi_context->num_capture_buffers;
++	//param.packet_pool_size=nvmpi_context->packet_pool_size;
++	param.hw_preset_type=nvmpi_context->preset;
++	param.max_perf=nvmpi_context->max_perf;
++	param.poc_type=nvmpi_context->poc_type;
++	//with GLOBAL_HEADER the SPS/PPS live in extradata (generated below)
++	//instead of being repeated in-band at every IDR
++	param.insert_spspps_idr=(avctx->flags & AV_CODEC_FLAG_GLOBAL_HEADER)?0:1;
++	param.insert_vui=nvmpi_context->insert_vui;
++	param.wait_timeout=nvmpi_context->wait_timeout;
++
++	//Raw input layout: NV12 routes to libnvmpi's V4L2 NV12M path, otherwise
++	//planar YUV420. Full-range (YUVJ420P / MJPEG) input is intentionally NOT
++	//advertised in pix_fmts: the Jetson V4L2 encoder exposes no API to set
++	//the VUI video_full_range_flag, so it always emits limited-range. Letting
++	//FFmpeg's swscale convert full->limited range before the encoder yields
++	//correct levels; passing full-range pixels through under a limited-range
++	//flag would not (the latent bug in the bradcagle/xsacha forks).
++	param.pixFormat = (avctx->pix_fmt == AV_PIX_FMT_NV12) ? NV_PIX_NV12 : NV_PIX_YUV420;
++
++	nvmpi_context->frame = av_frame_alloc();
++	if (!nvmpi_context->frame) return AVERROR(ENOMEM);
++
++	if(nvmpi_context->rc==1){
++		param.mode_vbr=1;
++	}
++
++	if(avctx->qmin >= 0 && avctx->qmax >= 0){
++		param.qmin=avctx->qmin;
++		param.qmax=avctx->qmax;
++	}
++
++	if (avctx->refs >= 0){
++		param.refs=avctx->refs;
++
++	}
++
++	if(avctx->max_b_frames > 0 && avctx->max_b_frames < 3){
++		param.max_b_frames=avctx->max_b_frames;
++	}
++
++	if(avctx->gop_size>0){
++		param.idr_interval=param.iframe_interval=avctx->gop_size;
++
++	}
++
++	//TODO should replace it. must gen extradata directly without calling for encoder
++	//Extradata generation for GLOBAL_HEADER: spin up a THROWAWAY encoder
++	//instance, encode one blank frame, and scan the resulting bitstream
++	//for the first IDR NAL — everything before it (SPS/PPS, VPS for HEVC)
++	//becomes avctx->extradata. The temporary encoder is then drained and
++	//destroyed; the real encoder is created afterwards.
++	if ((avctx->flags & AV_CODEC_FLAG_GLOBAL_HEADER) && (avctx->codec->id == AV_CODEC_ID_H264 || avctx->codec->id == AV_CODEC_ID_H265))
++	{
++		uint8_t *dst[4];
++		int linesize[4];
++		nvFrame _nvframe={0};
++		nvPacket *nPkt;
++		nvmpictx *_ctx;
++		int i;
++		int ret;
++		int64_t shiftPts = 1000000/param.fps_n;
++		if(avctx->codec->id == AV_CODEC_ID_H264) param.codingType = NV_VIDEO_CodingH264;
++		else param.codingType = NV_VIDEO_CodingHEVC;
++		av_image_alloc(dst, linesize,avctx->width,avctx->height,avctx->pix_fmt,1);
++
++		nvmpi_context->ctx = nvmpi_create_encoder(&param);
++		_ctx = nvmpi_context->ctx;
++		if (!_ctx)
++		{
++			av_freep(&dst[0]);
++			av_frame_free(&nvmpi_context->frame);
++			return AVERROR(ENOMEM);
++		}
++		nvmpienc_initPktPool(avctx,nvmpi_context->packet_pool_size);
++		i=0;
++		_nvframe.timestamp=0;
++
++		while(true)
++		{
++			_nvframe.payload[0]=dst[0];
++			_nvframe.payload[1]=dst[1];
++			_nvframe.payload[2]=dst[2];
++			_nvframe.payload_size[0]=linesize[0]*avctx->height;
++			_nvframe.payload_size[1]=linesize[1]*avctx->height/2;
++			_nvframe.payload_size[2]=linesize[2]*avctx->height/2;
++			_nvframe.linesize[0]=linesize[0];
++			_nvframe.linesize[1]=linesize[1];
++			_nvframe.linesize[2]=linesize[2];
++			_nvframe.timestamp+=shiftPts;
++
++			nvmpi_encoder_put_frame(_ctx,&_nvframe);
++
++			ret=nvmpi_encoder_get_packet(_ctx,&nPkt, avctx->flags & AV_CODEC_FLAG_LOW_DELAY);
++
++			if(ret<0)
++				continue;
++
++			//find idr index
++			//Walk the Annex-B stream for the start code that begins the
++			//IDR slice; 'i' then marks the end of the header NALs.
++			while(i<nPkt->payload_size)
++			{
++				//check if nal start code (the start-code probe reads
++				//payload[i+1..i+4], so stay 5 bytes inside the payload)
++				if(i + 4 < nPkt->payload_size && nPkt->payload[i] == 0 && nPkt->payload[i+1] == 0 && nPkt->payload[i+2] == 0 && nPkt->payload[i+3] == 0x01)
++				{
++					if(param.codingType == NV_VIDEO_CodingH264)
++					{
++						//h264 idr
++						if(nPkt->payload[i+4] == 0x65) break;
++					}
++					else // NV_VIDEO_CodingHEVC:
++					{
++						//h265 idr
++						if(nPkt->payload[i+4] == 0x26 || nPkt->payload[i+4] == 0x28) break;
++					}
++				}
++				i++;
++			}
++
++			avctx->extradata_size=i;
++			avctx->extradata	= av_mallocz( avctx->extradata_size + AV_INPUT_BUFFER_PADDING_SIZE );
++			memcpy( avctx->extradata, nPkt->payload,avctx->extradata_size);
++			memset( avctx->extradata + avctx->extradata_size, 0, AV_INPUT_BUFFER_PADDING_SIZE );
++			
++			nvmpienc_nvPacket_free(nPkt);
++			nPkt = nvmpienc_nvPacket_alloc(avctx, NVMPI_ENC_CHUNK_SIZE);
++			
++			//return buffer to pool
++			nvmpi_encoder_qEmptyPacket(nvmpi_context->ctx, nPkt);
++			//send eos
++			nvmpi_encoder_put_frame(nvmpi_context->ctx,NULL);
++			
++			break;
++		}
++		
++		//drain encoder
++		//(keep pulling until get_packet reports EOS so the temporary
++		// encoder can shut down cleanly; recycled packets keep the pool
++		// populated while draining)
++		while(true)
++		{
++			ret=nvmpi_encoder_get_packet(_ctx,&nPkt, false);
++			if(ret < 0)
++			{
++				if(ret == -2) break; //got eos
++				//usleep(1000);
++				continue;
++			}
++			nvmpienc_nvPacket_free(nPkt);
++			nPkt = nvmpienc_nvPacket_alloc(avctx, NVMPI_ENC_CHUNK_SIZE);
++			nvmpi_encoder_qEmptyPacket(nvmpi_context->ctx, nPkt);
++		}
++
++		av_freep(&dst[0]); //free allocated image planes
++		nvmpienc_deinitPktPool(avctx);
++		nvmpi_encoder_close(nvmpi_context->ctx);
++		nvmpi_context->ctx = NULL;
++	}
++
++	//create the real encoder used for the rest of the session
++	if(avctx->codec->id == AV_CODEC_ID_H264)
++	{
++		param.codingType = NV_VIDEO_CodingH264;
++		nvmpi_context->ctx=nvmpi_create_encoder(&param);
++	}
++	else if(avctx->codec->id == AV_CODEC_ID_HEVC)
++	{
++		param.codingType = NV_VIDEO_CodingHEVC;
++		nvmpi_context->ctx=nvmpi_create_encoder(&param);
++	}
++	//else TODO
++	
++	if(!nvmpi_context->ctx)
++	{
++		av_log(avctx, AV_LOG_ERROR, "nvmpi: encoder creation failed\n");
++		av_frame_free(&nvmpi_context->frame);
++		return AVERROR(ENOMEM);
++	}
++	nvmpienc_initPktPool(avctx,nvmpi_context->packet_pool_size);
++
++	return 0;
++}
++
++//send_frame half of the encode API: wrap the AVFrame's planes in an
++//nvFrame (no copy here — libnvmpi memcpy's into its V4L2 buffer inside
++//put_frame, which may block briefly) and rescale pts to microseconds.
++//frame==NULL initiates flushing (EOS to libnvmpi). Called internally by
++//ff_nvmpi_receive_packet_async().
++static int ff_nvmpi_send_frame(AVCodecContext *avctx,const AVFrame *frame)
++{
++	nvmpiEncodeContext * nvmpi_context = avctx->priv_data;
++	nvFrame _nvframe={0};
++	int res;
++
++	if (nvmpi_context->encoder_flushing)
++		return AVERROR_EOF;
++
++	if(frame)
++	{
++		_nvframe.payload[0]=frame->data[0];
++		_nvframe.payload[1]=frame->data[1];
++		_nvframe.payload[2]=frame->data[2];
++
++		_nvframe.payload_size[0]=frame->linesize[0]*frame->height;
++		_nvframe.payload_size[1]=frame->linesize[1]*frame->height/2;
++		_nvframe.payload_size[2]=frame->linesize[2]*frame->height/2;
++
++		_nvframe.linesize[0]=frame->linesize[0];
++		_nvframe.linesize[1]=frame->linesize[1];
++		_nvframe.linesize[2]=frame->linesize[2];
++
++		//_nvframe.timestamp=frame->pts;
++		_nvframe.timestamp=av_rescale_q(frame->pts, avctx->time_base, NVENC_TIMEBASE);
++		//_nvframe.timestamp=frame->pts*avctx->time_base.num*1000*1000/avctx->time_base.den;
++
++		res=nvmpi_encoder_put_frame(nvmpi_context->ctx,&_nvframe);
++
++		if(res<0)
++			return res;
++	}
++	else
++	{
++		nvmpi_context->encoder_flushing = 1;
++		nvmpi_encoder_put_frame(nvmpi_context->ctx,NULL);
++	}
++
++	return 0;
++}
++
++//receive_packet half of the encode API: pop a filled nvPacket from
++//libnvmpi, rescale the pts back to the codec time_base, shrink the backing
++//AVPacket to the actual payload size and MOVE its buffer into the user's
++//pkt (zero-copy). The pool packet is then re-armed with a fresh buffer and
++//returned to the empty queue. EAGAIN when nothing is ready; AVERROR_EOF
++//once flushing has drained.
++static int ff_nvmpi_receive_packet(AVCodecContext *avctx, AVPacket *pkt)
++{
++	nvmpiEncodeContext * nvmpi_context = avctx->priv_data;
++	nvPacket *nPkt;
++	AVPacket *aPkt;
++	int res;
++
++	/* During flushing, use blocking get_packet to avoid CPU spin while
++	 * waiting for the DQ thread to deliver final encoded packets. */
++	res = nvmpi_encoder_get_packet(nvmpi_context->ctx, &nPkt,
++		(avctx->flags & AV_CODEC_FLAG_LOW_DELAY) || nvmpi_context->encoder_flushing);
++	if(res<0)
++	{
++		/* -2 = actual EOS from the V4L2 DQ thread (all packets drained).
++		 * -1 = no packet ready yet (DQ thread still processing); return
++		 * EAGAIN so FFmpeg keeps calling receive_packet during flush.
++		 * Previously, -1 during flushing was treated as EOF, causing
++		 * final packets to be dropped (see #15). */
++		if(res == -2) return AVERROR_EOF;
++		return AVERROR(EAGAIN);
++	}
++	
++	aPkt = (AVPacket*)(nPkt->privData);
++	//aPkt->dts=aPkt->pts=nPkt->pts;
++	aPkt->dts = aPkt->pts = av_rescale_q(nPkt->pts, NVENC_TIMEBASE, avctx->time_base);
++	av_shrink_packet(aPkt, nPkt->payload_size);
++	if(nPkt->flags& AV_PKT_FLAG_KEY) aPkt->flags = AV_PKT_FLAG_KEY;
++	av_packet_move_ref(pkt, aPkt);
++	
++	if(nvmpienc_nvPacket_reset(nPkt, avctx, NVMPI_ENC_CHUNK_SIZE))
++	{
++		nvmpienc_nvPacket_free(nPkt);
++		return AVERROR(ENOMEM);
++	}
++	
++	nvmpi_encoder_qEmptyPacket(nvmpi_context->ctx, nPkt);
++
++	return 0;
++}
++
++//Single-callback encoder entry point: FFmpeg
++//only calls receive_packet, and the encoder pulls its own input via
++//ff_encode_get_frame(). Flow per call:
++//  1. if no frame is pending, pull one (EAGAIN = nothing to send yet;
++//     EOF = flush by sending NULL);
++//  2. push it to libnvmpi via ff_nvmpi_send_frame() and unref on success
++//     (on failure the frame stays in nvmpi_context->frame for retry);
++//  3. try to return an encoded packet via ff_nvmpi_receive_packet().
++static int ff_nvmpi_receive_packet_async(AVCodecContext *avctx, AVPacket *pkt)
++{
++	int res;
++	nvmpiEncodeContext * nvmpi_context = avctx->priv_data;
++	AVFrame *frame = nvmpi_context->frame;
++	bool needSendFrame = true;
++
++	if (!frame->buf[0])
++	{
++		res = ff_encode_get_frame(avctx, frame);
++		if (res < 0)
++		{
++			if(res == AVERROR(EAGAIN)) needSendFrame = false;
++			else if(res == AVERROR_EOF) frame = NULL;
++			else return res;
++		}
++	}
++	
++	if(needSendFrame)
++	{
++		res = ff_nvmpi_send_frame(avctx, frame);
++		if (res < 0)
++		{
++			if(res != AVERROR_EOF && res != AVERROR(EAGAIN)) return res;
++		}
++		else av_frame_unref(frame);
++	}
++
++	res = ff_nvmpi_receive_packet(avctx, pkt);
++	if(res<0) return res;
++
++	return 0;
++}
++
++//AVCodec/FFCodec .close callback: make sure EOS was sent, drain remaining
++//packets (recycling pool buffers while doing so), then free the pool and
++//close the libnvmpi encoder. Order matters — the pool must be drained
++//before nvmpi_encoder_close(), which does not free packet memory.
++static av_cold int nvmpi_encode_close(AVCodecContext *avctx)
++{
++	nvmpiEncodeContext *nvmpi_context = avctx->priv_data;
++
++	//drain encoder
++	{
++		int ret;
++		nvPacket *nPkt;
++		if(!nvmpi_context->encoder_flushing)
++		{
++			nvmpi_context->encoder_flushing = 1;
++			nvmpi_encoder_put_frame(nvmpi_context->ctx,NULL);
++		}
++		
++		while(1)
++		{
++			ret=nvmpi_encoder_get_packet(nvmpi_context->ctx, &nPkt, false);
++			if(ret < 0)
++			{
++				if(ret == -2) break; //got eos
++				continue;
++			}
++			nvmpienc_nvPacket_free(nPkt);
++			nPkt = nvmpienc_nvPacket_alloc(avctx, NVMPI_ENC_CHUNK_SIZE);
++			if (!nPkt) break; /* OOM during close — stop draining */
++			nvmpi_encoder_qEmptyPacket(nvmpi_context->ctx, nPkt);
++		}
++	}
++
++	nvmpienc_deinitPktPool(avctx);
++	nvmpi_encoder_close(nvmpi_context->ctx);
++	av_frame_free(&nvmpi_context->frame);
++
++	return 0;
++}
++
++//Default values for GENERIC AVCodecContext options (not the private
++//AVOptions below): 2M bitrate, GOP 50, no B-frames, qmin/qmax unset, etc.
++//Only the struct's name changed with the FFCodec split in libavcodec 60;
++//the entries are identical.
++static const FFCodecDefault defaults[] = {
++	{ "b", "2M" },
++	{ "qmin", "-1" },
++	{ "qmax", "-1" },
++	{ "qdiff", "-1" },
++	{ "qblur", "-1" },
++	{ "qcomp", "-1" },
++	{ "g", "50" },
++	{ "bf", "0" },
++	{ "refs", "0" },
++	{ NULL },
++};
++
++
++//AVOption table: private "-x264-style" options resolved into
++//nvmpiEncodeContext fields before .init. AV_OPT_TYPE_CONST entries are
++//named aliases for values of the preceding INT option (grouped by the
++//trailing unit string, e.g. "profile"). The numeric values intentionally
++//match what src/nvmpi_enc.cpp's switch statements expect: FFmpeg profile
++//ids, level_idc*10, rc 0/1 = CBR/VBR, preset 1..4.
++#define OFFSET(x) offsetof(nvmpiEncodeContext, x)
++#define VE AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_ENCODING_PARAM
++
++static const AVOption options[] = {
++	{ "num_capture_buffers", "Number of buffers in the capture context", OFFSET(num_capture_buffers), AV_OPT_TYPE_INT, {.i64 = 10 }, 1, 32, VE, "num_capture_buffers" },
++	{ "packet_pool_size", "Number of packets that could be buffered in the encoder before user must read it with avcodec_receive_packet()", OFFSET(packet_pool_size), AV_OPT_TYPE_INT, {.i64 = OPT_packet_pool_size_DEFAULT }, OPT_packet_pool_size_MIN, OPT_packet_pool_size_MAX, VE, "packet_pool_size" },
++	/// Profile,
++
++	{ "profile",  "Set the encoding profile", OFFSET(profile), AV_OPT_TYPE_INT,   { .i64 = FF_PROFILE_UNKNOWN },       FF_PROFILE_UNKNOWN, FF_PROFILE_H264_HIGH, VE, "profile" },
++	{ "baseline", "",                         0,               AV_OPT_TYPE_CONST, { .i64 = FF_PROFILE_H264_BASELINE }, 0, 0, VE, "profile" },
++	{ "main",     "",                         0,               AV_OPT_TYPE_CONST, { .i64 = FF_PROFILE_H264_MAIN },     0, 0, VE, "profile" },
++	{ "high",     "",                         0,               AV_OPT_TYPE_CONST, { .i64 = FF_PROFILE_H264_HIGH },     0, 0, VE, "profile" },
++
++	/// Profile Level (shared by H.264 and HEVC; level_idc convention: 51 = 5.1)
++	{ "level",          "Encoding level (e.g. 4.1, 5.1)",  OFFSET(level),  AV_OPT_TYPE_INT,   { .i64 = 0  }, 0, 62, VE, "level" },
++	{ "auto",           "",                     0,              AV_OPT_TYPE_CONST, { .i64 = 0  }, 0, 0,  VE, "level" },
++	{ "1.0",            "",                     0,              AV_OPT_TYPE_CONST, { .i64 = 10 }, 0, 0,  VE, "level" },
++	{ "1.1",            "",                     0,              AV_OPT_TYPE_CONST, { .i64 = 11 }, 0, 0,  VE, "level" },
++	{ "1.2",            "",                     0,              AV_OPT_TYPE_CONST, { .i64 = 12 }, 0, 0,  VE, "level" },
++	{ "1.3",            "",                     0,              AV_OPT_TYPE_CONST, { .i64 = 13 }, 0, 0,  VE, "level" },
++	{ "2.0",            "",                     0,              AV_OPT_TYPE_CONST, { .i64 = 20 }, 0, 0,  VE, "level" },
++	{ "2.1",            "",                     0,              AV_OPT_TYPE_CONST, { .i64 = 21 }, 0, 0,  VE, "level" },
++	{ "2.2",            "",                     0,              AV_OPT_TYPE_CONST, { .i64 = 22 }, 0, 0,  VE, "level" },
++	{ "3.0",            "",                     0,              AV_OPT_TYPE_CONST, { .i64 = 30 }, 0, 0,  VE, "level" },
++	{ "3.1",            "",                     0,              AV_OPT_TYPE_CONST, { .i64 = 31 }, 0, 0,  VE, "level" },
++	{ "3.2",            "",                     0,              AV_OPT_TYPE_CONST, { .i64 = 32 }, 0, 0,  VE, "level" },
++	{ "4.0",            "",                     0,              AV_OPT_TYPE_CONST, { .i64 = 40 }, 0, 0,  VE, "level" },
++	{ "4.1",            "",                     0,              AV_OPT_TYPE_CONST, { .i64 = 41 }, 0, 0,  VE, "level" },
++	{ "4.2",            "",                     0,              AV_OPT_TYPE_CONST, { .i64 = 42 }, 0, 0,  VE, "level" },
++	{ "5.0",            "",                     0,              AV_OPT_TYPE_CONST, { .i64 = 50 }, 0, 0,  VE, "level" },
++	{ "5.1",            "",                     0,              AV_OPT_TYPE_CONST, { .i64 = 51 }, 0, 0,  VE, "level" },
++	{ "5.2",            "",                     0,              AV_OPT_TYPE_CONST, { .i64 = 52 }, 0, 0,  VE, "level" },
++	{ "6.0",            "",                     0,              AV_OPT_TYPE_CONST, { .i64 = 60 }, 0, 0,  VE, "level" },
++	{ "6.1",            "",                     0,              AV_OPT_TYPE_CONST, { .i64 = 61 }, 0, 0,  VE, "level" },
++	{ "6.2",            "",                     0,              AV_OPT_TYPE_CONST, { .i64 = 62 }, 0, 0,  VE, "level" },
++
++	{ "rc",           "Override the preset rate-control",   OFFSET(rc),           AV_OPT_TYPE_INT,   { .i64 = -1 },                                  -1, INT_MAX, VE, "rc" },
++	{ "cbr",          "Constant bitrate mode",              0,                    AV_OPT_TYPE_CONST, { .i64 = 0 },                       0, 0, VE, "rc" },
++	{ "vbr",          "Variable bitrate mode",              0,                    AV_OPT_TYPE_CONST, { .i64 = 1 },                       0, 0, VE, "rc" },
++
++	{ "preset",          "Set the encoding preset",            OFFSET(preset),       AV_OPT_TYPE_INT,   { .i64 = 3 }, 1, 4, VE, "preset" },
++	{ "default",         "",                                   0,                    AV_OPT_TYPE_CONST, { .i64 = 3 }, 0, 0, VE, "preset" },
++	{ "slow",            "",                        0,                    AV_OPT_TYPE_CONST, { .i64 = 4 },            0, 0, VE, "preset" },
++	{ "medium",          "",                        0,                    AV_OPT_TYPE_CONST, { .i64 = 3 },            0, 0, VE, "preset" },
++	{ "fast",            "",                        0,                    AV_OPT_TYPE_CONST, { .i64 = 2 },            0, 0, VE, "preset" },
++	{ "ultrafast",       "",                        0,                    AV_OPT_TYPE_CONST, { .i64 = 1 },            0, 0, VE, "preset" },
++
++	{ "max_perf", "Enable max performance mode (lifts NVENC clock governor)", OFFSET(max_perf), AV_OPT_TYPE_BOOL, {.i64 = 1 }, 0, 1, VE, "max_perf" },
++	{ "poc_type", "H.264 picture order count type (0=default, 2=decode-order for low-latency)", OFFSET(poc_type), AV_OPT_TYPE_INT, {.i64 = 0 }, 0, 2, VE, "poc_type" },
++	{ "insert_vui", "Embed VUI timing_info (fps) in the bitstream so players/muxers report the frame rate", OFFSET(insert_vui), AV_OPT_TYPE_BOOL, {.i64 = 1 }, 0, 1, VE, "insert_vui" },
++	{ "wait_timeout", "Blocking wait timeout in milliseconds for low-delay mode (0 = default 500ms)", OFFSET(wait_timeout), AV_OPT_TYPE_INT, {.i64 = OPT_wait_timeout_AUTO }, 0, OPT_wait_timeout_MAX, VE, "wait_timeout" },
++	{ NULL }
++};
++
++
++//Per-codec AVClass binding the option table above to each encoder
++//instance (referenced via priv_class in the registration struct).
++#define NVMPI_ENC_CLASS(NAME) \
++	static const AVClass nvmpi_ ## NAME ## _enc_class = { \
++		.class_name = #NAME "_nvmpi_encoder", \
++		.item_name  = av_default_item_name, \
++		.option     = options, \
++		.version    = LIBAVUTIL_VERSION_INT, \
++	};
++
++
++//Codec registration, stamped out per codec by NVMPI_ENC(). Covers paths C/D:
++//  - lavc >= 60 (FFmpeg 6.0–7.x, path C): FFCodec struct, pull-based receive_packet.
++//  - lavc >= 62.11 (FFmpeg 8.0, path D): same, plus AV_PROFILE_* aliases above.
++//Matching allcodecs.c extern is "extern const FFCodec".
++#define NVMPI_ENC(NAME, LONGNAME, CODEC) \
++	NVMPI_ENC_CLASS(NAME) \
++	const FFCodec ff_ ## NAME ## _nvmpi_encoder = { \
++		.p.name           = #NAME "_nvmpi" , \
++		CODEC_LONG_NAME("nvmpi " LONGNAME " encoder wrapper"), \
++		.p.type           = AVMEDIA_TYPE_VIDEO, \
++		.p.id             = CODEC , \
++		.priv_data_size = sizeof(nvmpiEncodeContext), \
++		.p.priv_class     = &nvmpi_ ## NAME ##_enc_class, \
++		.init           = nvmpi_encode_init, \
++		FF_CODEC_RECEIVE_PACKET_CB(ff_nvmpi_receive_packet_async), \
++		.close          = nvmpi_encode_close, \
++		.p.pix_fmts       = (const enum AVPixelFormat[]) { AV_PIX_FMT_YUV420P, AV_PIX_FMT_NV12, AV_PIX_FMT_NONE },\
++		.p.capabilities   = AV_CODEC_CAP_HARDWARE | AV_CODEC_CAP_DELAY, \
++		.defaults       = defaults,\
++		.p.wrapper_name   = "nvmpi", \
++	};
++
++//Instantiate the two nvmpi encoders. Each expansion must have a matching
++//extern in allcodecs.c and CONFIG_*_NVMPI_ENCODER Makefile/configure
++//entries (added by ffpatch.sh / the version overlays).
++NVMPI_ENC(h264, "H.264", AV_CODEC_ID_H264);
++NVMPI_ENC(hevc, "HEVC", AV_CODEC_ID_HEVC);
+diff --git a/libavcodec/nvmpi_enc_jpeg.c b/libavcodec/nvmpi_enc_jpeg.c
+new file mode 100644
+index 0000000..69fceac
+--- /dev/null
++++ b/libavcodec/nvmpi_enc_jpeg.c
+@@ -0,0 +1,251 @@
++/*
++ * nvmpi_enc_jpeg.c — FFmpeg MJPEG encoder wrapper for libnvmpi JPEG encoder.
++ *
++ * This is a SEPARATE file from nvmpi_enc.c because the JPEG encoder is
++ * fundamentally different from the V4L2-based H.264/HEVC encoders:
++ *   - Synchronous per-frame (no packet pool, no DQ thread, no DELAY cap)
++ *   - No bitrate/GOP/profile/level options — only quality
++ *   - Uses NvJPEGEncoder, not NvVideoEncoder
++ *
++ * One source supports FFmpeg 6.0 .. 8.0+ via preprocessor guards:
++ *   - LIBAVCODEC_VERSION_MAJOR >= 60: FFCodec + FF_CODEC_ENCODE_CB
++ *
++ * Quality mapping: FFmpeg's global_quality (from -q:v) is in
++ * FF_QP2LAMBDA units. We convert: libjpeg_quality = 2 + (31 - qscale) * 98 / 30
++ * where qscale = global_quality / FF_QP2LAMBDA, clamped to [1, 31].
++ * -q:v 1 (best) → quality ~100; -q:v 31 (worst) → quality ~2.
++ * If no -q:v is set, default quality is 85.
++ */
++#include <nvmpi.h>
++#include "avcodec.h"
++#include "internal.h"
++#include <stdio.h>
++#include "libavutil/avutil.h"
++#include "libavutil/common.h"
++#include "libavutil/imgutils.h"
++#include "libavutil/log.h"
++#include "libavutil/opt.h"
++#include "libavutil/mem.h"
++
++#include "version.h"
++
++#include "encode.h"
++#include "codec_internal.h"
++
++/* Private encoder context — wraps the opaque libnvmpi JPEG encoder handle. */
++typedef struct {
++    AVClass *avclass;
++    nvmpictx *ctx;
++    /* Reusable output buffer for encoded JPEG data. Sized to worst-case
++     * (uncompressed YUV420 + JPEG overhead). Allocated lazily on first encode. */
++    uint8_t *pkt_buf;
++    int pkt_buf_size;
++} nvmpiJpegEncContext;
++
++/* ------------------------------------------------------------------ */
++/* Quality mapping                                                     */
++/* ------------------------------------------------------------------ */
++
++/*
++ * Convert FFmpeg quality scale to libjpeg quality 1-100.
++ *
++ * FFmpeg's -q:v sets global_quality in FF_QP2LAMBDA units.
++ * Standard MJPEG encoders use qscale 1 (best) to 31 (worst).
++ * We linearly map: qscale 1 → quality 100, qscale 31 → quality 2.
++ */
++static int qscale_to_jpeg_quality(int global_quality)
++{
++    int qscale;
++
++    if (global_quality <= 0)
++        return 85; /* No -q:v specified — use default. */
++
++    qscale = global_quality / FF_QP2LAMBDA;
++    if (qscale < 1) qscale = 1;
++    if (qscale > 31) qscale = 31;
++
++    /* Linear map: qscale 1 → 100, qscale 31 → 2 */
++    return 2 + (31 - qscale) * 98 / 30;
++}
++
++/* ------------------------------------------------------------------ */
++/* AVCodec callbacks                                                   */
++/* ------------------------------------------------------------------ */
++
++static av_cold int nvmpi_jpegenc_init(AVCodecContext *avctx)
++{
++    nvmpiJpegEncContext *s = avctx->priv_data;
++    int quality;
++
++    avctx->pix_fmt = AV_PIX_FMT_YUV420P;
++    avctx->color_range = AVCOL_RANGE_JPEG;
++
++    quality = qscale_to_jpeg_quality(avctx->global_quality);
++
++    s->ctx = nvmpi_create_jpeg_encoder(quality);
++    if (!s->ctx) {
++        av_log(avctx, AV_LOG_ERROR,
++               "Failed to create JPEG hardware encoder. This Jetson module "
++               "may not have NVJPG encode capability (e.g. Orin Nano). "
++               "Use -c:v mjpeg for software JPEG encoding.\n");
++        return AVERROR_EXTERNAL;
++    }
++
++    s->pkt_buf = NULL;
++    s->pkt_buf_size = 0;
++
++    return 0;
++}
++
++static av_cold int nvmpi_jpegenc_close(AVCodecContext *avctx)
++{
++    nvmpiJpegEncContext *s = avctx->priv_data;
++
++    if (s->ctx) {
++        nvmpi_jpeg_encoder_close(s->ctx);
++        s->ctx = NULL;
++    }
++
++    av_freep(&s->pkt_buf);
++    s->pkt_buf_size = 0;
++
++    return 0;
++}
++
++/*
++ * Ensure pkt_buf is large enough for worst-case JPEG output.
++ * Worst case: uncompressed YUV420 is w*h*1.5 bytes; JPEG with
++ * quality 100 can be larger than input due to headers. We use
++ * w*h*2 + 65536 as a safe upper bound.
++ */
++static int ensure_pkt_buf(nvmpiJpegEncContext *s, int width, int height)
++{
++    /* Integer overflow protection: check multiplication before allocating.
++     * Width and height are validated against NVJPEG_ENC_MAX_DIM (16384) by
++     * libnvmpi, so the product fits in int64_t safely. */
++    int64_t needed = (int64_t)width * height * 2 + 65536;
++    if (needed > INT_MAX)
++        return AVERROR(EINVAL);
++
++    if (s->pkt_buf_size >= (int)needed)
++        return 0;
++
++    av_freep(&s->pkt_buf);
++    s->pkt_buf = av_malloc(needed);
++    if (!s->pkt_buf) {
++        s->pkt_buf_size = 0;
++        return AVERROR(ENOMEM);
++    }
++    s->pkt_buf_size = (int)needed;
++    return 0;
++}
++
++/*
++ * Encode one frame. JPEG encoding is synchronous — one frame in,
++ * one packet out, no pipeline delay.
++ */
++static int nvmpi_jpegenc_encode(AVCodecContext *avctx, AVPacket *avpkt,
++                                const AVFrame *frame, int *got_packet)
++{
++    nvmpiJpegEncContext *s = avctx->priv_data;
++    nvFrame nv_frame = {0};
++    nvPacket nv_packet = {0};
++    int ret;
++
++    *got_packet = 0;
++
++    if (!frame) {
++        /* Flush / EOS — JPEG has no pipeline delay, nothing to drain. */
++        return 0;
++    }
++
++    /* Build nvFrame from AVFrame planes. */
++    nv_frame.payload[0] = frame->data[0];
++    nv_frame.payload[1] = frame->data[1];
++    nv_frame.payload[2] = frame->data[2];
++    nv_frame.linesize[0] = frame->linesize[0];
++    nv_frame.linesize[1] = frame->linesize[1];
++    nv_frame.linesize[2] = frame->linesize[2];
++    nv_frame.width = frame->width;
++    nv_frame.height = frame->height;
++    nv_frame.timestamp = frame->pts;
++    nv_frame.type = NV_PIX_YUV420;
++
++    ret = nvmpi_jpeg_encoder_put_frame(s->ctx, &nv_frame);
++    if (ret < 0) {
++        av_log(avctx, AV_LOG_ERROR, "nvmpi_jpeg_encoder_put_frame failed.\n");
++        return AVERROR_EXTERNAL;
++    }
++
++    /* Ensure output buffer is large enough. */
++    ret = ensure_pkt_buf(s, frame->width, frame->height);
++    if (ret < 0)
++        return ret;
++
++    nv_packet.payload = s->pkt_buf;
++    nv_packet.payload_size = 0;
++
++    ret = nvmpi_jpeg_encoder_get_packet(s->ctx, &nv_packet);
++    if (ret < 0) {
++        if (ret == -2) return 0; /* EOS, no more packets. */
++        return 0; /* No packet ready — shouldn't happen for sync encode. */
++    }
++
++    /* Allocate the AVPacket data buffer. */
++    ret = ff_get_encode_buffer(avctx, avpkt, nv_packet.payload_size, 0);
++    if (ret < 0)
++        return ret;
++
++    memcpy(avpkt->data, nv_packet.payload, nv_packet.payload_size);
++    avpkt->size = nv_packet.payload_size;
++
++    /* JPEG frames are always keyframes (intra-only codec). */
++    avpkt->flags |= AV_PKT_FLAG_KEY;
++    avpkt->pts = frame->pts;
++    avpkt->dts = frame->pts;
++
++    *got_packet = 1;
++    return 0;
++}
++
++/* ------------------------------------------------------------------ */
++/* AVOption table                                                      */
++/* ------------------------------------------------------------------ */
++
++/* JPEG encoder has minimal options — quality is driven by -q:v.
++ * We expose no private options for now. */
++static const AVOption options[] = {
++    { NULL }
++};
++
++static const AVClass nvmpi_mjpeg_enc_class = {
++    .class_name = "mjpeg_nvmpi_encoder",
++    .item_name  = av_default_item_name,
++    .option     = options,
++    .version    = LIBAVUTIL_VERSION_INT,
++};
++
++/* ------------------------------------------------------------------ */
++/* Codec registration                                                  */
++/* ------------------------------------------------------------------ */
++
++/* JPEG is intra-only (no pipeline delay), so no AV_CODEC_CAP_DELAY.
++ * Uses FF_CODEC_ENCODE_CB (synchronous encode callback, libavcodec 60+). */
++const FFCodec ff_mjpeg_nvmpi_encoder = {
++    .p.name           = "mjpeg_nvmpi",
++    CODEC_LONG_NAME("mjpeg (nvmpi)"),
++    .p.type           = AVMEDIA_TYPE_VIDEO,
++    .p.id             = AV_CODEC_ID_MJPEG,
++    .priv_data_size = sizeof(nvmpiJpegEncContext),
++    .p.priv_class     = &nvmpi_mjpeg_enc_class,
++    .init           = nvmpi_jpegenc_init,
++    FF_CODEC_ENCODE_CB(nvmpi_jpegenc_encode),
++    .close          = nvmpi_jpegenc_close,
++    .p.pix_fmts       = (const enum AVPixelFormat[]) {
++        AV_PIX_FMT_YUV420P,
++        AV_PIX_FMT_NONE
++    },
++    .p.capabilities   = AV_CODEC_CAP_HARDWARE,
++    .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
++    .p.wrapper_name   = "nvmpi",
++};

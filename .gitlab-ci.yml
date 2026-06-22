@@ -141,6 +141,7 @@ build:nvmpi:
     - bash ./scripts/ffpatch.sh /tmp/ffmpeg
     - cd /tmp/ffmpeg
     - export PKG_CONFIG_PATH="${NVMPI_PREFIX}/lib/pkgconfig:${NVMPI_PREFIX}/share/pkgconfig"
+    - DAV1D_FLAG=""; if pkg-config --exists 'dav1d >= 1.0.0' 2>/dev/null; then DAV1D_FLAG="--enable-libdav1d"; fi
     - >-
       ./configure
       --prefix="${FFMPEG_PREFIX}"
@@ -149,7 +150,7 @@ build:nvmpi:
       --extra-cflags="-I${CI_PROJECT_DIR}/include"
       --extra-ldflags="-L${CI_PROJECT_DIR}/build -L${CI_PROJECT_DIR}/stubs -Wl,-rpath-link,${CI_PROJECT_DIR}/stubs"
       --enable-libx264 --enable-libx265 --enable-libvpx --enable-libopus
-      --enable-libmp3lame --enable-libvorbis --enable-libdav1d
+      --enable-libmp3lame --enable-libvorbis ${DAV1D_FLAG}
       --enable-libass --enable-libfreetype --enable-gnutls
     - make -j"$(nproc)"
     - make install
@@ -184,6 +185,11 @@ patch:ffmpeg-8.0:
   variables:
     FFMPEG_BRANCH: "release/8.0"
 
+patch:ffmpeg-8.1:
+  <<: *patch-and-build
+  variables:
+    FFMPEG_BRANCH: "release/8.1"
+
 # ---------------------------------------------------------------------------
 # Stage: test — HW encode/decode on real Jetson hardware.
 #
@@ -194,7 +200,7 @@ patch:ffmpeg-8.0:
 # version (see "Wrapper code paths by FFmpeg version" in https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Development-Guide#wrapper-code-paths-by-ffmpeg-version):
 #
 #   6.0,6.1,7.0,7.1 -> path C (FFCodec) — identical wrapper code
-#   8.0              -> path D (FFCodec + AV_PROFILE)
+#   8.0,8.1          -> path D (FFCodec + AV_PROFILE)
 #
 # 6.0–7.1 share wrapper code (path C) but are each hw-tested anyway, to also
 # cover FFmpeg ABI/runtime differences between those releases.
@@ -248,6 +254,10 @@ test:hw-ffmpeg-8.0:           # path D
   <<: *hw-test
   needs: ["patch:ffmpeg-8.0"]
 
+test:hw-ffmpeg-8.1:           # path D
+  <<: *hw-test
+  needs: ["patch:ffmpeg-8.1"]
+
 # ---------------------------------------------------------------------------
 # Stage: package — build REAL libnvmpi + ffmpeg per version and tar each one
 # (tag pipelines only). The build/patch stages above link stubs and are NOT
@@ -281,11 +291,12 @@ test:hw-ffmpeg-8.0:           # path D
   script:
     - export VERSION="${CI_COMMIT_TAG#v}"
     - PFX="${CI_PROJECT_DIR}/_pkg"
+    - DAV1D_FLAG=""; if pkg-config --exists 'dav1d >= 1.0.0' 2>/dev/null; then DAV1D_FLAG="--enable-libdav1d"; fi
     - >-
       bash ./scripts/build.sh --no-stubs --ffmpeg "${FFVER}" --install
       --prefix "${PFX}" --ffmpeg-prefix "${PFX}" -j"$(nproc)"
       --ffmpeg-args "--enable-shared --disable-static --enable-libx265 --enable-libvpx
-      --enable-libopus --enable-libmp3lame --enable-libvorbis --enable-libdav1d
+      --enable-libopus --enable-libmp3lame --enable-libvorbis ${DAV1D_FLAG}
       --enable-libass --enable-libfreetype --enable-gnutls"
     - LD_LIBRARY_PATH="${PFX}/lib:/usr/lib/aarch64-linux-gnu/tegra" "${PFX}/bin/ffmpeg" -hide_banner -encoders 2>/dev/null | grep -E 'h264_nvmpi|hevc_nvmpi'
     - >-
@@ -301,6 +312,7 @@ package:ffmpeg-6.1: { extends: .package, variables: { FFVER: "6.1" } }
 package:ffmpeg-7.0: { extends: .package, variables: { FFVER: "7.0" } }
 package:ffmpeg-7.1: { extends: .package, variables: { FFVER: "7.1" } }
 package:ffmpeg-8.0: { extends: .package, variables: { FFVER: "8.0" } }
+package:ffmpeg-8.1: { extends: .package, variables: { FFVER: "8.1" } }
 
 # ---------------------------------------------------------------------------
 # Stage: release — changelog + GitLab Release (+ generic package assets), then
@@ -319,6 +331,7 @@ release:
     - "package:ffmpeg-7.0"
     - "package:ffmpeg-7.1"
     - "package:ffmpeg-8.0"
+    - "package:ffmpeg-8.1"
   variables:
     GIT_DEPTH: "0"   # full history + tags for git-cliff
   before_script: []
