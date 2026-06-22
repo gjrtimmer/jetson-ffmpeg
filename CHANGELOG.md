@@ -1,5 +1,18 @@
 # Changelog
 
+## 3.6.1 - 2026-06-22
+
+### Bug Fixes
+
+- Guard V4L2 H.264 level 5.2–6.2 and HEVC level 5.2–6.2 constants with `#ifdef` for JetPack 5.x kernel 5.10 compatibility (nvmpi)
+- Fix `-Wmisleading-indentation` warning in decoder capture loop (nvmpi)
+- Bump CMake minimum version from 3.9 to 3.10 to silence deprecation warning (build)
+
+### CI
+
+- Add JetPack 5.x (L4T r35.4.1) compile-test job and builder image (ci)
+- Rename Docker images to distinguish JetPack 5 from JetPack 6 (ci)
+
 ## 3.6.0 - 2026-06-22
 
 ### Features
