@@ -423,8 +423,15 @@ Dockerfile.
 - **Only do what was requested.** Every action must trace to an explicit
   request — editing CI, posting issue comments, adding features, all of it.
   "Post this analysis" means post that analysis, not a full resolution comment.
-  "Add libx265" means add libx265, not also refactor the build. Surface good
-  ideas as suggestions, don't apply them.
+  "Add libx265" means add libx265, not also refactor the build. When replacing
+  one system with another (storage, CI, deployment), remove the old path unless
+  the user explicitly says to keep both. "Upload to S3" means S3 only, not
+  S3-plus-keep-the-old-system-as-fallback. Surface good ideas as suggestions,
+  don't apply them.
+- **Answer feasibility questions before acting.** When the user asks "is it
+  possible to X?" or "can we X?", give the yes/no answer first with a brief
+  explanation. Don't start running commands or implementing until they confirm
+  they want to proceed.
 - **Verify completeness against the source list.** When creating issues,
   tasks, or artifacts from a reference list (fork analysis, upstream issues,
   TODOs), cross-check count and contents back against the source. Watch items
