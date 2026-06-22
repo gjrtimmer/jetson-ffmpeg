@@ -109,6 +109,12 @@ workflow:
     - if: '$CI_COMMIT_BRANCH'
 
 variables:
+  BUILD_IMAGES:
+    value: "false"
+    description: "Build and push CI Docker images"
+    options:
+      - "false"
+      - "true"
   L4T_TAG: "r36.4.0"
   L4T_TAG_JP5: "r35.4.1"
   NVMPI_PREFIX: "${CI_PROJECT_DIR}/_nvmpi"
