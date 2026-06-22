@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.6.0 - 2026-06-22
+
+### Features
+
+- Add FFmpeg 8.1 support (libavcodec 62, release/8.1 branch) (ffmpeg)
+
+### CI
+
+- Make `--enable-libdav1d` conditional on `dav1d >= 1.0.0` via pkg-config probe (ci)
+
 ## 3.5.0 - 2026-06-21
 
 ### Bug Fixes

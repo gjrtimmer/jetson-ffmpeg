@@ -20,7 +20,7 @@ FFmpeg does not depend on this repo at runtime beyond `libnvmpi.so`; the integra
 - `test/` — per-feature hardware suites (`hw-*.sh`) run by `hw-all.sh` (auto-discovery; see `test/README.md`), `gen-samples.sh` (shared sample generators), and `smoke-all.sh` (full cross-version build + hw-all). FFmpeg sources are fetched by `scripts/clone-ffmpeg.sh`.
 - Prose documentation lives in the **[project wiki](https://github.com/gjrtimmer/jetson-ffmpeg/wiki)** (`jetson-ffmpeg.wiki.git`), not in-repo — the `docs/` folder has been retired. Script/alias reference: [Scripts and Commands](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Scripts-and-Commands).
 
-Supported FFmpeg versions: 4.2, 4.4, 6.0, 6.1, 7.0, 7.1, 8.0 (libavcodec 58→62).
+Supported FFmpeg versions: 4.2, 4.4, 6.0, 6.1, 7.0, 7.1, 8.0, 8.1 (libavcodec 58→62).
 
 ## Build & test commands
 
