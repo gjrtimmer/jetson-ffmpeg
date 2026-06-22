@@ -13,6 +13,7 @@ FROM harbor.local/jetson/l4t-jetpack5:${L4T_TAG}
 
 ARG DEBIAN_FRONTEND=noninteractive
 
+# l4t-base does not ship the Multimedia API — install it unconditionally.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         git \
@@ -20,7 +21,5 @@ RUN apt-get update \
         cmake \
         pkg-config \
         libv4l-dev \
-    && if [ ! -d /usr/src/jetson_multimedia_api ]; then \
-        apt-get install -y --no-install-recommends nvidia-l4t-jetson-multimedia-api; \
-    fi \
+        nvidia-l4t-jetson-multimedia-api \
     && rm -rf /var/lib/apt/lists/*
