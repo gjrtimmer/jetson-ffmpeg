@@ -26,7 +26,7 @@ Invoke: **`/retro`** or **`/retro <session-id-prefix>`** (target one session).
 
 ## Skill Version
 
-<!-- retro:version:17 -->
+<!-- retro:version:18 -->
 Track version here. Each self-improvement pass increments this counter and
 logs what changed in the commit message.
 
@@ -376,7 +376,9 @@ const PATTERNS = {
   preference_signal: [
     /\bmight be better\b/i, /\bprefer\b.*\b(to|if|that)\b/i,
     /\bshould we\b/i, /\bwhat if we\b/i, /\bwhat about\b/i,
-    /\blet'?s\s+(try|do|use|go with)\b/i, /\bcan we\b.*\binstead\b/i
+    /\blet'?s\s+(try|do|use|go with)\b/i, /\bcan we\b.*\binstead\b/i,
+    /\bmake it\b.*\bhuman\b/i, /\bsound\b.*\blike me\b/i,
+    /\bmore\s+human\b/i, /\blike a human\b/i
   ],
   workaround_before_fix: [
     /\bdo we need\b.*\bretry\b/i, /\binstead of.*\bactual fix\b/i,

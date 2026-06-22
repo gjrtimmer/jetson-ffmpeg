@@ -396,6 +396,11 @@ and wait for them to confirm before continuing.
 validates against the live GitLab instance (resolves YAML anchors, `extends`,
 `rules`, etc.), which a plain YAML parse cannot.
 
+**For `gh api` bodies longer than ~500 chars, write to a temp file and pipe
+via `jq --rawfile body <file> '{"body": $body}' | gh api ... --input -`.**
+Never use `--field body="$(cat ...)"` — shell argument length limits break on
+anything substantial.
+
 **Audit CI trigger rules holistically.** When editing `.gitlab-ci.yml`, review
 `rules:` for ALL jobs — not just those directly modified. Check for unintended
 auto-triggers, missing variable gates, and `changes:paths` rules that fire
@@ -517,6 +522,11 @@ jocover/jetson-ffmpeg, or any fork), post a short comment on that upstream
 issue noting that a fix exists in this fork, with links to the commit and the
 local issue. Keep it factual and brief — symptom, where the fix lives, how it
 is regression-tested. Do not comment on closed upstream issues.
+
+**Write upstream comments in natural conversational voice.** No structured
+headers, no bullet-point lists, no table formatting. These comments appear
+under the user's GitHub identity — they must read as written by a human
+developer, not generated. Keep technical accuracy but use prose paragraphs.
 
 ## Attribution policy
 
