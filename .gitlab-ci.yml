@@ -227,32 +227,32 @@ build:nvmpi:jp5:
       - _ffmpeg/
     expire_in: 1 hour
 
-patch:ffmpeg-6.0:
+patch:ffmpeg-6.0:jp6:
   <<: *patch-and-build
   variables:
     FFMPEG_BRANCH: "release/6.0"
 
-patch:ffmpeg-6.1:
+patch:ffmpeg-6.1:jp6:
   <<: *patch-and-build
   variables:
     FFMPEG_BRANCH: "release/6.1"
 
-patch:ffmpeg-7.0:
+patch:ffmpeg-7.0:jp6:
   <<: *patch-and-build
   variables:
     FFMPEG_BRANCH: "release/7.0"
 
-patch:ffmpeg-7.1:
+patch:ffmpeg-7.1:jp6:
   <<: *patch-and-build
   variables:
     FFMPEG_BRANCH: "release/7.1"
 
-patch:ffmpeg-8.0:
+patch:ffmpeg-8.0:jp6:
   <<: *patch-and-build
   variables:
     FFMPEG_BRANCH: "release/8.0"
 
-patch:ffmpeg-8.1:
+patch:ffmpeg-8.1:jp6:
   <<: *patch-and-build
   variables:
     FFMPEG_BRANCH: "release/8.1"
@@ -338,29 +338,29 @@ patch:ffmpeg-8.1:jp5:
     - ldconfig || true
     - bash test/hw-all.sh
 
-test:hw-ffmpeg-6.0:           # path C
+test:hw-ffmpeg-6.0:jp6:       # path C
   <<: *hw-test
-  needs: ["patch:ffmpeg-6.0"]
+  needs: ["patch:ffmpeg-6.0:jp6"]
 
-test:hw-ffmpeg-6.1:           # path C
+test:hw-ffmpeg-6.1:jp6:       # path C
   <<: *hw-test
-  needs: ["patch:ffmpeg-6.1"]
+  needs: ["patch:ffmpeg-6.1:jp6"]
 
-test:hw-ffmpeg-7.0:           # path C
+test:hw-ffmpeg-7.0:jp6:       # path C
   <<: *hw-test
-  needs: ["patch:ffmpeg-7.0"]
+  needs: ["patch:ffmpeg-7.0:jp6"]
 
-test:hw-ffmpeg-7.1:           # path C
+test:hw-ffmpeg-7.1:jp6:       # path C
   <<: *hw-test
-  needs: ["patch:ffmpeg-7.1"]
+  needs: ["patch:ffmpeg-7.1:jp6"]
 
-test:hw-ffmpeg-8.0:           # path D
+test:hw-ffmpeg-8.0:jp6:       # path D
   <<: *hw-test
-  needs: ["patch:ffmpeg-8.0"]
+  needs: ["patch:ffmpeg-8.0:jp6"]
 
-test:hw-ffmpeg-8.1:           # path D
+test:hw-ffmpeg-8.1:jp6:       # path D
   <<: *hw-test
-  needs: ["patch:ffmpeg-8.1"]
+  needs: ["patch:ffmpeg-8.1:jp6"]
 
 # ---------------------------------------------------------------------------
 # Stage: package — build REAL libnvmpi + ffmpeg per version and tar each one
@@ -411,12 +411,12 @@ test:hw-ffmpeg-8.1:           # path D
       - dist/
     expire_in: 1 week
 
-package:ffmpeg-6.0: { extends: .package, variables: { FFVER: "6.0" } }
-package:ffmpeg-6.1: { extends: .package, variables: { FFVER: "6.1" } }
-package:ffmpeg-7.0: { extends: .package, variables: { FFVER: "7.0" } }
-package:ffmpeg-7.1: { extends: .package, variables: { FFVER: "7.1" } }
-package:ffmpeg-8.0: { extends: .package, variables: { FFVER: "8.0" } }
-package:ffmpeg-8.1: { extends: .package, variables: { FFVER: "8.1" } }
+package:ffmpeg-6.0:jp6: { extends: .package, variables: { FFVER: "6.0" } }
+package:ffmpeg-6.1:jp6: { extends: .package, variables: { FFVER: "6.1" } }
+package:ffmpeg-7.0:jp6: { extends: .package, variables: { FFVER: "7.0" } }
+package:ffmpeg-7.1:jp6: { extends: .package, variables: { FFVER: "7.1" } }
+package:ffmpeg-8.0:jp6: { extends: .package, variables: { FFVER: "8.0" } }
+package:ffmpeg-8.1:jp6: { extends: .package, variables: { FFVER: "8.1" } }
 
 .package-jp5:
   extends: .package
@@ -449,12 +449,12 @@ release:
     name: "${RELEASE_IMAGE}"
     pull_policy: always
   needs:
-    - "package:ffmpeg-6.0"
-    - "package:ffmpeg-6.1"
-    - "package:ffmpeg-7.0"
-    - "package:ffmpeg-7.1"
-    - "package:ffmpeg-8.0"
-    - "package:ffmpeg-8.1"
+    - "package:ffmpeg-6.0:jp6"
+    - "package:ffmpeg-6.1:jp6"
+    - "package:ffmpeg-7.0:jp6"
+    - "package:ffmpeg-7.1:jp6"
+    - "package:ffmpeg-8.0:jp6"
+    - "package:ffmpeg-8.1:jp6"
     - "package:ffmpeg-6.0:jp5"
     - "package:ffmpeg-6.1:jp5"
     - "package:ffmpeg-7.0:jp5"
