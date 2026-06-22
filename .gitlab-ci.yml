@@ -199,7 +199,7 @@ build:nvmpi:jp5:
       # Probe optional codec/protocol libraries — enable whatever is available.
       # Core test target is nvmpi; optional libs are best-effort in patch builds.
       OPT=""
-      probe() { pkg-config --exists "$1" 2>/dev/null && OPT="${OPT} $2"; }
+      probe() { if pkg-config --exists "$1" 2>/dev/null; then OPT="${OPT} $2"; fi; }
       probe x264          --enable-libx264
       probe x265          --enable-libx265
       probe vpx           --enable-libvpx
