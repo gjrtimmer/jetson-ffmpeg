@@ -12,6 +12,7 @@
 
 - Add JetPack 5.x (L4T r35.4.1) compile-test job and builder image (ci)
 - Rename Docker images to distinguish JetPack 5 from JetPack 6 (ci)
+- Restrict Docker image builds to `BUILD_IMAGES=true` only — Dockerfile changes no longer auto-trigger builds (ci)
 
 ## 3.6.0 - 2026-06-22
 
