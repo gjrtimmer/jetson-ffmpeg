@@ -125,10 +125,21 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 			case 42: ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_4_2; break;
 			case 50: ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_5_0; break;
 			case 51: ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_5_1; break;
+			/* H.264 levels 5.2–6.2: added in linux/v4l2-controls.h from kernel
+			 * 5.17+. JetPack 5.x (kernel 5.10) only defines up to 5.1; guard
+			 * so builds succeed on older headers — falls through to default. */
+#ifdef V4L2_MPEG_VIDEO_H264_LEVEL_5_2
 			case 52: ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_5_2; break;
+#endif
+#ifdef V4L2_MPEG_VIDEO_H264_LEVEL_6_0
 			case 60: ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_6_0; break;
+#endif
+#ifdef V4L2_MPEG_VIDEO_H264_LEVEL_6_1
 			case 61: ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_6_1; break;
+#endif
+#ifdef V4L2_MPEG_VIDEO_H264_LEVEL_6_2
 			case 62: ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_6_2; break;
+#endif
 			default: ctx->level=V4L2_MPEG_VIDEO_H264_LEVEL_5_1; break;
 		}
 	}
@@ -149,10 +160,21 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 			case 41: ctx->level=V4L2_MPEG_VIDEO_H265_LEVEL_4_1_MAIN_TIER; break;
 			case 50: ctx->level=V4L2_MPEG_VIDEO_H265_LEVEL_5_0_MAIN_TIER; break;
 			case 51: ctx->level=V4L2_MPEG_VIDEO_H265_LEVEL_5_1_MAIN_TIER; break;
+			/* HEVC levels 5.2–6.2: NVIDIA extension in v4l2_nv_extensions.h.
+			 * Present on JetPack 6+ (Orin); may be absent on older JetPack
+			 * or non-Jetson builds — guard for portability. */
+#ifdef V4L2_MPEG_VIDEO_H265_LEVEL_5_2_MAIN_TIER
 			case 52: ctx->level=V4L2_MPEG_VIDEO_H265_LEVEL_5_2_MAIN_TIER; break;
+#endif
+#ifdef V4L2_MPEG_VIDEO_H265_LEVEL_6_0_MAIN_TIER
 			case 60: ctx->level=V4L2_MPEG_VIDEO_H265_LEVEL_6_0_MAIN_TIER; break;
+#endif
+#ifdef V4L2_MPEG_VIDEO_H265_LEVEL_6_1_MAIN_TIER
 			case 61: ctx->level=V4L2_MPEG_VIDEO_H265_LEVEL_6_1_MAIN_TIER; break;
+#endif
+#ifdef V4L2_MPEG_VIDEO_H265_LEVEL_6_2_MAIN_TIER
 			case 62: ctx->level=V4L2_MPEG_VIDEO_H265_LEVEL_6_2_MAIN_TIER; break;
+#endif
 			default: ctx->level=V4L2_MPEG_VIDEO_H265_LEVEL_5_1_MAIN_TIER; break;
 		}
 	}
