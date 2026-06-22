@@ -1,5 +1,16 @@
 {
   "enabledPlugins": {
     "superpowers@claude-plugins-official": true
+  },
+  "permissions": {
+    "deny": [
+      "Bash(mc rm *)",
+      "Bash(mc rb *)",
+      "Bash(*mc rm *)",
+      "Bash(*mc rb *)",
+      "Bash(*--force-delete*)",
+      "Bash(*--dangerous*)",
+      "Bash(*--purge*)"
+    ]
   }
 }
