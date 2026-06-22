@@ -110,7 +110,7 @@ workflow:
 
 variables:
   L4T_TAG: "r36.4.0"
-  L4T_TAG_JP5: "r35.6.0"
+  L4T_TAG_JP5: "r35.4.1"
   NVMPI_PREFIX: "${CI_PROJECT_DIR}/_nvmpi"
   FFMPEG_PREFIX: "${CI_PROJECT_DIR}/_ffmpeg"
   BUILDER_IMAGE: "harbor.local/jetson/jetson-ffmpeg-builder:${L4T_TAG}"

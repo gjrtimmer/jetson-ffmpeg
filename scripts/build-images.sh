@@ -35,7 +35,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 L4T_TAG="r36.4.0"
-L4T_TAG_JP5="r35.6.0"
+L4T_TAG_JP5="r35.4.1"
 DOCKERHUB_USERNAME="${DOCKERHUB_USERNAME:-}"
 PUSH=true
 DRY_RUN=false
