@@ -9,28 +9,53 @@
 include:
   - component: gitlab.timmertech.nl/templates/components/docker/arm64@1.13.0
     inputs:
-      name: "builder"
+      name: "builder-jp6"
       stage: build
-      dockerfile: ci/builder.Dockerfile
+      dockerfile: ci/builder-jp6.Dockerfile
       tag: "harbor.local/jetson/jetson-ffmpeg-builder:${L4T_TAG}"
       tags: "--tag docker.io/${DOCKERHUB_USERNAME}/jetson-ffmpeg-builder:${L4T_TAG}"
       args: "--build-arg=L4T_TAG=$L4T_TAG"
       before:
         - 'echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin'
       cache: true
-      cache_tag: "builder"
+      cache_tag: "builder-jp6"
       check: false
   - component: gitlab.timmertech.nl/templates/components/docker/arm64@1.13.0
     inputs:
-      name: "l4t-jetpack"
+      name: "l4t-jetpack6"
       stage: build
-      dockerfile: ci/l4t-jetpack.Dockerfile
-      tag: "harbor.local/jetson/l4t-jetpack:${L4T_TAG}"
-      tags: "--tag docker.io/${DOCKERHUB_USERNAME}/l4t-jetpack:${L4T_TAG}"
+      dockerfile: ci/l4t-jetpack6.Dockerfile
+      tag: "harbor.local/jetson/l4t-jetpack6:${L4T_TAG}"
+      tags: "--tag docker.io/${DOCKERHUB_USERNAME}/l4t-jetpack6:${L4T_TAG}"
       args: "--build-arg=L4T_TAG=$L4T_TAG"
       before:
         - 'echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin'
       cache: false
+      check: false
+  - component: gitlab.timmertech.nl/templates/components/docker/arm64@1.13.0
+    inputs:
+      name: "l4t-jetpack5"
+      stage: build
+      dockerfile: ci/l4t-jetpack5.Dockerfile
+      tag: "harbor.local/jetson/l4t-jetpack5:${L4T_TAG_JP5}"
+      tags: "--tag docker.io/${DOCKERHUB_USERNAME}/l4t-jetpack5:${L4T_TAG_JP5}"
+      args: "--build-arg=L4T_TAG=$L4T_TAG_JP5"
+      before:
+        - 'echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin'
+      cache: false
+      check: false
+  - component: gitlab.timmertech.nl/templates/components/docker/arm64@1.13.0
+    inputs:
+      name: "builder-jp5"
+      stage: build
+      dockerfile: ci/builder-jp5.Dockerfile
+      tag: "harbor.local/jetson/jetson-ffmpeg-builder-jp5:${L4T_TAG_JP5}"
+      tags: "--tag docker.io/${DOCKERHUB_USERNAME}/jetson-ffmpeg-builder-jp5:${L4T_TAG_JP5}"
+      args: "--build-arg=L4T_TAG=$L4T_TAG_JP5"
+      before:
+        - 'echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin'
+      cache: true
+      cache_tag: "builder-jp5"
       check: false
   - component: gitlab.timmertech.nl/templates/components/docker/arm64@1.13.0
     inputs:
@@ -84,10 +109,18 @@ workflow:
     - if: '$CI_COMMIT_BRANCH'
 
 variables:
+  BUILD_IMAGES:
+    value: "false"
+    description: "Build and push CI Docker images"
+    options:
+      - "false"
+      - "true"
   L4T_TAG: "r36.4.0"
+  L4T_TAG_JP5: "r35.4.1"
   NVMPI_PREFIX: "${CI_PROJECT_DIR}/_nvmpi"
   FFMPEG_PREFIX: "${CI_PROJECT_DIR}/_ffmpeg"
   BUILDER_IMAGE: "harbor.local/jetson/jetson-ffmpeg-builder:${L4T_TAG}"
+  BUILDER_IMAGE_JP5: "harbor.local/jetson/jetson-ffmpeg-builder-jp5:${L4T_TAG_JP5}"
   RELEASE_IMAGE: "harbor.local/docker.io/${DOCKERHUB_USERNAME}/jetson-ffmpeg-release-tools:latest"
 
 # Reusable pipeline rules:
@@ -127,6 +160,20 @@ build:nvmpi:
       - _nvmpi/
       - build/
     expire_in: 1 hour
+
+# JetPack 5.x (kernel 5.10) compile-test — catches V4L2 header constants
+# and API symbols that exist on JP6 (kernel 5.15+) but not JP5. Stubs-only,
+# no FFmpeg, no hw tests. Covers all JP5 releases (5.0.2-5.1.6).
+build:nvmpi:jp5:
+  stage: build
+  <<: *not-on-tag
+  image:
+    name: "${BUILDER_IMAGE_JP5}"
+    pull_policy: if-not-present
+  script:
+    - mkdir -p build && cd build
+    - cmake -DCMAKE_BUILD_TYPE=Release -DWITH_STUBS=ON ..
+    - make -j"$(nproc)"
 
 # ---------------------------------------------------------------------------
 # Stage: patch — clone each ffmpeg version, patch, configure, and build
@@ -212,7 +259,7 @@ patch:ffmpeg-8.1:
   stage: test
   <<: *not-on-tag
   image:
-    name: "harbor.local/jetson/l4t-jetpack:${L4T_TAG}"
+    name: "harbor.local/jetson/l4t-jetpack6:${L4T_TAG}"
     pull_policy: always
   tags: [jetson, "${JETSON_VARIANT}"]
   # Serialize all Jetson work (one job at a time) so per-version tests
@@ -352,7 +399,7 @@ release:
 # $HARBOR_REGISTRY_CACHE/$CI_PROJECT_PATH:<cache_tag>.
 # Requires CI vars: DOCKER_AUTH_CONFIG, DOCKERHUB_USERNAME, DOCKERHUB_TOKEN.
 # ---------------------------------------------------------------------------
-docker:builder:
+docker:builder-jp6:
   image:
     name: "${DOCKER_HUB_PROXY}/docker:28.2.2-cli"
     pull_policy: always
@@ -362,10 +409,10 @@ docker:builder:
     - if: '$BUILD_IMAGES == "true"'
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
       changes:
-        paths: ["ci/builder.Dockerfile"]
+        paths: ["ci/builder-jp6.Dockerfile"]
     - when: never
 
-docker:l4t-jetpack:
+docker:l4t-jetpack6:
   image:
     name: "${DOCKER_HUB_PROXY}/docker:28.2.2-cli"
     pull_policy: always
@@ -375,7 +422,33 @@ docker:l4t-jetpack:
     - if: '$BUILD_IMAGES == "true"'
     - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
       changes:
-        paths: ["ci/l4t-jetpack.Dockerfile"]
+        paths: ["ci/l4t-jetpack6.Dockerfile"]
+    - when: never
+
+docker:l4t-jetpack5:
+  image:
+    name: "${DOCKER_HUB_PROXY}/docker:28.2.2-cli"
+    pull_policy: always
+  rules:
+    - if: '$CI_COMMIT_TAG'
+      when: never
+    - if: '$BUILD_IMAGES == "true"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        paths: ["ci/l4t-jetpack5.Dockerfile"]
+    - when: never
+
+docker:builder-jp5:
+  image:
+    name: "${DOCKER_HUB_PROXY}/docker:28.2.2-cli"
+    pull_policy: always
+  rules:
+    - if: '$CI_COMMIT_TAG'
+      when: never
+    - if: '$BUILD_IMAGES == "true"'
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        paths: ["ci/builder-jp5.Dockerfile"]
     - when: never
 
 docker:release-tools:

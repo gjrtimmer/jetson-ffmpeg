@@ -8,13 +8,16 @@
 #   scripts/build-images.sh [options] [image...]
 #
 # Images:
-#   l4t-jetpack     Base JetPack image with dpkg conffile fix
-#   builder         CI builder image (depends on l4t-jetpack)
+#   l4t-jetpack6    Base JetPack 6 image with dpkg conffile fix
+#   builder-jp6     CI builder image for JP6 (depends on l4t-jetpack6)
+#   l4t-jetpack5    Base JetPack 5 image (compile-test only)
+#   builder-jp5     CI builder image for JP5 compile-test (depends on l4t-jetpack5)
 #   release-tools   Release stage tooling (git-cliff, gh, release-cli)
 #   all             All images in dependency order (default)
 #
 # Options:
-#   --l4t-tag TAG       L4T version tag (default: r36.4.0)
+#   --l4t-tag TAG       L4T version tag for JP6 (default: r36.4.0)
+#   --l4t-tag-jp5 TAG   L4T version tag for JP5 (default: r35.6.0)
 #   --dockerhub USER    DockerHub username (default: $DOCKERHUB_USERNAME)
 #   --no-push           Build only, do not push
 #   --dry-run           Print commands without executing
@@ -22,8 +25,9 @@
 #
 # Examples:
 #   scripts/build-images.sh                        # build + push all
-#   scripts/build-images.sh l4t-jetpack            # only l4t-jetpack
-#   scripts/build-images.sh --no-push builder      # build builder locally
+#   scripts/build-images.sh l4t-jetpack6           # only l4t-jetpack6
+#   scripts/build-images.sh --no-push builder-jp6  # build builder-jp6 locally
+#   scripts/build-images.sh l4t-jetpack5 builder-jp5  # only JP5 images
 #   scripts/build-images.sh release-tools          # only release-tools
 
 set -euo pipefail
@@ -31,6 +35,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
 L4T_TAG="r36.4.0"
+L4T_TAG_JP5="r35.4.1"
 DOCKERHUB_USERNAME="${DOCKERHUB_USERNAME:-}"
 PUSH=true
 DRY_RUN=false
@@ -45,18 +50,19 @@ usage() {
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --l4t-tag)    L4T_TAG="$2"; shift 2 ;;
-        --dockerhub)  DOCKERHUB_USERNAME="$2"; shift 2 ;;
-        --no-push)    PUSH=false; shift ;;
-        --dry-run)    DRY_RUN=true; shift ;;
-        -h|--help)    usage ;;
-        -*)           die "unknown option: $1" ;;
-        *)            IMAGES+=("$1"); shift ;;
+        --l4t-tag)      L4T_TAG="$2"; shift 2 ;;
+        --l4t-tag-jp5)  L4T_TAG_JP5="$2"; shift 2 ;;
+        --dockerhub)    DOCKERHUB_USERNAME="$2"; shift 2 ;;
+        --no-push)      PUSH=false; shift ;;
+        --dry-run)      DRY_RUN=true; shift ;;
+        -h|--help)      usage ;;
+        -*)             die "unknown option: $1" ;;
+        *)              IMAGES+=("$1"); shift ;;
     esac
 done
 
 [[ ${#IMAGES[@]} -eq 0 ]] && IMAGES=(all)
-[[ "${IMAGES[*]}" == "all" ]] && IMAGES=(l4t-jetpack builder release-tools)
+[[ "${IMAGES[*]}" == "all" ]] && IMAGES=(l4t-jetpack6 builder-jp6 l4t-jetpack5 builder-jp5 release-tools)
 
 if $PUSH && [[ -z "$DOCKERHUB_USERNAME" ]]; then
     die "set DOCKERHUB_USERNAME env var or pass --dockerhub USER for DockerHub push"
@@ -80,7 +86,7 @@ build_and_push() {
 
     run docker build --platform linux/arm64 \
         -f "${REPO_ROOT}/${dockerfile}" \
-        --build-arg "L4T_TAG=${L4T_TAG}" \
+        --build-arg "L4T_TAG=${CUR_L4T_TAG}" \
         "${tag_args[@]}" \
         "${REPO_ROOT}"
 
@@ -97,23 +103,38 @@ build_and_push() {
 
 for img in "${IMAGES[@]}"; do
     case "$img" in
-        l4t-jetpack)
-            build_and_push "l4t-jetpack" "ci/l4t-jetpack.Dockerfile" \
-                "harbor.local/jetson/l4t-jetpack:${L4T_TAG}" \
-                "docker.io/${DOCKERHUB_USERNAME}/l4t-jetpack:${L4T_TAG}"
+        l4t-jetpack6)
+            CUR_L4T_TAG="${L4T_TAG}"
+            build_and_push "l4t-jetpack6" "ci/l4t-jetpack6.Dockerfile" \
+                "harbor.local/jetson/l4t-jetpack6:${L4T_TAG}" \
+                "docker.io/${DOCKERHUB_USERNAME}/l4t-jetpack6:${L4T_TAG}"
             ;;
-        builder)
-            build_and_push "builder" "ci/builder.Dockerfile" \
+        builder-jp6)
+            CUR_L4T_TAG="${L4T_TAG}"
+            build_and_push "builder-jp6" "ci/builder-jp6.Dockerfile" \
                 "harbor.local/jetson/jetson-ffmpeg-builder:${L4T_TAG}" \
                 "docker.io/${DOCKERHUB_USERNAME}/jetson-ffmpeg-builder:${L4T_TAG}"
             ;;
+        l4t-jetpack5)
+            CUR_L4T_TAG="${L4T_TAG_JP5}"
+            build_and_push "l4t-jetpack5" "ci/l4t-jetpack5.Dockerfile" \
+                "harbor.local/jetson/l4t-jetpack5:${L4T_TAG_JP5}" \
+                "docker.io/${DOCKERHUB_USERNAME}/l4t-jetpack5:${L4T_TAG_JP5}"
+            ;;
+        builder-jp5)
+            CUR_L4T_TAG="${L4T_TAG_JP5}"
+            build_and_push "builder-jp5" "ci/builder-jp5.Dockerfile" \
+                "harbor.local/jetson/jetson-ffmpeg-builder-jp5:${L4T_TAG_JP5}" \
+                "docker.io/${DOCKERHUB_USERNAME}/jetson-ffmpeg-builder-jp5:${L4T_TAG_JP5}"
+            ;;
         release-tools)
+            CUR_L4T_TAG="${L4T_TAG}"
             build_and_push "release-tools" "ci/release-tools.Dockerfile" \
                 "harbor.local/jetson/jetson-ffmpeg-release-tools:latest" \
                 "docker.io/${DOCKERHUB_USERNAME}/jetson-ffmpeg-release-tools:latest"
             ;;
         *)
-            die "unknown image: ${img} (expected: l4t-jetpack, builder, release-tools, all)"
+            die "unknown image: ${img} (expected: l4t-jetpack6, builder-jp6, l4t-jetpack5, builder-jp5, release-tools, all)"
             ;;
     esac
 done

@@ -16,4 +16,8 @@ RUN echo 'Dpkg::Options { "--force-confdef"; "--force-confold"; };' \
 
 # jetson-stats: provides jtop Python API for NVDEC/NVENC/GPU utilization
 # metrics in hw-perf-bench.sh during CI hw-test jobs.
-RUN pip3 install --no-cache-dir jetson-stats
+# python3-pip may be missing depending on the l4t-jetpack base layer variant.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends python3-pip \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip3 install --no-cache-dir jetson-stats
