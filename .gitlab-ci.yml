@@ -389,11 +389,11 @@ release:
 # ---------------------------------------------------------------------------
 # Docker image build overrides — rules for component-generated jobs.
 #
-# The docker component (included above) creates docker:builder and
-# docker:release-tools jobs. We override their rules to restrict them to
-# scheduled pipelines (BUILD_IMAGES=true) or Dockerfile changes on the
-# default branch, and set the correct runner image (our default: points
-# to the builder image, not docker CLI).
+# The docker component (included above) creates docker:builder-jp6,
+# docker:l4t-jetpack6, etc. We override their rules so images are ONLY
+# built when BUILD_IMAGES=true (pipeline UI dropdown or scheduled).
+# Dockerfile changes alone do NOT trigger builds — the images are large
+# and slow; rebuild explicitly when ready.
 #
 # Buildkit cache: enabled via component inputs; cache images stored in
 # $HARBOR_REGISTRY_CACHE/$CI_PROJECT_PATH:<cache_tag>.
@@ -407,9 +407,6 @@ docker:builder-jp6:
     - if: '$CI_COMMIT_TAG'
       when: never
     - if: '$BUILD_IMAGES == "true"'
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-      changes:
-        paths: ["ci/builder-jp6.Dockerfile"]
     - when: never
 
 docker:l4t-jetpack6:
@@ -420,9 +417,6 @@ docker:l4t-jetpack6:
     - if: '$CI_COMMIT_TAG'
       when: never
     - if: '$BUILD_IMAGES == "true"'
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-      changes:
-        paths: ["ci/l4t-jetpack6.Dockerfile"]
     - when: never
 
 docker:l4t-jetpack5:
@@ -433,9 +427,6 @@ docker:l4t-jetpack5:
     - if: '$CI_COMMIT_TAG'
       when: never
     - if: '$BUILD_IMAGES == "true"'
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-      changes:
-        paths: ["ci/l4t-jetpack5.Dockerfile"]
     - when: never
 
 docker:builder-jp5:
@@ -446,9 +437,6 @@ docker:builder-jp5:
     - if: '$CI_COMMIT_TAG'
       when: never
     - if: '$BUILD_IMAGES == "true"'
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-      changes:
-        paths: ["ci/builder-jp5.Dockerfile"]
     - when: never
 
 docker:release-tools:
@@ -459,7 +447,4 @@ docker:release-tools:
     - if: '$CI_COMMIT_TAG'
       when: never
     - if: '$BUILD_IMAGES == "true"'
-    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
-      changes:
-        paths: ["ci/release-tools.Dockerfile"]
     - when: never
