@@ -477,6 +477,16 @@ Dockerfile.
   workflow and investigate; do not proceed to the next step. If a release/tag
   pipeline fails, abort the release: delete the partial tag/release from both
   GitLab and GitHub, cancel the pipeline, then investigate the root cause.
+- **Wait for post-merge main pipeline before proceeding to the next issue.**
+  When working through a sequence of issues, each issue's full lifecycle
+  (MR merge → main pipeline green) must complete before starting the next.
+  Do not overlap — one issue at a time unless the user explicitly says
+  otherwise.
+- **All MRs for a release must be merged and green before tagging.** Never
+  create a release tag while MRs intended for that release are still open or
+  their main pipelines are still running. If a release was created
+  prematurely, retract it (delete tag + release from GitLab and GitHub)
+  before re-releasing.
 - **Check IDE/editor config on renames.** When renaming files or symbols, also
   check `.vscode/` (e.g. `c_cpp_properties.json`), `.idea/`, and similar IDE
   config for stale references. Don't wait for the user to remind you.
