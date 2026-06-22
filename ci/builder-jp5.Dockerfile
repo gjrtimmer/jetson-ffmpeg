@@ -8,7 +8,7 @@
 # kernel 5.17 that don't exist on JP5's kernel 5.10) before they reach users.
 #
 # Rebuild when build deps change or when upgrading the JP5 L4T baseline.
-ARG L4T_TAG=r35.4.1
+ARG L4T_TAG=r35.2.1
 FROM harbor.local/jetson/l4t-jetpack5:${L4T_TAG}
 
 ARG DEBIAN_FRONTEND=noninteractive
