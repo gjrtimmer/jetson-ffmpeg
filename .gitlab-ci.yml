@@ -116,6 +116,7 @@ variables:
       - "false"
       - "true"
   L4T_TAG: "r36.4.0"
+  L4T_SOC: "t234"
   L4T_TAG_JP5: "r35.4.1"
   NVMPI_PREFIX: "${CI_PROJECT_DIR}/_nvmpi"
   FFMPEG_PREFIX: "${CI_PROJECT_DIR}/_ffmpeg"
@@ -172,8 +173,14 @@ build:nvmpi:jp5:
     pull_policy: if-not-present
   script:
     - mkdir -p build && cd build
-    - cmake -DCMAKE_BUILD_TYPE=Release -DWITH_STUBS=ON ..
+    - cmake -DCMAKE_INSTALL_PREFIX="${NVMPI_PREFIX}" -DCMAKE_BUILD_TYPE=Release -DWITH_STUBS=ON ..
     - make -j"$(nproc)"
+    - make install
+  artifacts:
+    paths:
+      - _nvmpi/
+      - build/
+    expire_in: 1 hour
 
 # ---------------------------------------------------------------------------
 # Stage: patch — clone each ffmpeg version, patch, configure, and build
@@ -234,6 +241,43 @@ patch:ffmpeg-8.0:
 
 patch:ffmpeg-8.1:
   <<: *patch-and-build
+  variables:
+    FFMPEG_BRANCH: "release/8.1"
+
+.patch-and-build-jp5: &patch-and-build-jp5
+  <<: *patch-and-build
+  image:
+    name: "${BUILDER_IMAGE_JP5}"
+    pull_policy: always
+  needs: ["build:nvmpi:jp5"]
+
+patch:ffmpeg-6.0:jp5:
+  <<: *patch-and-build-jp5
+  variables:
+    FFMPEG_BRANCH: "release/6.0"
+
+patch:ffmpeg-6.1:jp5:
+  <<: *patch-and-build-jp5
+  variables:
+    FFMPEG_BRANCH: "release/6.1"
+
+patch:ffmpeg-7.0:jp5:
+  <<: *patch-and-build-jp5
+  variables:
+    FFMPEG_BRANCH: "release/7.0"
+
+patch:ffmpeg-7.1:jp5:
+  <<: *patch-and-build-jp5
+  variables:
+    FFMPEG_BRANCH: "release/7.1"
+
+patch:ffmpeg-8.0:jp5:
+  <<: *patch-and-build-jp5
+  variables:
+    FFMPEG_BRANCH: "release/8.0"
+
+patch:ffmpeg-8.1:jp5:
+  <<: *patch-and-build-jp5
   variables:
     FFMPEG_BRANCH: "release/8.1"
 
@@ -326,9 +370,9 @@ test:hw-ffmpeg-8.1:           # path D
   before_script:
     - mkdir -p /opt/nvidia/l4t-packages && touch /opt/nvidia/l4t-packages/.nv-l4t-disable-boot-fw-update-in-preinstall
     - |
-      if ! grep -rqs 'repo.download.nvidia.com/jetson/t234' /etc/apt/sources.list /etc/apt/sources.list.d/; then
+      if ! grep -rqs "repo.download.nvidia.com/jetson/${L4T_SOC}" /etc/apt/sources.list /etc/apt/sources.list.d/; then
         wget -qO /etc/apt/trusted.gpg.d/jetson-ota-public.asc https://repo.download.nvidia.com/jetson/jetson-ota-public.asc
-        echo "deb https://repo.download.nvidia.com/jetson/t234 ${L4T_TAG%.*} main" > /etc/apt/sources.list.d/nvidia-l4t-t234.list
+        echo "deb https://repo.download.nvidia.com/jetson/${L4T_SOC} ${L4T_TAG%.*} main" > /etc/apt/sources.list.d/nvidia-l4t-${L4T_SOC}.list
       fi
     - apt-get update -qq
     - >-
@@ -361,6 +405,22 @@ package:ffmpeg-7.1: { extends: .package, variables: { FFVER: "7.1" } }
 package:ffmpeg-8.0: { extends: .package, variables: { FFVER: "8.0" } }
 package:ffmpeg-8.1: { extends: .package, variables: { FFVER: "8.1" } }
 
+.package-jp5:
+  extends: .package
+  image:
+    name: "${BUILDER_IMAGE_JP5}"
+    pull_policy: always
+  variables:
+    L4T_TAG: "${L4T_TAG_JP5}"
+    L4T_SOC: "t194"
+
+package:ffmpeg-6.0:jp5: { extends: .package-jp5, variables: { FFVER: "6.0" } }
+package:ffmpeg-6.1:jp5: { extends: .package-jp5, variables: { FFVER: "6.1" } }
+package:ffmpeg-7.0:jp5: { extends: .package-jp5, variables: { FFVER: "7.0" } }
+package:ffmpeg-7.1:jp5: { extends: .package-jp5, variables: { FFVER: "7.1" } }
+package:ffmpeg-8.0:jp5: { extends: .package-jp5, variables: { FFVER: "8.0" } }
+package:ffmpeg-8.1:jp5: { extends: .package-jp5, variables: { FFVER: "8.1" } }
+
 # ---------------------------------------------------------------------------
 # Stage: release — changelog + S3 upload + GitLab Release (+ generic package
 # assets). Runs in the release-tools image from DockerHub
@@ -382,6 +442,12 @@ release:
     - "package:ffmpeg-7.1"
     - "package:ffmpeg-8.0"
     - "package:ffmpeg-8.1"
+    - "package:ffmpeg-6.0:jp5"
+    - "package:ffmpeg-6.1:jp5"
+    - "package:ffmpeg-7.0:jp5"
+    - "package:ffmpeg-7.1:jp5"
+    - "package:ffmpeg-8.0:jp5"
+    - "package:ffmpeg-8.1:jp5"
   variables:
     GIT_DEPTH: "0"   # full history + tags for git-cliff
   before_script:
