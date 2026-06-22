@@ -508,6 +508,10 @@ Dockerfile.
   crashes another's device session. Run `glab ci list` or
   `glab ci status` to confirm no pipeline hw-test jobs are active before any
   process termination on the Jetson host.
+- **Cancel superseded pipelines before pushing a fix.** When pushing a new
+  commit to an MR branch, cancel any running/pending pipelines for previous
+  commits on that branch first — they are wasted runner time. Use
+  `glab api --method POST "projects/.../pipelines/<id>/cancel"` for each.
 - **Verify pipeline monitor targets after MR merge.** When an MR merges, the
   MR pipeline is no longer relevant. Monitor the main branch pipeline
   triggered by the merge commit — specify the exact pipeline ID or branch
