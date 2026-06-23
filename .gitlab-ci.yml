@@ -375,6 +375,7 @@ test:ffmpeg-8.1:jp6:                         # path D
     - |
       OPT=""
       probe() { if pkg-config --exists "$1" 2>/dev/null; then OPT="${OPT} $2"; fi; }
+      probe x264          --enable-libx264
       probe x265          --enable-libx265
       probe vpx           --enable-libvpx
       probe opus          --enable-libopus
@@ -386,9 +387,10 @@ test:ffmpeg-8.1:jp6:                         # path D
       probe gnutls        --enable-gnutls
       echo "[i] optional flags:${OPT:- (none)}"
     - >-
-      bash ./scripts/build.sh --no-stubs --ffmpeg "${FFVER}" --install
+      bash ./scripts/build.sh --no-stubs --no-libx264 --no-libx265
+      --ffmpeg "${FFVER}" --install
       --prefix "${PFX}" --ffmpeg-prefix "${PFX}" -j"$(nproc)"
-      --ffmpeg-args "--enable-shared --disable-static ${OPT}"
+      --ffmpeg-args "--enable-shared --disable-static --enable-gpl ${OPT}"
     - LD_LIBRARY_PATH="${PFX}/lib:/usr/lib/aarch64-linux-gnu/tegra" "${PFX}/bin/ffmpeg" -hide_banner -encoders 2>/dev/null | grep -E 'h264_nvmpi|hevc_nvmpi'
     - >-
       bash ./scripts/package.sh --prefix "${PFX}" --version "${VERSION}"
