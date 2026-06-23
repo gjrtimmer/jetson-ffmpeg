@@ -509,9 +509,19 @@ Dockerfile.
   `glab ci status` to confirm no pipeline hw-test jobs are active before any
   process termination on the Jetson host.
 - **Cancel superseded pipelines before pushing a fix.** When pushing a new
-  commit to an MR branch, cancel any running/pending pipelines for previous
-  commits on that branch first — they are wasted runner time. Use
+  commit to an MR branch, cancel pipelines for **older** commits — they are
+  wasted runner time. **Never cancel the current/latest pipeline** — that
+  leaves the MR with no running pipeline. If auto-merge was unset (e.g. by
+  cancelling the head pipeline or a `-o ci.skip` push), re-enable it with
+  `glab mr merge <nr> --auto-merge` on the still-running pipeline — no
+  empty commit needed. Only cancel pipelines whose commit SHA is no longer
+  HEAD. Use
   `glab api --method POST "projects/.../pipelines/<id>/cancel"` for each.
+- **Don't use `-o ci.skip` on MR branches with auto-merge.** A push with
+  `-o ci.skip` creates a new pipeline with `skipped` status that becomes
+  the MR's head pipeline — this unsets auto-merge. On MR branches, either
+  let the full pipeline run or wait for the current pipeline to finish
+  before pushing docs-only changes.
 - **Verify pipeline monitor targets after MR merge.** When an MR merges, the
   MR pipeline is no longer relevant. Monitor the main branch pipeline
   triggered by the merge commit — specify the exact pipeline ID or branch
