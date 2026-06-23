@@ -14,6 +14,7 @@
 - Rename patch, test, and package jobs with `:jp6` suffix for symmetry (ci)
 - Use `if`-form in `probe()` to avoid `set -e` exit on missing packages (ci)
 - Replace hardcoded optional FFmpeg flags in dist template with pkg-config probes (ci)
+- Replace runtime `ffmpeg -encoders` verification in dist with build-artifact `strings` check — fixes JP5 dist failures in containers without full tegra runtime (ci)
 
 ## 3.6.2 - 2026-06-22
 
