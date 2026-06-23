@@ -345,8 +345,8 @@ test:ffmpeg-8.1:jp6:                         # path D
 # runnable; releases must rebuild against the real Multimedia API.
 #
 # This is a plain container build on any (arm64) runner — NO Jetson hardware
-# is needed: nothing encodes/decodes here, and the `ffmpeg -encoders` check
-# below only lists registered codecs. The real tegra userspace libraries
+# is needed: nothing encodes/decodes here, and the `strings` check on
+# libavcodec.so verifies nvmpi codecs are compiled in. The real tegra userspace libraries
 # (libnvv4l2, libnvjpeg, libnvbufsurface, libnvbufsurftransform) are installed
 # from NVIDIA's jetson apt repo; the touch file skips nvidia-l4t-core's
 # "must run on an NVIDIA Tegra platform" preinstall check inside containers.
@@ -391,7 +391,8 @@ test:ffmpeg-8.1:jp6:                         # path D
       --ffmpeg "${FFVER}" --install
       --prefix "${PFX}" --ffmpeg-prefix "${PFX}" -j"$(nproc)"
       --ffmpeg-args "--enable-shared --disable-static --enable-gpl ${OPT}"
-    - LD_LIBRARY_PATH="${PFX}/lib:/usr/lib/aarch64-linux-gnu/tegra" "${PFX}/bin/ffmpeg" -hide_banner -encoders 2>/dev/null | grep -E 'h264_nvmpi|hevc_nvmpi'
+    - test -f "${PFX}/lib/libnvmpi.so"
+    - strings "${PFX}/lib/libavcodec.so" | grep -qE 'h264_nvmpi|hevc_nvmpi'
     - >-
       bash ./scripts/package.sh --prefix "${PFX}" --version "${VERSION}"
       --ffmpeg-version "${FFVER}" --l4t "${L4T_TAG}" --outdir "${CI_PROJECT_DIR}/dist"
