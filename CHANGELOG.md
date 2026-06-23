@@ -1,5 +1,25 @@
 # Changelog
 
+## 3.6.3 - 2026-06-23
+
+### CI
+
+- Refactor pipeline with `parallel:matrix` builds — 24 individual per-version jobs replaced by 4 matrix definitions (ci)
+- Consolidate stages: drop `patch` (fold into `build`), rename `package` to `dist` (ci)
+- Rename jobs: `build:nvmpi` → `nvmpi:jp6`/`nvmpi:jp5`, `test:hw-ffmpeg-*` → `test:ffmpeg-*` (ci)
+- Simplify release `needs` from 12 entries to 2 matrix parent references (ci)
+- Add JetPack 5 build matrix to patch, package, and release stages (ci)
+- Dynamically probe optional FFmpeg libs in patch template (ci)
+- Add FFmpeg deps to JP5 builder image and make gnutls conditional (ci)
+- Rename patch, test, and package jobs with `:jp6` suffix for symmetry (ci)
+- Use `if`-form in `probe()` to avoid `set -e` exit on missing packages (ci)
+
+## 3.6.2 - 2026-06-22
+
+### CI
+
+- Upload release assets to S3 instead of GitHub (release)
+
 ## 3.6.1 - 2026-06-22
 
 ### Bug Fixes
