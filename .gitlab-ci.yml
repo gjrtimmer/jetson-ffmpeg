@@ -1,6 +1,6 @@
 # yaml-language-server: $schema=https://gitlab.com/gitlab-org/gitlab/-/raw/master/app/assets/javascripts/editor/schema/ci.json
 #
-# CI pipeline for jetson-ffmpeg (nvmpi library + ffmpeg patches).
+# CI pipeline for jetson-ffmpeg (nvmpi library + ffmpeg integration).
 #
 # CI image builds use the docker component from the GitLab catalog:
 #   https://gitlab.timmertech.nl/templates/components/docker (arm64 template)
@@ -72,30 +72,33 @@ include:
 # Two kinds of pipeline:
 #
 #   Branch / MR pipelines (NOT a tag, deduplicated — see workflow:rules):
-#     build   - compile nvmpi library (stubs) on any runner
-#     patch   - apply ffpatch.sh to each supported ffmpeg version, build ffmpeg
+#     build   - compile nvmpi library (stubs) + patch/build each ffmpeg version
 #     test    - all HW test suites (test/hw-all.sh) on each Jetson variant
 #
 #   Tag pipelines (v<X.Y.Z>):  -> see https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Release-Process
-#     package - build REAL libnvmpi + ffmpeg per version in a plain container
+#     dist    - build REAL libnvmpi + ffmpeg per version in a plain container
 #               (the stub builds above are NOT runnable, so releases rebuild
 #               against the real tegra libs, pulled from NVIDIA's apt repo)
 #     release - changelog (git-cliff) -> GitLab Release with package assets,
 #               and mirror to GitHub (if GITHUB_REPO/GITHUB_TOKEN are set)
 #
 # Runner tag convention:
-#   only test needs real hardware ("jetson" + "<variant>"); build/patch/package
+#   only test needs real hardware ("jetson" + "<variant>"); build/dist
 #   have NO tags (any runner). release runs in the release-tools image (any runner).
 #
 # To add a new hardware variant:
 #   1. Register a project runner with tags: jetson, <variant>
 #   2. Add an entry to the shared .hw-test parallel matrix with JETSON_VARIANT
+#
+# To add a new FFmpeg version:
+#   1. Add the version string to the FFVER matrix in ffmpeg:jp6 and ffmpeg:jp5
+#   2. Add a test:ffmpeg-<ver>:jp6 job with the matching needs reference
+#   3. Add the version to the FFVER matrix in dist:jp6 and dist:jp5
 
 stages:
   - build
-  - patch
   - test
-  - package
+  - dist
   - release
 
 # Pipeline deduplication: when a branch has an open MR, only the MR
@@ -146,9 +149,13 @@ default:
     pull_policy: always
 
 # ---------------------------------------------------------------------------
-# Stage: build — compile nvmpi with stubs (any runner)
+# Stage: build — compile nvmpi (stubs), then patch/build each ffmpeg version
+#
+# nvmpi:jp6 / nvmpi:jp5 compile libnvmpi against stubs.
+# ffmpeg:jp6 / ffmpeg:jp5 clone, patch, configure, and build each FFmpeg
+# version via parallel:matrix on FFVER.
 # ---------------------------------------------------------------------------
-build:nvmpi:
+nvmpi:jp6:
   stage: build
   <<: *not-on-tag
   script:
@@ -165,7 +172,7 @@ build:nvmpi:
 # JetPack 5.x (kernel 5.10) compile-test — catches V4L2 header constants
 # and API symbols that exist on JP6 (kernel 5.15+) but not JP5. Stubs-only,
 # no FFmpeg, no hw tests. Covers all JP5 releases (5.0.2-5.1.6).
-build:nvmpi:jp5:
+nvmpi:jp5:
   stage: build
   <<: *not-on-tag
   image:
@@ -182,16 +189,12 @@ build:nvmpi:jp5:
       - build/
     expire_in: 1 hour
 
-# ---------------------------------------------------------------------------
-# Stage: patch — clone each ffmpeg version, patch, configure, and build
-# ---------------------------------------------------------------------------
-.patch-and-build: &patch-and-build
-  stage: patch
-  needs: ["build:nvmpi"]
+.ffmpeg-build: &ffmpeg-build
+  stage: build
   <<: *not-on-tag
   script:
-    - echo "=== ffmpeg ${FFMPEG_BRANCH} ==="
-    - git clone --depth=1 -b "${FFMPEG_BRANCH}" https://git.ffmpeg.org/ffmpeg.git /tmp/ffmpeg
+    - echo "=== ffmpeg ${FFVER} ==="
+    - git clone --depth=1 -b "release/${FFVER}" https://git.ffmpeg.org/ffmpeg.git /tmp/ffmpeg
     - bash ./scripts/ffpatch.sh /tmp/ffmpeg
     - cd /tmp/ffmpeg
     - export PKG_CONFIG_PATH="${NVMPI_PREFIX}/lib/pkgconfig:${NVMPI_PREFIX}/share/pkgconfig"
@@ -227,77 +230,27 @@ build:nvmpi:jp5:
       - _ffmpeg/
     expire_in: 1 hour
 
-patch:ffmpeg-6.0:jp6:
-  <<: *patch-and-build
-  variables:
-    FFMPEG_BRANCH: "release/6.0"
+ffmpeg:jp6:
+  <<: *ffmpeg-build
+  needs: ["nvmpi:jp6"]
+  parallel:
+    matrix:
+      - FFVER: ["6.0", "6.1", "7.0", "7.1", "8.0", "8.1"]
 
-patch:ffmpeg-6.1:jp6:
-  <<: *patch-and-build
-  variables:
-    FFMPEG_BRANCH: "release/6.1"
-
-patch:ffmpeg-7.0:jp6:
-  <<: *patch-and-build
-  variables:
-    FFMPEG_BRANCH: "release/7.0"
-
-patch:ffmpeg-7.1:jp6:
-  <<: *patch-and-build
-  variables:
-    FFMPEG_BRANCH: "release/7.1"
-
-patch:ffmpeg-8.0:jp6:
-  <<: *patch-and-build
-  variables:
-    FFMPEG_BRANCH: "release/8.0"
-
-patch:ffmpeg-8.1:jp6:
-  <<: *patch-and-build
-  variables:
-    FFMPEG_BRANCH: "release/8.1"
-
-.patch-and-build-jp5: &patch-and-build-jp5
-  <<: *patch-and-build
+ffmpeg:jp5:
+  <<: *ffmpeg-build
   image:
     name: "${BUILDER_IMAGE_JP5}"
     pull_policy: always
-  needs: ["build:nvmpi:jp5"]
-
-patch:ffmpeg-6.0:jp5:
-  <<: *patch-and-build-jp5
-  variables:
-    FFMPEG_BRANCH: "release/6.0"
-
-patch:ffmpeg-6.1:jp5:
-  <<: *patch-and-build-jp5
-  variables:
-    FFMPEG_BRANCH: "release/6.1"
-
-patch:ffmpeg-7.0:jp5:
-  <<: *patch-and-build-jp5
-  variables:
-    FFMPEG_BRANCH: "release/7.0"
-
-patch:ffmpeg-7.1:jp5:
-  <<: *patch-and-build-jp5
-  variables:
-    FFMPEG_BRANCH: "release/7.1"
-
-patch:ffmpeg-8.0:jp5:
-  <<: *patch-and-build-jp5
-  variables:
-    FFMPEG_BRANCH: "release/8.0"
-
-patch:ffmpeg-8.1:jp5:
-  <<: *patch-and-build-jp5
-  variables:
-    FFMPEG_BRANCH: "release/8.1"
+  needs: ["nvmpi:jp5"]
+  parallel:
+    matrix:
+      - FFVER: ["6.0", "6.1", "7.0", "7.1", "8.0", "8.1"]
 
 # ---------------------------------------------------------------------------
 # Stage: test — HW encode/decode on real Jetson hardware.
 #
-# One hw-test job per supported FFmpeg version, each reusing its version's patch
+# One hw-test job per supported FFmpeg version, each reusing its version's build
 # artifact (installed ffmpeg + libnvmpi) — no rebuild on the Jetson runner.
 #
 # The nvmpi FFmpeg wrapper compiles into a few DISTINCT builds by libavcodec
@@ -338,33 +291,57 @@ patch:ffmpeg-8.1:jp5:
     - ldconfig || true
     - bash test/hw-all.sh
 
-test:hw-ffmpeg-6.0:jp6:       # path C
+test:ffmpeg-6.0:jp6:                         # path C
   <<: *hw-test
-  needs: ["patch:ffmpeg-6.0:jp6"]
+  needs:
+    - job: "ffmpeg:jp6"
+      parallel:
+        matrix:
+          - FFVER: "6.0"
 
-test:hw-ffmpeg-6.1:jp6:       # path C
+test:ffmpeg-6.1:jp6:                         # path C
   <<: *hw-test
-  needs: ["patch:ffmpeg-6.1:jp6"]
+  needs:
+    - job: "ffmpeg:jp6"
+      parallel:
+        matrix:
+          - FFVER: "6.1"
 
-test:hw-ffmpeg-7.0:jp6:       # path C
+test:ffmpeg-7.0:jp6:                         # path C
   <<: *hw-test
-  needs: ["patch:ffmpeg-7.0:jp6"]
+  needs:
+    - job: "ffmpeg:jp6"
+      parallel:
+        matrix:
+          - FFVER: "7.0"
 
-test:hw-ffmpeg-7.1:jp6:       # path C
+test:ffmpeg-7.1:jp6:                         # path C
   <<: *hw-test
-  needs: ["patch:ffmpeg-7.1:jp6"]
+  needs:
+    - job: "ffmpeg:jp6"
+      parallel:
+        matrix:
+          - FFVER: "7.1"
 
-test:hw-ffmpeg-8.0:jp6:       # path D
+test:ffmpeg-8.0:jp6:                         # path D
   <<: *hw-test
-  needs: ["patch:ffmpeg-8.0:jp6"]
+  needs:
+    - job: "ffmpeg:jp6"
+      parallel:
+        matrix:
+          - FFVER: "8.0"
 
-test:hw-ffmpeg-8.1:jp6:       # path D
+test:ffmpeg-8.1:jp6:                         # path D
   <<: *hw-test
-  needs: ["patch:ffmpeg-8.1:jp6"]
+  needs:
+    - job: "ffmpeg:jp6"
+      parallel:
+        matrix:
+          - FFVER: "8.1"
 
 # ---------------------------------------------------------------------------
-# Stage: package — build REAL libnvmpi + ffmpeg per version and tar each one
-# (tag pipelines only). The build/patch stages above link stubs and are NOT
+# Stage: dist — build REAL libnvmpi + ffmpeg per version and tar each one
+# (tag pipelines only). The build stages above link stubs and are NOT
 # runnable; releases must rebuild against the real Multimedia API.
 #
 # This is a plain container build on any (arm64) runner — NO Jetson hardware
@@ -377,8 +354,8 @@ test:hw-ffmpeg-8.1:jp6:       # path D
 # can never silently ship stub-linked (non-runnable) tarballs.
 # Produces dist/jetson-ffmpeg_<ver>_ffmpeg<ff>_l4t<tag>_aarch64.tar.gz.
 # ---------------------------------------------------------------------------
-.package:
-  stage: package
+.dist:
+  stage: dist
   <<: *only-tag
   before_script:
     - mkdir -p /opt/nvidia/l4t-packages && touch /opt/nvidia/l4t-packages/.nv-l4t-disable-boot-fw-update-in-preinstall
@@ -411,28 +388,23 @@ test:hw-ffmpeg-8.1:jp6:       # path D
       - dist/
     expire_in: 1 week
 
-package:ffmpeg-6.0:jp6: { extends: .package, variables: { FFVER: "6.0" } }
-package:ffmpeg-6.1:jp6: { extends: .package, variables: { FFVER: "6.1" } }
-package:ffmpeg-7.0:jp6: { extends: .package, variables: { FFVER: "7.0" } }
-package:ffmpeg-7.1:jp6: { extends: .package, variables: { FFVER: "7.1" } }
-package:ffmpeg-8.0:jp6: { extends: .package, variables: { FFVER: "8.0" } }
-package:ffmpeg-8.1:jp6: { extends: .package, variables: { FFVER: "8.1" } }
+dist:jp6:
+  extends: .dist
+  parallel:
+    matrix:
+      - FFVER: ["6.0", "6.1", "7.0", "7.1", "8.0", "8.1"]
 
-.package-jp5:
-  extends: .package
+dist:jp5:
+  extends: .dist
   image:
     name: "${BUILDER_IMAGE_JP5}"
     pull_policy: always
   variables:
     L4T_TAG: "${L4T_TAG_JP5}"
     L4T_SOC: "t194"
-
-package:ffmpeg-6.0:jp5: { extends: .package-jp5, variables: { FFVER: "6.0" } }
-package:ffmpeg-6.1:jp5: { extends: .package-jp5, variables: { FFVER: "6.1" } }
-package:ffmpeg-7.0:jp5: { extends: .package-jp5, variables: { FFVER: "7.0" } }
-package:ffmpeg-7.1:jp5: { extends: .package-jp5, variables: { FFVER: "7.1" } }
-package:ffmpeg-8.0:jp5: { extends: .package-jp5, variables: { FFVER: "8.0" } }
-package:ffmpeg-8.1:jp5: { extends: .package-jp5, variables: { FFVER: "8.1" } }
+  parallel:
+    matrix:
+      - FFVER: ["6.0", "6.1", "7.0", "7.1", "8.0", "8.1"]
 
 # ---------------------------------------------------------------------------
 # Stage: release — changelog + S3 upload + GitLab Release (+ generic package
@@ -449,18 +421,8 @@ release:
     name: "${RELEASE_IMAGE}"
     pull_policy: always
   needs:
-    - "package:ffmpeg-6.0:jp6"
-    - "package:ffmpeg-6.1:jp6"
-    - "package:ffmpeg-7.0:jp6"
-    - "package:ffmpeg-7.1:jp6"
-    - "package:ffmpeg-8.0:jp6"
-    - "package:ffmpeg-8.1:jp6"
-    - "package:ffmpeg-6.0:jp5"
-    - "package:ffmpeg-6.1:jp5"
-    - "package:ffmpeg-7.0:jp5"
-    - "package:ffmpeg-7.1:jp5"
-    - "package:ffmpeg-8.0:jp5"
-    - "package:ffmpeg-8.1:jp5"
+    - job: "dist:jp6"
+    - job: "dist:jp5"
   variables:
     GIT_DEPTH: "0"   # full history + tags for git-cliff
   before_script:
