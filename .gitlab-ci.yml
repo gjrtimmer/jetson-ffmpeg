@@ -372,14 +372,23 @@ test:ffmpeg-8.1:jp6:                         # path D
   script:
     - export VERSION="${CI_COMMIT_TAG#v}"
     - PFX="${CI_PROJECT_DIR}/_pkg"
-    - DAV1D_FLAG=""; if pkg-config --exists 'dav1d >= 1.0.0' 2>/dev/null; then DAV1D_FLAG="--enable-libdav1d"; fi
-    - GNUTLS_FLAG=""; if pkg-config --exists gnutls 2>/dev/null; then GNUTLS_FLAG="--enable-gnutls"; fi
+    - |
+      OPT=""
+      probe() { if pkg-config --exists "$1" 2>/dev/null; then OPT="${OPT} $2"; fi; }
+      probe x265          --enable-libx265
+      probe vpx           --enable-libvpx
+      probe opus          --enable-libopus
+      probe 'libmp3lame'  --enable-libmp3lame
+      probe vorbis        --enable-libvorbis
+      probe 'dav1d >= 1.0.0' --enable-libdav1d
+      probe 'libass >= 0.11.0' --enable-libass
+      probe freetype2     --enable-libfreetype
+      probe gnutls        --enable-gnutls
+      echo "[i] optional flags:${OPT:- (none)}"
     - >-
       bash ./scripts/build.sh --no-stubs --ffmpeg "${FFVER}" --install
       --prefix "${PFX}" --ffmpeg-prefix "${PFX}" -j"$(nproc)"
-      --ffmpeg-args "--enable-shared --disable-static --enable-libx265 --enable-libvpx
-      --enable-libopus --enable-libmp3lame --enable-libvorbis ${DAV1D_FLAG}
-      --enable-libass --enable-libfreetype ${GNUTLS_FLAG}"
+      --ffmpeg-args "--enable-shared --disable-static ${OPT}"
     - LD_LIBRARY_PATH="${PFX}/lib:/usr/lib/aarch64-linux-gnu/tegra" "${PFX}/bin/ffmpeg" -hide_banner -encoders 2>/dev/null | grep -E 'h264_nvmpi|hevc_nvmpi'
     - >-
       bash ./scripts/package.sh --prefix "${PFX}" --version "${VERSION}"

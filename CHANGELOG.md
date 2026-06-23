@@ -13,7 +13,7 @@
 - Add FFmpeg deps to JP5 builder image and make gnutls conditional (ci)
 - Rename patch, test, and package jobs with `:jp6` suffix for symmetry (ci)
 - Use `if`-form in `probe()` to avoid `set -e` exit on missing packages (ci)
-- Make gnutls conditional in dist template via pkg-config probe (ci)
+- Replace hardcoded optional FFmpeg flags in dist template with pkg-config probes (ci)
 
 ## 3.6.2 - 2026-06-22
 
