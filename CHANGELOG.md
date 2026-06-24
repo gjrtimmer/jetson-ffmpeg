@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.6.4 - 2026-06-24
+
+### Build
+
+- Fix `option()` misuse for path cache variables — use `set(CACHE PATH)` for `JETSON_MULTIMEDIA_API_DIR`, `JETSON_MULTIMEDIA_LIB_DIR`, `CUDA_INCLUDE_DIR`, `CUDA_LIB_DIR` (cmake)
+- Auto-detect JetPack 6 library path (`/usr/lib/aarch64-linux-gnu/nvidia` vs `tegra`) in CMake and build.sh (cmake, scripts)
+- Add `SYSROOT` cache variable for cross-compilation, bridging `BITBAKE_SYSROOT` and `TARGET_ROOTFS` env vars without double-prefixing `CMAKE_SYSROOT` (cmake)
+- Add CPack `.deb` packaging — `cmake --build . --target package` or `build.sh --package` (cmake, scripts)
+- Fix `nvmpi.pc.in` to use `GNUInstallDirs` variables for portable `libdir`/`includedir` paths (cmake)
+- Ship example cross-compile toolchain file `cmake/toolchain-aarch64.cmake` (cmake)
+- Suppress `HAVE_VISIBILITY` undefined warning from NVIDIA's `libv4l2.h` during FFmpeg builds via `--extra-cflags` (scripts)
+
 ## 3.6.3 - 2026-06-23
 
 ### CI
