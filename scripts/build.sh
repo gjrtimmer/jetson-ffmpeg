@@ -183,7 +183,10 @@ export LD_LIBRARY_PATH="${PREFIX}/lib:${JETSON_LIB_DIR}:${LD_LIBRARY_PATH:-}"
 
 "${REPO_ROOT}/scripts/ffpatch.sh" "${FF_DIR}"
 
-FF_CONF=(--enable-nvmpi --disable-doc)
+# NVIDIA's libv4l2.h uses #if HAVE_VISIBILITY without defining the macro;
+# suppress the resulting -Wundef warning (GCC visibility is available on all
+# Jetson toolchains).
+FF_CONF=(--enable-nvmpi --disable-doc --extra-cflags="-DHAVE_VISIBILITY=1")
 [ "${WITH_X264}" -eq 1 ] && FF_CONF+=(--enable-gpl --enable-libx264)
 # libx265 is optional (software HEVC encoder; used only to generate the 10-bit
 # HEVC test sample). auto = enable when its dev headers are present, so a
