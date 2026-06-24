@@ -20,6 +20,7 @@
 #   --install          Install (uses sudo if not root) + ldconfig. With --ffmpeg
 #                      this also installs the built ffmpeg.
 #   --clean            Remove the build directory before configuring.
+#   --package          Build a .deb package (CPack) after building.
 #   --build-dir DIR    libnvmpi build directory (default: <repo>/build).
 #   --prefix DIR       libnvmpi CMAKE_INSTALL_PREFIX (default: /usr/local).
 #   --build-type TYPE  CMAKE_BUILD_TYPE (default: Release).
@@ -59,10 +60,19 @@ BUILD_TYPE="Release"
 JOBS="$(nproc)"
 DO_INSTALL=0
 DO_CLEAN=0
+DO_PACKAGE=0
 PREFIX="/usr/local"   # CMake's default install prefix; override with --prefix
 WITH_STUBS=""   # "", "ON" or "OFF"; "" means auto-detect
 JETSON_API_DIR="${JETSON_MULTIMEDIA_API_DIR:-/usr/src/jetson_multimedia_api}"
-JETSON_LIB_DIR="${JETSON_MULTIMEDIA_LIB_DIR:-/usr/lib/aarch64-linux-gnu/tegra}"
+# JP6 moved tegra libs from tegra/ to nvidia/; auto-detect
+if [ -d "/usr/lib/aarch64-linux-gnu/nvidia" ]; then
+    _DEFAULT_LIB_DIR="/usr/lib/aarch64-linux-gnu/nvidia"
+elif [ -d "/usr/lib/aarch64-linux-gnu/tegra" ]; then
+    _DEFAULT_LIB_DIR="/usr/lib/aarch64-linux-gnu/tegra"
+else
+    _DEFAULT_LIB_DIR="/usr/lib/aarch64-linux-gnu/tegra"
+fi
+JETSON_LIB_DIR="${JETSON_MULTIMEDIA_LIB_DIR:-${_DEFAULT_LIB_DIR}}"
 # FFmpeg
 FFMPEG_TARGET=""
 FFMPEG_DIR="${FFMPEG_SRC_DIR:-$HOME/ffmpeg-build}"
@@ -78,6 +88,7 @@ while [ $# -gt 0 ]; do
         --stubs)        WITH_STUBS="ON" ;;
         --no-stubs)     WITH_STUBS="OFF" ;;
         --install)      DO_INSTALL=1 ;;
+        --package)      DO_PACKAGE=1 ;;
         --clean)        DO_CLEAN=1 ;;
         --build-dir)    BUILD_DIR="$2"; shift ;;
         --prefix)       PREFIX="$2"; shift ;;
@@ -130,6 +141,13 @@ cmake -S "${REPO_ROOT}" -B "${BUILD_DIR}" "${CMAKE_ARGS[@]}"
 echo "[i] Building libnvmpi with ${JOBS} jobs"
 cmake --build "${BUILD_DIR}" -j "${JOBS}"
 
+# Build .deb package if requested
+if [ "${DO_PACKAGE}" -eq 1 ]; then
+    echo "[i] Building .deb package (CPack)"
+    cmake --build "${BUILD_DIR}" --target package
+    echo "[i] Package: $(ls "${BUILD_DIR}"/*.deb 2>/dev/null)"
+fi
+
 SUDO=""
 [ "$(id -u)" -ne 0 ] && SUDO="sudo"
 
@@ -161,7 +179,7 @@ fi
 
 # Make sure pkg-config and the runtime linker can see the libnvmpi we installed.
 export PKG_CONFIG_PATH="${PREFIX}/lib/pkgconfig:${PREFIX}/share/pkgconfig:${PKG_CONFIG_PATH:-}"
-export LD_LIBRARY_PATH="${PREFIX}/lib:/usr/lib/aarch64-linux-gnu/tegra:${LD_LIBRARY_PATH:-}"
+export LD_LIBRARY_PATH="${PREFIX}/lib:${JETSON_LIB_DIR}:${LD_LIBRARY_PATH:-}"
 
 "${REPO_ROOT}/scripts/ffpatch.sh" "${FF_DIR}"
 

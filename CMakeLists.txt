@@ -1,35 +1,77 @@
 cmake_minimum_required(VERSION 3.10)
 project(nvmpi VERSION 3.0.0 DESCRIPTION "nvidia multimedia api")
 
-set(JETSON_MULTIMEDIA_API_DIR_DEFAULT "/usr/src/jetson_multimedia_api")
-set(JETSON_MULTIMEDIA_LIB_DIR_DEFAULT "/usr/lib/aarch64-linux-gnu/tegra")
-set(CUDA_INCLUDE_DIR_DEFAULT "/usr/local/cuda/include")
-set(CUDA_LIB_DIR_DEFAULT "/usr/local/cuda/lib64")
+# ---------------------------------------------------------------------------
+# Cross-compile sysroot
+# ---------------------------------------------------------------------------
+# Prefix for all default Jetson/CUDA paths. Empty on native builds.
+# Precedence: explicit -DSYSROOT > env BITBAKE_SYSROOT (Yocto) > env TARGET_ROOTFS.
+# NOT inherited from CMAKE_SYSROOT — when a toolchain file sets CMAKE_SYSROOT,
+# CMake auto-prepends it to find_library/find_file PATHS; inheriting would
+# cause double-prefixing (sysroot/sysroot/usr/lib/...). Users with toolchain
+# files should pass explicit -DJETSON_MULTIMEDIA_API_DIR=... instead.
+set(SYSROOT "" CACHE PATH "Cross-compile sysroot prefix for Jetson libraries and headers.")
+if(NOT SYSROOT)
+	if(DEFINED ENV{BITBAKE_SYSROOT})
+		set(SYSROOT "$ENV{BITBAKE_SYSROOT}")
+	elseif(DEFINED ENV{TARGET_ROOTFS})
+		set(SYSROOT "$ENV{TARGET_ROOTFS}")
+	endif()
+endif()
+if(SYSROOT)
+	message(STATUS "Cross-compile sysroot: ${SYSROOT}")
+endif()
 
-option(WITH_STUBS "Build nvmpi library and link stubs instead of original libraries. Default: OFF." OFF)
-option(WITH_VENDORED_NVV4L2 "Use vendored NvV4l2ElementPlane.cpp with pthread_join guard (glibc>=2.34 fix). Default: ON." ON)
-option(JETSON_MULTIMEDIA_API_DIR "Path to Jetson Multimedia API headers and common sources directory. Default: ${JETSON_MULTIMEDIA_API_DIR_DEFAULT}.")
-option(JETSON_MULTIMEDIA_LIB_DIR "Path to Jetson Multimedia libraries directory. Default: ${JETSON_MULTIMEDIA_LIB_DIR_DEFAULT}.")
-option(CUDA_INCLUDE_DIR "Path to CUDA headers directory. Default: ${CUDA_INCLUDE_DIR_DEFAULT}.")
-option(CUDA_LIB_DIR "Path to CUDA libraries directory. Default: ${CUDA_LIB_DIR_DEFAULT}.")
+# ---------------------------------------------------------------------------
+# Path defaults (sysroot-prefixed when cross-compiling)
+# ---------------------------------------------------------------------------
+set(JETSON_MULTIMEDIA_API_DIR_DEFAULT "${SYSROOT}/usr/src/jetson_multimedia_api")
+# JP6 moved tegra libs from tegra/ to nvidia/
+set(JETSON_MULTIMEDIA_LIB_DIR_JP5 "${SYSROOT}/usr/lib/aarch64-linux-gnu/tegra")
+set(JETSON_MULTIMEDIA_LIB_DIR_JP6 "${SYSROOT}/usr/lib/aarch64-linux-gnu/nvidia")
+set(CUDA_INCLUDE_DIR_DEFAULT "${SYSROOT}/usr/local/cuda/include")
+set(CUDA_LIB_DIR_DEFAULT "${SYSROOT}/usr/local/cuda/lib64")
+
+# ---------------------------------------------------------------------------
+# Options
+# ---------------------------------------------------------------------------
+option(WITH_STUBS "Build against stubs instead of real Jetson libraries." OFF)
+option(WITH_VENDORED_NVV4L2 "Use vendored NvV4l2ElementPlane.cpp with pthread_join guard." ON)
+
+# Path options — CACHE PATH, not option() (option() is boolean-only)
+set(JETSON_MULTIMEDIA_API_DIR "" CACHE PATH
+	"Jetson Multimedia API headers and sources directory.")
+set(JETSON_MULTIMEDIA_LIB_DIR "" CACHE PATH
+	"Jetson Multimedia libraries directory.")
+set(CUDA_INCLUDE_DIR "" CACHE PATH "CUDA headers directory.")
+set(CUDA_LIB_DIR "" CACHE PATH "CUDA libraries directory.")
 
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED on)
 
 if(NOT CMAKE_BUILD_TYPE)
-  set(CMAKE_BUILD_TYPE Release)
+	set(CMAKE_BUILD_TYPE Release)
 endif()
 
+# ---------------------------------------------------------------------------
+# Resolve paths: explicit -D > probed JP6/JP5 > default
+# ---------------------------------------------------------------------------
 if(NOT JETSON_MULTIMEDIA_API_DIR)
 	set(JETSON_MULTIMEDIA_API_DIR "${JETSON_MULTIMEDIA_API_DIR_DEFAULT}")
 endif()
 
 if(WITH_STUBS AND NOT JETSON_MULTIMEDIA_LIB_DIR)
 	set(JETSON_MULTIMEDIA_LIB_DIR "${CMAKE_CURRENT_SOURCE_DIR}/stubs")
-endif()
-
-if(NOT JETSON_MULTIMEDIA_LIB_DIR)
-	set(JETSON_MULTIMEDIA_LIB_DIR "${JETSON_MULTIMEDIA_LIB_DIR_DEFAULT}")
+elseif(NOT JETSON_MULTIMEDIA_LIB_DIR)
+	if(EXISTS "${JETSON_MULTIMEDIA_LIB_DIR_JP6}")
+		set(JETSON_MULTIMEDIA_LIB_DIR "${JETSON_MULTIMEDIA_LIB_DIR_JP6}")
+		message(STATUS "JetPack 6 detected (nvidia lib dir)")
+	elseif(EXISTS "${JETSON_MULTIMEDIA_LIB_DIR_JP5}")
+		set(JETSON_MULTIMEDIA_LIB_DIR "${JETSON_MULTIMEDIA_LIB_DIR_JP5}")
+		message(STATUS "JetPack 4/5 detected (tegra lib dir)")
+	else()
+		set(JETSON_MULTIMEDIA_LIB_DIR "${JETSON_MULTIMEDIA_LIB_DIR_JP5}")
+	endif()
 endif()
 
 if(NOT CUDA_INCLUDE_DIR)
@@ -153,8 +195,8 @@ set_target_properties(nvmpi PROPERTIES LINK_FLAGS "-Wl,--no-as-needed")
 target_link_libraries(nvmpi PRIVATE ${NVMPI_DEP_LIBS})
 target_include_directories(nvmpi PRIVATE ${NVMPI_INCLUDE_DIRS})
 target_include_directories(nvmpi_static PRIVATE ${NVMPI_INCLUDE_DIRS})
-configure_file(nvmpi.pc.in nvmpi.pc @ONLY)
 include(GNUInstallDirs)
+configure_file(nvmpi.pc.in nvmpi.pc @ONLY)
 install(TARGETS nvmpi nvmpi_static
 	    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
 	    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
@@ -177,3 +219,16 @@ if(BUILD_TESTING)
   target_link_libraries(test_api PRIVATE nvmpi Threads::Threads)
   add_test(NAME api COMMAND test_api)
 endif()
+
+# ---------------------------------------------------------------------------
+# CPack .deb packaging — `cmake --build . --target package`
+# ---------------------------------------------------------------------------
+set(CPACK_PACKAGE_NAME "libnvmpi")
+set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "${PROJECT_DESCRIPTION}")
+set(CPACK_PACKAGE_CONTACT "https://github.com/gjrtimmer/jetson-ffmpeg")
+set(CPACK_GENERATOR "DEB")
+set(CPACK_DEBIAN_PACKAGE_SECTION "libs")
+set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "arm64")
+set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+include(CPack)
