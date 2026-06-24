@@ -247,6 +247,11 @@ extern "C" {
 	//the encoder's capture thread fills it later. The pool only stores the
 	//pointer — the caller remains responsible for eventually freeing it.
 	void nvmpi_encoder_qEmptyPacket(nvmpictx* ctx, nvPacket* packet);
+	//flush encoder (mid-stream reset)
+	//Stops DQ thread, STREAMOFF both planes, drains packet pool, resets
+	//flushing/EOS state, STREAMON, re-queues capture buffers, restarts DQ
+	//thread. Encoding can resume immediately after this call.
+	int nvmpi_encoder_flush(nvmpictx* ctx);
 	//close encoder
 	//Stops the dequeue thread and frees the context. Packets still held in
 	//the pools are NOT freed here — drain them first (see FFmpeg wrapper).
