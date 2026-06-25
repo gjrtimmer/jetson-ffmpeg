@@ -68,6 +68,8 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 	ctx->num_reference_frames=param->refs;
 	ctx->insert_sps_pps_at_idr=(param->insert_spspps_idr==1)?true:false;
 	ctx->insert_vui=(param->insert_vui!=0)?true:false;
+	ctx->insert_aud=(param->insert_aud!=0)?true:false;
+	ctx->enable_cabac=(param->enable_cabac!=0)?true:false;
 	ctx->capPlaneGotEOS.store(false, std::memory_order_relaxed);
 	ctx->flushing.store(false, std::memory_order_relaxed);
 	ctx->blocking_mode = true; //TODO non-blocking mode support
@@ -381,6 +383,23 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 		TEST_ERROR(ret < 0, "Could not set insertVUI", ret);
 	}
 
+	/* CABAC entropy coding (H.264 only): CABAC achieves ~10-15% better
+	 * compression than CAVLC at the cost of slightly higher decode
+	 * complexity. setCABAC() wraps V4L2_CID_MPEG_VIDEO_H264_ENTROPY_MODE;
+	 * must be called after setFormat. Ignored for HEVC (always CABAC). */
+	if (ctx->enable_cabac && param->codingType == NV_VIDEO_CodingH264) {
+		ret = ctx->enc->setCABAC(true);
+		TEST_ERROR(ret < 0, "Could not enable CABAC", ret);
+	}
+
+	/* Access Unit Delimiter insertion: some transport streams and HLS
+	 * workflows require AUD NALs. setInsertAudEnabled() wraps
+	 * V4L2_CID_MPEG_VIDEO_H264_AUD_SAR_ENABLE. */
+	if (ctx->insert_aud) {
+		ret = ctx->enc->setInsertAudEnabled(true);
+		TEST_ERROR(ret < 0, "Could not enable AUD insertion", ret);
+	}
+
 	ret = ctx->enc->setFrameRate(ctx->fps_n, ctx->fps_d);
 	TEST_ERROR(ret < 0, "Could not set framerate", ret);
 
@@ -683,6 +702,39 @@ int nvmpi_encoder_get_packet(nvmpictx* ctx, nvPacket** packet, bool wait)
 	}
 
 	*packet = pkt;
+	return 0;
+}
+
+//Public API: force the next encoded frame to be an IDR (keyframe on demand).
+//Calls NvVideoEncoder::forceIDR() which sets the V4L2 control
+//V4L2_CID_MPEG_MFC51_VIDEO_FORCE_FRAME_TYPE. Safe to call from the user
+//thread while the DQ thread is running — the V4L2 ioctl is thread-safe.
+//Returns 0 on success, -1 on ioctl failure.
+int nvmpi_encoder_force_idr(nvmpictx* ctx)
+{
+	int ret = ctx->enc->forceIDR();
+	if (ret < 0) {
+		NVMPI_LOG(NVMPI_LOG_ERROR, "Could not force IDR frame");
+		return -1;
+	}
+	return 0;
+}
+
+//Public API: change the encoder target bitrate mid-stream.
+//Calls NvVideoEncoder::setBitrate() which updates V4L2_CID_MPEG_VIDEO_BITRATE.
+//The new bitrate takes effect from the next encoded frame. Also updates
+//ctx->bitrate so the internal state stays consistent. For VBR mode the caller
+//should also adjust peak_bitrate externally if needed.
+//Returns 0 on success, -1 on ioctl failure.
+int nvmpi_encoder_set_bitrate(nvmpictx* ctx, unsigned int bitrate)
+{
+	int ret = ctx->enc->setBitrate(bitrate);
+	if (ret < 0) {
+		NVMPI_LOG(NVMPI_LOG_ERROR, "Could not set bitrate to %u", bitrate);
+		return -1;
+	}
+	/* Keep internal state in sync; freed in nvmpi_encoder_close(). */
+	ctx->bitrate = bitrate;
 	return 0;
 }
 
