@@ -1,5 +1,11 @@
 # Changelog
 
+## 3.6.5 - 2026-06-25
+
+### Features
+
+- Implement encoder flush callback for mid-stream reset — `avcodec_flush_buffers()` now resets the V4L2 encoder pipeline without closing/reopening the codec context (nvmpi, ffmpeg)
+
 ## 3.6.4 - 2026-06-24
 
 ### Build
