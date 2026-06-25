@@ -92,6 +92,8 @@ typedef struct _NVENCPARAM{
 	int max_perf;                  //non-zero: lift NVENC clock governor (max clocks)
 	unsigned int poc_type;         //H.264 picture order count type (0=default, 2=low-latency)
 	unsigned int wait_timeout;     //blocking-wait timeout in ms (0 = default 500ms)
+	char enable_cabac;             //non-zero: enable CABAC entropy coding (H.264 only; default CAVLC)
+	char insert_aud;               //non-zero: insert Access Unit Delimiter NALs
 } nvEncParam;
 
 //Decoder creation parameters, consumed once by nvmpi_create_decoder().
@@ -247,6 +249,16 @@ extern "C" {
 	//the encoder's capture thread fills it later. The pool only stores the
 	//pointer — the caller remains responsible for eventually freeing it.
 	void nvmpi_encoder_qEmptyPacket(nvmpictx* ctx, nvPacket* packet);
+	//Force the encoder to produce an IDR frame for the next queued input.
+	//Calls NvVideoEncoder::forceIDR() which sets
+	//V4L2_CID_MPEG_MFC51_VIDEO_FORCE_FRAME_TYPE. May be called at any time
+	//while the encoder is running. Returns 0 on success, -1 on error.
+	int nvmpi_encoder_force_idr(nvmpictx* ctx);
+	//Change the encoder target bitrate mid-stream (adaptive bitrate).
+	//Calls NvVideoEncoder::setBitrate() which updates
+	//V4L2_CID_MPEG_VIDEO_BITRATE. Takes effect from the next encoded frame.
+	//Returns 0 on success, -1 on error.
+	int nvmpi_encoder_set_bitrate(nvmpictx* ctx, uint32_t bitrate);
 	//flush encoder (mid-stream reset)
 	//Stops DQ thread, STREAMOFF both planes, drains packet pool, resets
 	//flushing/EOS state, STREAMON, re-queues capture buffers, restarts DQ

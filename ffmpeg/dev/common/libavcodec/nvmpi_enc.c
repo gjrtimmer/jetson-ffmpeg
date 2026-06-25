@@ -77,8 +77,12 @@ typedef struct {
 	int max_perf;               //lift NVENC clock governor (default on)
 	int poc_type;               //H.264 picture order count type (0=default, 2=low-latency)
 	int insert_vui;             //embed VUI timing_info (fps) in the bitstream (default on)
+	int insert_aud;             //insert Access Unit Delimiter NALs
+	int cabac;                  //enable CABAC entropy coding (H.264 only)
+	int lossless;               //enable lossless encoding (H.264 only, QP 0 + High 4:4:4)
 	int wait_timeout;           //blocking-wait ceiling in ms (0 = default 500ms)
 	int encoder_flushing;       //set after EOS was sent to libnvmpi
+	int64_t last_bitrate;       //track last-set bitrate for dynamic change detection
 	AVFrame *frame; //tmp frame
 	                //(holds the pulled-but-not-yet-sent input frame in the
 	                // new-API receive_packet path)
@@ -223,6 +227,9 @@ static av_cold int nvmpi_encode_init(AVCodecContext *avctx)
 	//instead of being repeated in-band at every IDR
 	param.insert_spspps_idr=(avctx->flags & AV_CODEC_FLAG_GLOBAL_HEADER)?0:1;
 	param.insert_vui=nvmpi_context->insert_vui;
+	param.insert_aud=nvmpi_context->insert_aud;
+	param.enable_cabac=nvmpi_context->cabac;
+	param.enableLossless=nvmpi_context->lossless;
 	param.wait_timeout=nvmpi_context->wait_timeout;
 
 	//Raw input layout: NV12 routes to libnvmpi's V4L2 NV12M path, otherwise
@@ -396,6 +403,9 @@ static av_cold int nvmpi_encode_init(AVCodecContext *avctx)
 	}
 	nvmpienc_initPktPool(avctx,nvmpi_context->packet_pool_size);
 
+	/* Track initial bitrate for runtime change detection in send_frame. */
+	nvmpi_context->last_bitrate = avctx->bit_rate;
+
 	return 0;
 }
 
@@ -415,6 +425,21 @@ static int ff_nvmpi_send_frame(AVCodecContext *avctx,const AVFrame *frame)
 
 	if(frame)
 	{
+		/* Runtime control: force IDR when FFmpeg signals a keyframe request
+		 * via pict_type (e.g. -force_key_frames or scene-change detection).
+		 * Must be called BEFORE queueing the frame so the V4L2 encoder
+		 * applies the IDR flag to this specific frame. */
+		if (frame->pict_type == AV_PICTURE_TYPE_I)
+			nvmpi_encoder_force_idr(nvmpi_context->ctx);
+
+		/* Runtime control: adaptive bitrate — detect changes to
+		 * avctx->bit_rate between frames and propagate to the hw encoder.
+		 * Comparison uses int64_t to match AVCodecContext.bit_rate type. */
+		if (avctx->bit_rate > 0 && avctx->bit_rate != nvmpi_context->last_bitrate) {
+			nvmpi_encoder_set_bitrate(nvmpi_context->ctx, (uint32_t)avctx->bit_rate);
+			nvmpi_context->last_bitrate = avctx->bit_rate;
+		}
+
 		_nvframe.payload[0]=frame->data[0];
 		_nvframe.payload[1]=frame->data[1];
 		_nvframe.payload[2]=frame->data[2];
@@ -662,6 +687,9 @@ static const AVOption options[] = {
 	{ "max_perf", "Enable max performance mode (lifts NVENC clock governor)", OFFSET(max_perf), AV_OPT_TYPE_BOOL, {.i64 = 1 }, 0, 1, VE, "max_perf" },
 	{ "poc_type", "H.264 picture order count type (0=default, 2=decode-order for low-latency)", OFFSET(poc_type), AV_OPT_TYPE_INT, {.i64 = 0 }, 0, 2, VE, "poc_type" },
 	{ "insert_vui", "Embed VUI timing_info (fps) in the bitstream so players/muxers report the frame rate", OFFSET(insert_vui), AV_OPT_TYPE_BOOL, {.i64 = 1 }, 0, 1, VE, "insert_vui" },
+	{ "aud", "Insert Access Unit Delimiter NALs (required by some TS/HLS workflows)", OFFSET(insert_aud), AV_OPT_TYPE_BOOL, {.i64 = 0 }, 0, 1, VE, "aud" },
+	{ "cabac", "Enable CABAC entropy coding (H.264 only; ~10-15%% better compression than CAVLC)", OFFSET(cabac), AV_OPT_TYPE_BOOL, {.i64 = 0 }, 0, 1, VE, "cabac" },
+	{ "lossless", "Enable lossless encoding (H.264 only, constant QP 0 + High 4:4:4 Predictive profile)", OFFSET(lossless), AV_OPT_TYPE_BOOL, {.i64 = 0 }, 0, 1, VE, "lossless" },
 	{ "wait_timeout", "Blocking wait timeout in milliseconds for low-delay mode (0 = default 500ms)", OFFSET(wait_timeout), AV_OPT_TYPE_INT, {.i64 = OPT_wait_timeout_AUTO }, 0, OPT_wait_timeout_MAX, VE, "wait_timeout" },
 	{ NULL }
 };

@@ -60,6 +60,8 @@ struct nvmpictx
 
 	bool insert_sps_pps_at_idr;
 	bool insert_vui;               //embed VUI timing_info (fps) in the bitstream
+	bool insert_aud;               //insert Access Unit Delimiter NALs
+	bool enable_cabac;             //enable CABAC entropy coding (H.264 only)
 	bool max_perf;                 //enable max performance mode
 	uint32_t poc_type;             //H.264 picture order count type (0=default, 2=low-latency)
 	bool enable_extended_colorformat;
