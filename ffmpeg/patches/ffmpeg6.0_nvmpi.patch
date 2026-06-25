@@ -850,10 +850,10 @@ index 0000000..d3bd79d
 +
 diff --git a/libavcodec/nvmpi_enc.c b/libavcodec/nvmpi_enc.c
 new file mode 100644
-index 0000000..ca87459
+index 0000000..4b2de72
 --- /dev/null
 +++ b/libavcodec/nvmpi_enc.c
-@@ -0,0 +1,736 @@
+@@ -0,0 +1,740 @@
 +/*
 + * nvmpi_enc.c — FFmpeg encoder wrapper for libnvmpi (layer 2 of
 + * jetson-ffmpeg, the FFmpeg integration layer).
@@ -1149,7 +1149,9 @@ index 0000000..ca87459
 +		{
 +			av_freep(&dst[0]);
 +			av_frame_free(&nvmpi_context->frame);
-+			return AVERROR(ENOMEM);
++			/* AVERROR_EXTERNAL: device-level failure (EBUSY, ENODEV, etc.),
++			 * not a memory allocation error. See #37. */
++			return AVERROR_EXTERNAL;
 +		}
 +		nvmpienc_initPktPool(avctx,nvmpi_context->packet_pool_size);
 +		i=0;
@@ -1255,7 +1257,9 @@ index 0000000..ca87459
 +	{
 +		av_log(avctx, AV_LOG_ERROR, "nvmpi: encoder creation failed\n");
 +		av_frame_free(&nvmpi_context->frame);
-+		return AVERROR(ENOMEM);
++		/* AVERROR_EXTERNAL: device-level failure (EBUSY, ENODEV, etc.),
++		 * not a memory allocation error. See #37. */
++		return AVERROR_EXTERNAL;
 +	}
 +	nvmpienc_initPktPool(avctx,nvmpi_context->packet_pool_size);
 +

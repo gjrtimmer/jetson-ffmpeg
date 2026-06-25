@@ -5,6 +5,8 @@
 #include "nvUtils2NvBuf.h"
 #include "NVMPI_bufPool.hpp"
 #include <fcntl.h>
+#include <errno.h>
+#include <string.h>
 #include <malloc.h>
 #include <vector>
 #include "nvmpi_log.h"

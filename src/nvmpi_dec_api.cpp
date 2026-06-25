@@ -187,22 +187,72 @@ nvmpictx* nvmpi_create_decoder(nvDecParam* param)
 
 	nvmpictx* ctx=new nvmpictx();
 
-	/* Open the V4L2 decoder device. The Tegra V4L2 driver may fail when
-	 * the device is temporarily busy (concurrent sessions from CI or other
-	 * processes). Retry up to 3 times with 100ms backoff before giving up.
-	 * NvV4l2Element discards errno, so we cannot distinguish EBUSY from
-	 * ENODEV — treat all failures as transient and retry. See #37. */
+	/* Open the V4L2 decoder device. Retry up to 3 times with 100ms
+	 * backoff. Before each factory call, probe the device node ourselves
+	 * to capture errno — MMAPI's NvV4l2Element discards it, making EBUSY
+	 * indistinguishable from ENODEV at the factory level. See #37.
+	 *
+	 * Device paths from MMAPI source (NvVideoDecoder.cpp):
+	 *   primary: /dev/nvhost-nvdec   (nvhost driver, JetPack 4.x)
+	 *   fallback: /dev/v4l2-nvdec    (V4L2 kernel driver, JetPack 5+) */
 	for (int attempt = 0; attempt < 3; attempt++) {
+		/* Probe: resolve the same device path MMAPI would use. */
+		const char *dev_path = NULL;
+		if (access("/dev/nvhost-nvdec", F_OK) == 0)
+			dev_path = "/dev/nvhost-nvdec";
+		else if (access("/dev/v4l2-nvdec", F_OK) == 0)
+			dev_path = "/dev/v4l2-nvdec";
+
+		if (dev_path) {
+			int probe_fd = open(dev_path, O_RDWR);
+			if (probe_fd < 0) {
+				int saved_errno = errno;
+				if (saved_errno == ENODEV || saved_errno == ENXIO) {
+					/* Device node exists but driver not loaded or hw absent —
+					 * permanent failure, no point retrying. */
+					NVMPI_LOG(NVMPI_LOG_ERROR,
+						  "Decoder device %s unavailable (errno=%d: %s)",
+						  dev_path, saved_errno, strerror(saved_errno));
+					delete ctx;
+					return NULL;
+				}
+				if (saved_errno == EACCES) {
+					NVMPI_LOG(NVMPI_LOG_ERROR,
+						  "Decoder device %s: permission denied", dev_path);
+					delete ctx;
+					return NULL;
+				}
+				if (saved_errno == EBUSY) {
+					NVMPI_LOG(NVMPI_LOG_WARN,
+						  "Decoder device %s busy (EBUSY), retrying (%d/3)...",
+						  dev_path, attempt + 1);
+					usleep(100000);
+					continue;
+				}
+				/* Other errno (EIO, etc.) — log and fall through to factory. */
+				NVMPI_LOG(NVMPI_LOG_WARN,
+					  "Decoder device probe failed (errno=%d: %s), trying factory...",
+					  saved_errno, strerror(saved_errno));
+			} else {
+				close(probe_fd);
+			}
+		} else {
+			NVMPI_LOG(NVMPI_LOG_ERROR,
+				  "No decoder device node found (/dev/nvhost-nvdec or /dev/v4l2-nvdec)");
+			delete ctx;
+			return NULL;
+		}
+
 		ctx->dec = NvVideoDecoder::createVideoDecoder("dec0");
 		if (ctx->dec) break;
 		if (attempt < 2) {
-			NVMPI_LOG(NVMPI_LOG_WARN, "V4L2 decoder device busy, retrying (%d/3)...", attempt + 1);
-			usleep(100000);  /* 100ms backoff */
+			NVMPI_LOG(NVMPI_LOG_WARN, "Decoder factory returned NULL, retrying (%d/3)...", attempt + 1);
+			usleep(100000);
 		}
 	}
 	if (!ctx->dec)
 	{
-		NVMPI_LOG(NVMPI_LOG_ERROR, "Could not create decoder after 3 attempts (V4L2 device unavailable)");
+		NVMPI_LOG(NVMPI_LOG_ERROR, "Could not create decoder after 3 attempts");
 		delete ctx;
 		return NULL;
 	}

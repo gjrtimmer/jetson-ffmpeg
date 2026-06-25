@@ -9,6 +9,9 @@
 #include "nvmpi_log.h"
 #include <thread>
 #include <unistd.h>
+#include <fcntl.h>
+#include <errno.h>
+#include <string.h>
 #include <queue>
 #include <mutex>
 #include <condition_variable>

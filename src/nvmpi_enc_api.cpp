@@ -217,17 +217,72 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 		ctx->encoder_pixfmt=V4L2_PIX_FMT_H265;
 	}
 	/* Open the V4L2 encoder device. Retry up to 3 times with 100ms
-	 * backoff — the Tegra driver may fail transiently when the device
-	 * is busy with concurrent sessions. See #37. */
+	 * backoff. Before each factory call, probe the device node ourselves
+	 * to capture errno — MMAPI's NvV4l2Element discards it, making EBUSY
+	 * indistinguishable from ENODEV at the factory level. See #37.
+	 *
+	 * Device paths from MMAPI source (NvVideoEncoder.cpp):
+	 *   primary: /dev/nvhost-msenc   (nvhost driver, JetPack 4.x)
+	 *   fallback: /dev/v4l2-nvenc    (V4L2 kernel driver, JetPack 5+) */
 	for (int attempt = 0; attempt < 3; attempt++) {
+		/* Probe: resolve the same device path MMAPI would use. */
+		const char *dev_path = NULL;
+		if (access("/dev/nvhost-msenc", F_OK) == 0)
+			dev_path = "/dev/nvhost-msenc";
+		else if (access("/dev/v4l2-nvenc", F_OK) == 0)
+			dev_path = "/dev/v4l2-nvenc";
+
+		if (dev_path) {
+			int probe_fd = open(dev_path, O_RDWR);
+			if (probe_fd < 0) {
+				int saved_errno = errno;
+				if (saved_errno == ENODEV || saved_errno == ENXIO) {
+					/* Device node exists but driver not loaded or hw absent —
+					 * permanent failure, no point retrying. */
+					NVMPI_LOG(NVMPI_LOG_ERROR,
+						  "Encoder device %s unavailable (errno=%d: %s)",
+						  dev_path, saved_errno, strerror(saved_errno));
+					delete ctx;
+					return NULL;
+				}
+				if (saved_errno == EACCES) {
+					NVMPI_LOG(NVMPI_LOG_ERROR,
+						  "Encoder device %s: permission denied", dev_path);
+					delete ctx;
+					return NULL;
+				}
+				if (saved_errno == EBUSY) {
+					NVMPI_LOG(NVMPI_LOG_WARN,
+						  "Encoder device %s busy (EBUSY), retrying (%d/3)...",
+						  dev_path, attempt + 1);
+					usleep(100000);
+					continue;
+				}
+				/* Other errno (EIO, etc.) — log and fall through to factory. */
+				NVMPI_LOG(NVMPI_LOG_WARN,
+					  "Encoder device probe failed (errno=%d: %s), trying factory...",
+					  saved_errno, strerror(saved_errno));
+			} else {
+				/* Probe succeeded — device is accessible. Close the probe fd
+				 * immediately and let the factory do the real open. */
+				close(probe_fd);
+			}
+		} else {
+			/* Neither device node exists — MMAPI factory will also fail. */
+			NVMPI_LOG(NVMPI_LOG_ERROR,
+				  "No encoder device node found (/dev/nvhost-msenc or /dev/v4l2-nvenc)");
+			delete ctx;
+			return NULL;
+		}
+
 		if (ctx->blocking_mode)
 			ctx->enc.reset(NvVideoEncoder::createVideoEncoder("enc0"));
 		else
 			ctx->enc.reset(NvVideoEncoder::createVideoEncoder("enc0", O_NONBLOCK));
 		if (ctx->enc) break;
 		if (attempt < 2) {
-			NVMPI_LOG(NVMPI_LOG_WARN, "V4L2 encoder device busy, retrying (%d/3)...", attempt + 1);
-			usleep(100000);  /* 100ms backoff */
+			NVMPI_LOG(NVMPI_LOG_WARN, "Encoder factory returned NULL, retrying (%d/3)...", attempt + 1);
+			usleep(100000);
 		}
 	}
 	if (!ctx->enc)
