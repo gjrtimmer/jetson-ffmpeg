@@ -378,6 +378,33 @@ status comment after: (a) implementation is complete (commits, what changed),
 (b) MR/PR is created (link to MR), (c) pipeline result (pass/fail). Each
 milestone gets its own comment so the issue trail is a complete timeline.
 
+## Issue splitting
+
+When an issue is too large for a single Claude session, split it into
+sub-issues. Follow these rules:
+
+**Layer split pattern.** Split by architectural layer in this order:
+internal/API (libnvmpi) → decoder (FFmpeg) → encoder (FFmpeg) →
+testing/integration. Internal/API sub-issues are always prerequisites —
+they go first.
+
+**Session-scoped.** Each sub-issue must be completable in a single Claude
+session: focused on 1–3 primary files, clear acceptance criteria, no
+cross-cutting concerns that span many files.
+
+**Execution order in every sub-issue.** Every sub-issue body must contain
+"Execution order: X of N" and a "Dependencies" section listing prerequisite
+issue numbers.
+
+**Dependency graph on the parent.** When all sub-issues are created, post a
+comment on the parent issue with the complete execution order table,
+dependency graph (ASCII art), and issue number references. This is the
+single source of truth for which sub-issue to process next.
+
+**Analyse before splitting.** Before creating sub-issues, assess whether the
+issue actually needs splitting. If the scope fits a single session (one root
+cause, ≤3 files, mechanical fix), keep it as one issue and say so.
+
 ## Interacting with GitLab and GitHub
 
 Use the official CLIs — **`glab`** for GitLab (`gitlab.timmertech.nl`) and **`gh`**
