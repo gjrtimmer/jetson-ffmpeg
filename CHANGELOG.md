@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.6.6 - 2026-06-25
+
+### Features
+
+- Add encoder runtime controls: force IDR on demand (`nvmpi_encoder_force_idr`) and dynamic bitrate changes mid-stream (`nvmpi_encoder_set_bitrate`) (nvmpi, ffmpeg)
+- Add FFmpeg AVOptions for encoder: `-cabac` (CABAC entropy coding, H.264), `-aud` (Access Unit Delimiter insertion), `-lossless` (lossless encoding, H.264) (ffmpeg)
+
 ## 3.6.5 - 2026-06-25
 
 ### Features
