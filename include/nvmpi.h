@@ -258,7 +258,7 @@ extern "C" {
 	//Calls NvVideoEncoder::setBitrate() which updates
 	//V4L2_CID_MPEG_VIDEO_BITRATE. Takes effect from the next encoded frame.
 	//Returns 0 on success, -1 on error.
-	int nvmpi_encoder_set_bitrate(nvmpictx* ctx, uint32_t bitrate);
+	int nvmpi_encoder_set_bitrate(nvmpictx* ctx, unsigned int bitrate);
 	//flush encoder (mid-stream reset)
 	//Stops DQ thread, STREAMOFF both planes, drains packet pool, resets
 	//flushing/EOS state, STREAMON, re-queues capture buffers, restarts DQ

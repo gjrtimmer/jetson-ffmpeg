@@ -726,7 +726,7 @@ int nvmpi_encoder_force_idr(nvmpictx* ctx)
 //ctx->bitrate so the internal state stays consistent. For VBR mode the caller
 //should also adjust peak_bitrate externally if needed.
 //Returns 0 on success, -1 on ioctl failure.
-int nvmpi_encoder_set_bitrate(nvmpictx* ctx, uint32_t bitrate)
+int nvmpi_encoder_set_bitrate(nvmpictx* ctx, unsigned int bitrate)
 {
 	int ret = ctx->enc->setBitrate(bitrate);
 	if (ret < 0) {
