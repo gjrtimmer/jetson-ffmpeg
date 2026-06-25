@@ -1,5 +1,12 @@
 # Changelog
 
+## 3.6.7 - 2026-06-25
+
+### Bug Fixes
+
+- Probe V4L2 device before NvVideoEncoder/NvVideoDecoder factory call to capture real `errno` — distinguishes EBUSY (retry with backoff) from ENODEV/EACCES (fail fast) instead of generic error (nvmpi)
+- Return `AVERROR_EXTERNAL` instead of `AVERROR(ENOMEM)` on encoder device creation failure in FFmpeg wrapper (ffmpeg)
+
 ## 3.6.6 - 2026-06-25
 
 ### Features
