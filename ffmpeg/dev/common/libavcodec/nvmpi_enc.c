@@ -293,7 +293,9 @@ static av_cold int nvmpi_encode_init(AVCodecContext *avctx)
 		{
 			av_freep(&dst[0]);
 			av_frame_free(&nvmpi_context->frame);
-			return AVERROR(ENOMEM);
+			/* AVERROR_EXTERNAL: device-level failure (EBUSY, ENODEV, etc.),
+			 * not a memory allocation error. See #37. */
+			return AVERROR_EXTERNAL;
 		}
 		nvmpienc_initPktPool(avctx,nvmpi_context->packet_pool_size);
 		i=0;
@@ -399,7 +401,9 @@ static av_cold int nvmpi_encode_init(AVCodecContext *avctx)
 	{
 		av_log(avctx, AV_LOG_ERROR, "nvmpi: encoder creation failed\n");
 		av_frame_free(&nvmpi_context->frame);
-		return AVERROR(ENOMEM);
+		/* AVERROR_EXTERNAL: device-level failure (EBUSY, ENODEV, etc.),
+		 * not a memory allocation error. See #37. */
+		return AVERROR_EXTERNAL;
 	}
 	nvmpienc_initPktPool(avctx,nvmpi_context->packet_pool_size);
 
