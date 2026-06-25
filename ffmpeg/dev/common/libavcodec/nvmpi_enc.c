@@ -13,10 +13,11 @@
  * the encoder's empty pool, and recycles them after each
  * avcodec_receive_packet().
  *
- * One source supports FFmpeg 6.0 .. 8.0+ via preprocessor guards:
+ * One source supports FFmpeg 6.0 .. 9.0+ via preprocessor guards:
  *  - LIBAVCODEC_VERSION_MAJOR >= 60: FFCodec registration +
  *    ff_get_encode_buffer replaces ff_alloc_packet2.
  *  - lavc >= 62.11 (FFmpeg 8.0): FF_PROFILE_* renamed to AV_PROFILE_*.
+ *  - lavc >= 63 (FFmpeg 9.0): pix_fmts moved from AVCodec to FFCodec.
  * See https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Development-Guide "Wrapper code paths by FFmpeg version".
  */
 #include <nvmpi.h>
@@ -47,6 +48,18 @@
 
 #include "encode.h"
 #include "codec_internal.h"
+
+/*
+ * libavcodec 63 (FFmpeg 9.0+): pix_fmts moved from the public AVCodec (.p)
+ * to a direct field on FFCodec in codec_internal.h.
+ */
+#if LIBAVCODEC_VERSION_MAJOR >= 63
+#define NVMPI_ENC_PIXFMTS \
+	.pix_fmts = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NV12, AV_PIX_FMT_NONE}
+#else
+#define NVMPI_ENC_PIXFMTS \
+	.p.pix_fmts = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NV12, AV_PIX_FMT_NONE}
+#endif
 
 //libnvmpi exchanges timestamps in microseconds; used with av_rescale_q to
 //convert to/from the stream's AVCodecContext time_base.
@@ -727,7 +740,8 @@ static const AVOption options[] = {
 		FF_CODEC_RECEIVE_PACKET_CB(ff_nvmpi_receive_packet_async), \
 		.close          = nvmpi_encode_close, \
 		.flush          = nvmpi_flush_encoder, \
-		.p.pix_fmts       = (const enum AVPixelFormat[]) { AV_PIX_FMT_YUV420P, AV_PIX_FMT_NV12, AV_PIX_FMT_NONE },\
+		/* libavcodec 63 (FFmpeg 9.0+): pix_fmts moved from AVCodec to FFCodec */ \
+		NVMPI_ENC_PIXFMTS, \
 		.p.capabilities   = AV_CODEC_CAP_HARDWARE | AV_CODEC_CAP_DELAY, \
 		.defaults       = defaults,\
 		.p.wrapper_name   = "nvmpi", \
