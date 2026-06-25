@@ -687,6 +687,103 @@ int nvmpi_encoder_get_packet(nvmpictx* ctx, nvPacket** packet, bool wait)
 }
 
 //Public API: stop the encoder and free the context.
+//Mid-stream flush: reset the V4L2 encoder pipeline so encoding can continue
+//after a seek or stream restart without closing/reopening the codec context.
+//
+//Sequence (mirrors the decoder flush in nvmpi_dec_api.cpp):
+//  1. Stop the DQ thread — prevents callbacks during STREAMOFF.
+//  2. STREAMOFF both planes — tears down V4L2 queues, returns all buffers.
+//  3. Drain the packet pool — discard any pending encoded packets by moving
+//     them from the filled queue back to the empty queue.
+//  4. Reset flushing/EOS atomics — re-enable put_frame/get_packet.
+//  5. STREAMON both planes — restart the V4L2 pipeline.
+//  6. Re-queue capture plane buffers — the encoder needs empty buffers to
+//     write encoded output into.
+//  7. Restart the DQ thread — resume capture-plane processing.
+//  8. Reset the output-plane buffer index — next put_frame starts from 0.
+//
+//The caller (FFmpeg wrapper) is responsible for resetting its own
+//encoder_flushing flag and forcing the next frame to IDR if needed.
+int nvmpi_encoder_flush(nvmpictx* ctx)
+{
+	int ret;
+
+	/* 1. Stop DQ thread — must complete before STREAMOFF to avoid
+	 *    callbacks on torn-down queues. */
+	if (ctx->blocking_mode && ctx->dq_thread_started) {
+		ctx->enc->capture_plane.stopDQThread();
+		ctx->enc->capture_plane.waitForDQThread(1000);
+		ctx->dq_thread_started = false;
+	}
+
+	/* 2. STREAMOFF both planes — returns all queued buffers. */
+	ctx->enc->capture_plane.setStreamStatus(false);
+	ctx->enc->output_plane.setStreamStatus(false);
+
+	/* 3. Drain packet pool: move filled packets back to empty queue.
+	 *    The pool must be reset() first to clear any shutdown state
+	 *    from a prior EOS drain, then drained. */
+	ctx->pktPool->reset();
+	{
+		nvPacket* pkt;
+		while ((pkt = ctx->pktPool->dqFilledBuf()))
+			ctx->pktPool->qEmptyBuf(pkt);
+	}
+
+	/* 4. Reset EOS/flushing atomics so put_frame/get_packet work again. */
+	ctx->flushing.store(false, std::memory_order_release);
+	ctx->capPlaneGotEOS.store(false, std::memory_order_release);
+
+	/* 5. STREAMON both planes — restart the V4L2 pipeline. */
+	ret = ctx->enc->output_plane.setStreamStatus(true);
+	if (ret < 0) {
+		NVMPI_LOG(NVMPI_LOG_ERROR, "Error in output plane streamon after flush");
+		return ret;
+	}
+
+	ret = ctx->enc->capture_plane.setStreamStatus(true);
+	if (ret < 0) {
+		NVMPI_LOG(NVMPI_LOG_ERROR, "Error in capture plane streamon after flush");
+		return ret;
+	}
+
+	/* 6. Re-queue all capture plane buffers so the encoder has
+	 *    somewhere to write encoded output. */
+	for (uint32_t i = 0; i < ctx->enc->capture_plane.getNumBuffers(); i++) {
+		struct v4l2_buffer v4l2_buf;
+		struct v4l2_plane planes[MAX_PLANES];
+		memset(&v4l2_buf, 0, sizeof(v4l2_buf));
+		memset(planes, 0, MAX_PLANES * sizeof(struct v4l2_plane));
+
+		v4l2_buf.index = i;
+		v4l2_buf.m.planes = planes;
+
+		ret = ctx->enc->capture_plane.qBuffer(v4l2_buf, NULL);
+		if (ret < 0) {
+			NVMPI_LOG(NVMPI_LOG_ERROR,
+				  "Error while queueing buffer at capture plane after flush (buf %u)", i);
+			return ret;
+		}
+	}
+
+	/* 7. Restart DQ thread — resume capture-plane processing. */
+	if (ctx->blocking_mode) {
+		ctx->enc->capture_plane.setDQThreadCallback(encoder_capture_plane_dq_callback);
+		ret = ctx->enc->capture_plane.startDQThread(ctx);
+		if (ret < 0) {
+			NVMPI_LOG(NVMPI_LOG_ERROR, "Could not restart DQ thread after flush");
+			return ret;
+		}
+		ctx->dq_thread_started = true;
+	}
+
+	/* 8. Reset output-plane buffer index — next put_frame starts
+	 *    from buffer 0 (first N frames use getNthBuffer directly). */
+	ctx->index = 0;
+
+	return 0;
+}
+
 //Stops/joins the capture DQ thread, releases self-allocated OUTPUT-plane
 //dmabufs (DMA mode only), then destroys the device and the (by now empty)
 //packet pool. Packets still inside the pool are NOT freed here — the

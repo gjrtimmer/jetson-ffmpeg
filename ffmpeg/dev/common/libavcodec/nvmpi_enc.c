@@ -533,6 +533,21 @@ static int ff_nvmpi_receive_packet_async(AVCodecContext *avctx, AVPacket *pkt)
 	return 0;
 }
 
+//AVCodec/FFCodec .flush callback: reset the V4L2 encoder pipeline for
+//mid-stream restart (e.g. after seek). Resets the libnvmpi encoder
+//(STREAMOFF/STREAMON, drain packet pool, restart DQ thread) and clears
+//the FFmpeg-side flushing flag so send_frame accepts new input.
+static void nvmpi_flush_encoder(AVCodecContext *avctx)
+{
+    nvmpiEncodeContext *nvmpi_context = avctx->priv_data;
+
+    /* Reset the libnvmpi encoder pipeline. */
+    nvmpi_encoder_flush(nvmpi_context->ctx);
+
+    /* Clear the FFmpeg-side flushing flag so send_frame accepts frames. */
+    nvmpi_context->encoder_flushing = 0;
+}
+
 //AVCodec/FFCodec .close callback: make sure EOS was sent, drain remaining
 //packets (recycling pool buffers while doing so), then free the pool and
 //close the libnvmpi encoder. Order matters — the pool must be drained
@@ -679,6 +694,7 @@ static const AVOption options[] = {
 		.init           = nvmpi_encode_init, \
 		FF_CODEC_RECEIVE_PACKET_CB(ff_nvmpi_receive_packet_async), \
 		.close          = nvmpi_encode_close, \
+		.flush          = nvmpi_flush_encoder, \
 		.p.pix_fmts       = (const enum AVPixelFormat[]) { AV_PIX_FMT_YUV420P, AV_PIX_FMT_NV12, AV_PIX_FMT_NONE },\
 		.p.capabilities   = AV_CODEC_CAP_HARDWARE | AV_CODEC_CAP_DELAY, \
 		.defaults       = defaults,\
