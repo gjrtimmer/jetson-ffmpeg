@@ -205,10 +205,10 @@ index e593ad1..2bb1004 100644
  extern const FFCodec ff_vqa_decoder;
 diff --git a/libavcodec/nvmpi_dec.c b/libavcodec/nvmpi_dec.c
 new file mode 100644
-index 0000000..d3bd79d
+index 0000000..6a59eea
 --- /dev/null
 +++ b/libavcodec/nvmpi_dec.c
-@@ -0,0 +1,639 @@
+@@ -0,0 +1,659 @@
 +/*
 + * nvmpi_dec.c — FFmpeg decoder wrapper for libnvmpi (layer 2 of
 + * jetson-ffmpeg, the FFmpeg integration layer).
@@ -220,7 +220,7 @@ index 0000000..d3bd79d
 + * mpeg4_nvmpi, vp8_nvmpi, vp9_nvmpi) by delegating all real work to the
 + * libnvmpi C API (<nvmpi.h>, implemented in src/nvmpi_dec.cpp).
 + *
-+ * One source file supports FFmpeg 6.0 through 8.0+: API differences are
++ * One source file supports FFmpeg 6.0 through 9.0+: API differences are
 + * handled with LIBAVCODEC_VERSION_MAJOR preprocessor guards (see
 + * https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Development-Guide "Wrapper code paths by FFmpeg version").
 + */
@@ -242,6 +242,24 @@ index 0000000..d3bd79d
 +#include "libavutil/opt.h"
 +
 +#include "codec_internal.h"
++#include "version.h"
++
++/*
++ * libavcodec 63 (FFmpeg 9.0+): pix_fmts moved from the public AVCodec (.p)
++ * to a direct field on FFCodec in codec_internal.h. Pre-63 uses .p.pix_fmts;
++ * 63+ uses .pix_fmts (or the CODEC_PIXFMTS() macro).
++ */
++#if LIBAVCODEC_VERSION_MAJOR >= 63
++#define NVMPI_DEC_PIXFMTS \
++	.pix_fmts = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NV12, AV_PIX_FMT_P010LE, AV_PIX_FMT_NONE}
++#define NVMPI_MJPEG_PIXFMTS \
++	.pix_fmts = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NONE}
++#else
++#define NVMPI_DEC_PIXFMTS \
++	.p.pix_fmts = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NV12, AV_PIX_FMT_P010LE, AV_PIX_FMT_NONE}
++#define NVMPI_MJPEG_PIXFMTS \
++	.p.pix_fmts = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NONE}
++#endif
 +
 +//valid range / default for the frame_pool_size AVOption (mirrors the size
 +//of libnvmpi's decoded-frame pool, i.e. how many frames may buffer up
@@ -812,7 +830,8 @@ index 0000000..d3bd79d
 +		.p.priv_class     = &nvmpi_##NAME##_dec_class, \
 +		.p.capabilities   = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_AVOID_PROBING | AV_CODEC_CAP_HARDWARE, \
 +		.caps_internal  = FF_CODEC_CAP_INIT_CLEANUP, \
-+		.p.pix_fmts	=(const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P,AV_PIX_FMT_NV12,AV_PIX_FMT_P010LE,AV_PIX_FMT_NONE},\
++		/* libavcodec 63 (FFmpeg 9.0+): pix_fmts moved from AVCodec to FFCodec */ \
++		NVMPI_DEC_PIXFMTS, \
 +		.bsfs           = BSFS, \
 +		.p.wrapper_name   = "nvmpi", \
 +	};
@@ -844,16 +863,17 @@ index 0000000..d3bd79d
 +	.p.priv_class     = &nvmpi_mjpeg_dec_class,
 +	.p.capabilities   = AV_CODEC_CAP_AVOID_PROBING | AV_CODEC_CAP_HARDWARE,
 +	.caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
-+	.p.pix_fmts     = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NONE},
++	/* libavcodec 63 (FFmpeg 9.0+): pix_fmts moved from AVCodec to FFCodec */
++	NVMPI_MJPEG_PIXFMTS,
 +	.p.wrapper_name   = "nvmpi",
 +};
 +
 diff --git a/libavcodec/nvmpi_enc.c b/libavcodec/nvmpi_enc.c
 new file mode 100644
-index 0000000..4b2de72
+index 0000000..1b30f7a
 --- /dev/null
 +++ b/libavcodec/nvmpi_enc.c
-@@ -0,0 +1,740 @@
+@@ -0,0 +1,754 @@
 +/*
 + * nvmpi_enc.c — FFmpeg encoder wrapper for libnvmpi (layer 2 of
 + * jetson-ffmpeg, the FFmpeg integration layer).
@@ -869,10 +889,11 @@ index 0000000..4b2de72
 + * the encoder's empty pool, and recycles them after each
 + * avcodec_receive_packet().
 + *
-+ * One source supports FFmpeg 6.0 .. 8.0+ via preprocessor guards:
++ * One source supports FFmpeg 6.0 .. 9.0+ via preprocessor guards:
 + *  - LIBAVCODEC_VERSION_MAJOR >= 60: FFCodec registration +
 + *    ff_get_encode_buffer replaces ff_alloc_packet2.
 + *  - lavc >= 62.11 (FFmpeg 8.0): FF_PROFILE_* renamed to AV_PROFILE_*.
++ *  - lavc >= 63 (FFmpeg 9.0): pix_fmts moved from AVCodec to FFCodec.
 + * See https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Development-Guide "Wrapper code paths by FFmpeg version".
 + */
 +#include <nvmpi.h>
@@ -903,6 +924,18 @@ index 0000000..4b2de72
 +
 +#include "encode.h"
 +#include "codec_internal.h"
++
++/*
++ * libavcodec 63 (FFmpeg 9.0+): pix_fmts moved from the public AVCodec (.p)
++ * to a direct field on FFCodec in codec_internal.h.
++ */
++#if LIBAVCODEC_VERSION_MAJOR >= 63
++#define NVMPI_ENC_PIXFMTS \
++	.pix_fmts = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NV12, AV_PIX_FMT_NONE}
++#else
++#define NVMPI_ENC_PIXFMTS \
++	.p.pix_fmts = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NV12, AV_PIX_FMT_NONE}
++#endif
 +
 +//libnvmpi exchanges timestamps in microseconds; used with av_rescale_q to
 +//convert to/from the stream's AVCodecContext time_base.
@@ -1583,7 +1616,8 @@ index 0000000..4b2de72
 +		FF_CODEC_RECEIVE_PACKET_CB(ff_nvmpi_receive_packet_async), \
 +		.close          = nvmpi_encode_close, \
 +		.flush          = nvmpi_flush_encoder, \
-+		.p.pix_fmts       = (const enum AVPixelFormat[]) { AV_PIX_FMT_YUV420P, AV_PIX_FMT_NV12, AV_PIX_FMT_NONE },\
++		/* libavcodec 63 (FFmpeg 9.0+): pix_fmts moved from AVCodec to FFCodec */ \
++		NVMPI_ENC_PIXFMTS, \
 +		.p.capabilities   = AV_CODEC_CAP_HARDWARE | AV_CODEC_CAP_DELAY, \
 +		.defaults       = defaults,\
 +		.p.wrapper_name   = "nvmpi", \
