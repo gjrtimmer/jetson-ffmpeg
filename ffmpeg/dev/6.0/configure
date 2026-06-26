@@ -6809,7 +6809,7 @@ enabled rkmpp             && { require_pkg_config rkmpp rockchip_mpp  rockchip/r
                                  die "ERROR: rkmpp requires --enable-libdrm"; }
                              }
 enabled vapoursynth       && require_pkg_config vapoursynth "vapoursynth-script >= 42" VSScript.h vsscript_init
-enabled nvmpi		  && require_pkg_config nvmpi nvmpi nvmpi.h nvmpi_create_decoder
+enabled nvmpi		  && add_extralibs -ldl
 
 
 if enabled gcrypt; then

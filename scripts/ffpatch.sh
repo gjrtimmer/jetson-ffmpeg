@@ -149,9 +149,11 @@ if ! grep -q 'mjpeg_nvmpi_encoder_deps' "$BKP_FILE_CONFIGURE"; then
 fi
 
 #insert before enabled libx264 line.
+#nvmpi uses dlopen (dynlink_nvmpi.h) — no link-time dependency on libnvmpi.so.
+#Only -ldl is needed for dlopen/dlsym/dlclose.
 if ! grep -q 'enabled nvmpi' "$BKP_FILE_CONFIGURE"; then
 	cp "$BKP_FILE_CONFIGURE" "$BKP_FILE_CONFIGURE.1"
-	sed -i '/enabled libx264/i enabled nvmpi		  && require_pkg_config nvmpi nvmpi nvmpi.h nvmpi_create_decoder' "$BKP_FILE_CONFIGURE"
+	sed -i '/enabled libx264/i enabled nvmpi		  && add_extralibs -ldl' "$BKP_FILE_CONFIGURE"
 	if cmp "$BKP_FILE_CONFIGURE" "$BKP_FILE_CONFIGURE.1"; then return 1; fi;
 fi
 
@@ -295,7 +297,8 @@ cp "$BKP_FILE_CONFIGURE" "$FF_FILE_CONFIGURE"
 cp "$BKP_FILE_LIBAVCODEC_MAKEFILE" "$FF_FILE_LIBAVCODEC_MAKEFILE"
 cp "$BKP_FILE_LIBAVCODEC_ALLCODECSC" "$FF_FILE_LIBAVCODEC_ALLCODECSC"
 
-#copy nvmpi enc and dec files to ffmpeg libavcodec dir
+#copy nvmpi enc, dec, and dynlink files to ffmpeg libavcodec dir
+cp "${REPO_ROOT}/ffmpeg/dev/common/libavcodec/dynlink_nvmpi.h" ${FF_DIR_LIBAVCODEC}"/dynlink_nvmpi.h"
 cp "${REPO_ROOT}/ffmpeg/dev/common/libavcodec/nvmpi_dec.c" ${FF_DIR_LIBAVCODEC}"/nvmpi_dec.c"
 cp "${REPO_ROOT}/ffmpeg/dev/common/libavcodec/nvmpi_enc.c" ${FF_DIR_LIBAVCODEC}"/nvmpi_enc.c"
 cp "${REPO_ROOT}/ffmpeg/dev/common/libavcodec/nvmpi_enc_jpeg.c" ${FF_DIR_LIBAVCODEC}"/nvmpi_enc_jpeg.c"

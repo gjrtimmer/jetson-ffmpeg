@@ -7,7 +7,7 @@
  * patches in ffmpeg/patches/, and compiled as part of FFmpeg itself. It
  * implements FFmpeg decoder codecs (h264_nvmpi, hevc_nvmpi, mpeg2_nvmpi,
  * mpeg4_nvmpi, vp8_nvmpi, vp9_nvmpi) by delegating all real work to the
- * libnvmpi C API (<nvmpi.h>, implemented in src/nvmpi_dec.cpp).
+ * libnvmpi C API (loaded at runtime via dynlink_nvmpi.h / dlopen).
  *
  * One source file supports FFmpeg 6.0 through 9.0+: API differences are
  * handled with LIBAVCODEC_VERSION_MAJOR preprocessor guards (see
@@ -17,7 +17,11 @@
 #include <stdlib.h>
 #include <sys/time.h>
 
-#include <nvmpi.h>
+/* Runtime-loaded via dlopen -- no link-time dependency on libnvmpi.so.
+ * dynlink_nvmpi.h is self-contained (duplicates nvmpi.h types) and
+ * provides macro redirects so all nvmpi_* calls dispatch through
+ * function pointers resolved at codec init time. */
+#include "dynlink_nvmpi.h"
 #include "avcodec.h"
 #include "decode.h"
 #include "internal.h"
@@ -113,6 +117,17 @@ static int nvmpi_init_decoder(AVCodecContext *avctx)
 	nvDecParam param={0};
 	enum AVPixelFormat choices[4];
 	int nchoices;
+
+	/* Load libnvmpi.so via dlopen on first use.  If the library is not
+	 * installed, report a clear error and let FFmpeg fall back to other
+	 * decoders or software decode. */
+	if (nvmpi_dynlink_load() < 0) {
+		av_log(avctx, AV_LOG_ERROR,
+		       "Failed to load libnvmpi.so: %s\n"
+		       "Install libnvmpi for hardware-accelerated decoding on Jetson.\n",
+		       dlerror());
+		return AVERROR_EXTERNAL;
+	}
 
 	param.codingType =nvmpi_get_codingtype(avctx);
 	if (param.codingType == NV_VIDEO_CodingUnused)
@@ -416,6 +431,15 @@ static void nvmpi_flush_decoder(AVCodecContext *avctx)
 static int nvmpi_init_mjpeg_decoder(AVCodecContext *avctx)
 {
 	nvmpiDecodeContext *nvmpi_context = avctx->priv_data;
+
+	/* Load libnvmpi.so via dlopen (same as the V4L2 decoder path). */
+	if (nvmpi_dynlink_load() < 0) {
+		av_log(avctx, AV_LOG_ERROR,
+		       "Failed to load libnvmpi.so: %s\n"
+		       "Install libnvmpi for hardware-accelerated MJPEG decoding on Jetson.\n",
+		       dlerror());
+		return AVERROR_EXTERNAL;
+	}
 
 	avctx->pix_fmt = AV_PIX_FMT_YUV420P;
 	avctx->color_range = AVCOL_RANGE_JPEG;
