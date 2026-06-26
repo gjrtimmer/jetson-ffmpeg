@@ -31,11 +31,23 @@
 #include "libavutil/hwcontext.h"
 #include "libavutil/hwcontext_drm.h"
 #include "libavutil/imgutils.h"
+#include "libavutil/mem.h"
 #include "libavutil/log.h"
 #include "libavutil/opt.h"
 
+#include <unistd.h>
+
 #include "codec_internal.h"
 #include "version.h"
+
+/* DRM_FORMAT constants for AVDRMFrameDescriptor layer description.
+ * Defined inline to avoid requiring <drm_fourcc.h> / libdrm-dev as a
+ * build dependency — the constants are stable ABI from the Linux kernel. */
+#ifndef DRM_FORMAT_NV12
+#define DRM_FORMAT_NV12 \
+    (((uint32_t)('N')) | ((uint32_t)('V') << 8) | \
+     ((uint32_t)('1') << 16) | ((uint32_t)('2') << 24))
+#endif
 
 /*
  * libavcodec 63 (FFmpeg 9.0+): pix_fmts moved from the public AVCodec (.p)
@@ -43,13 +55,15 @@
  * 63+ uses .pix_fmts (or the CODEC_PIXFMTS() macro).
  */
 #if LIBAVCODEC_VERSION_MAJOR >= 63
+/* libavcodec 63 (FFmpeg 9.0+): pix_fmts on FFCodec directly */
 #define NVMPI_DEC_PIXFMTS \
-	.pix_fmts = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NV12, AV_PIX_FMT_P010LE, AV_PIX_FMT_NONE}
+	.pix_fmts = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NV12, AV_PIX_FMT_P010LE, AV_PIX_FMT_DRM_PRIME, AV_PIX_FMT_NONE}
 #define NVMPI_MJPEG_PIXFMTS \
 	.pix_fmts = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NONE}
 #else
+/* libavcodec 60-62 (FFmpeg 6.0-8.x): pix_fmts on public AVCodec sub-struct */
 #define NVMPI_DEC_PIXFMTS \
-	.p.pix_fmts = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NV12, AV_PIX_FMT_P010LE, AV_PIX_FMT_NONE}
+	.p.pix_fmts = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NV12, AV_PIX_FMT_P010LE, AV_PIX_FMT_DRM_PRIME, AV_PIX_FMT_NONE}
 #define NVMPI_MJPEG_PIXFMTS \
 	.p.pix_fmts = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NONE}
 #endif
@@ -90,6 +104,39 @@ typedef struct {
 	int output_format;     //requested output pixel format (AVPixelFormat; NONE = auto)
 } nvmpiDecodeContext;
 
+/* ------------------------------------------------------------------ */
+/* DRM_PRIME (zero-copy) frame support                                 */
+/* ------------------------------------------------------------------ */
+
+/* Carries the dup'd DMA-BUF fd and libnvmpi's pool-return callback
+ * through to the AVBuffer release path. Allocated per-frame on the
+ * heap; freed in nvmpi_drm_release_frame when FFmpeg drops the last
+ * reference to frame->buf[0]. */
+typedef struct {
+    int fd;                          /* dup'd DMA-BUF fd (owned by us) */
+    nvmpi_frame_release_cb release;  /* returns original buffer to pool */
+    void *opaque;                    /* libnvmpi pool-return context */
+} NvmpiDRMOpaque;
+
+/* AVBufferRef release callback for DRM_PRIME frames. Invoked when
+ * FFmpeg drops the last reference to frame->buf[0]:
+ *   1. close the dup'd fd (our copy; the original stays in libnvmpi)
+ *   2. call the pool-return callback to recycle the buffer
+ *   3. free the opaque + descriptor allocations */
+static void nvmpi_drm_release_frame(void *opaque, uint8_t *data)
+{
+    NvmpiDRMOpaque *drm = (NvmpiDRMOpaque *)opaque;
+
+    if (drm->fd >= 0)
+        close(drm->fd);
+
+    if (drm->release)
+        drm->release(drm->opaque);
+
+    av_free(drm);
+    av_free(data);
+}
+
 //Translate FFmpeg's codec id into libnvmpi's coding type enum.
 //Returns NV_VIDEO_CodingUnused for anything libnvmpi cannot decode.
 static nvCodingType nvmpi_get_codingtype(AVCodecContext *avctx)
@@ -115,7 +162,7 @@ static int nvmpi_init_decoder(AVCodecContext *avctx)
 {
 	nvmpiDecodeContext *nvmpi_context = avctx->priv_data;
 	nvDecParam param={0};
-	enum AVPixelFormat choices[4];
+	enum AVPixelFormat choices[5];
 	int nchoices;
 
 	/* Load libnvmpi.so via dlopen on first use.  If the library is not
@@ -176,6 +223,7 @@ static int nvmpi_init_decoder(AVCodecContext *avctx)
 	choices[nchoices++] = AV_PIX_FMT_NV12;
 	if(avctx->codec_id == AV_CODEC_ID_HEVC)
 		choices[nchoices++] = AV_PIX_FMT_P010LE;
+	choices[nchoices++] = AV_PIX_FMT_DRM_PRIME;
 	choices[nchoices] = AV_PIX_FMT_NONE;
 
 	if(nvmpi_context->output_format != AV_PIX_FMT_NONE)
@@ -190,7 +238,8 @@ static int nvmpi_init_decoder(AVCodecContext *avctx)
 	}
 	else if(avctx->pix_fmt != AV_PIX_FMT_YUV420P &&
 	        avctx->pix_fmt != AV_PIX_FMT_NV12 &&
-	        avctx->pix_fmt != AV_PIX_FMT_P010LE)
+	        avctx->pix_fmt != AV_PIX_FMT_P010LE &&
+	        avctx->pix_fmt != AV_PIX_FMT_DRM_PRIME)
 	{
 		enum AVPixelFormat got = ff_get_format(avctx, choices);
 		avctx->pix_fmt = (got != AV_PIX_FMT_NONE) ? got : AV_PIX_FMT_YUV420P;
@@ -213,8 +262,13 @@ static int nvmpi_init_decoder(AVCodecContext *avctx)
 		case AV_PIX_FMT_P010LE:
 			param.pixFormat = NV_PIX_P010;
 			break;
+		case AV_PIX_FMT_DRM_PRIME:
+			/* DRM_PRIME wraps the hardware's native NV12 output as a
+			 * DMA-BUF fd — no pixel format conversion needed. */
+			param.pixFormat = NV_PIX_NV12;
+			break;
 		default:
-			av_log(avctx, AV_LOG_ERROR, "Invalid Pix_FMT for NVMPI: only YUV420P, YUVJ420P, NV12 and P010LE are supported\n");
+			av_log(avctx, AV_LOG_ERROR, "Invalid Pix_FMT for NVMPI: only YUV420P, YUVJ420P, NV12, P010LE and DRM_PRIME are supported\n");
 			return AVERROR_INVALIDDATA;
 	}
 
@@ -232,17 +286,24 @@ static int nvmpi_init_decoder(AVCodecContext *avctx)
 		avctx->height = param.resized.height;
 	}
 
-	//Pre-allocate the destination frame via FFmpeg's buffer pool so
-	//nvmpi_decode() can copy decoded planes straight into it. A fresh
-	//bufFrame is re-acquired after each frame is handed to the user.
-	nvmpi_context->bufFrame = av_frame_alloc();
-	nvmpi_context->bufFrame->width = avctx->width;
-	nvmpi_context->bufFrame->height = avctx->height;
-	if (ff_get_buffer(avctx, nvmpi_context->bufFrame, 0) < 0)
-	{
-		av_frame_free(&(nvmpi_context->bufFrame));
+	/* DRM_PRIME frames carry a DMA-BUF fd, not pixel data — no
+	 * pre-allocated output buffer needed. Each frame is built
+	 * on-the-fly in nvmpi_decode from the fd returned by libnvmpi. */
+	if (avctx->pix_fmt != AV_PIX_FMT_DRM_PRIME) {
+		/* Pre-allocate the destination frame via FFmpeg's buffer pool so
+		 * nvmpi_decode() can copy decoded planes straight into it. A fresh
+		 * bufFrame is re-acquired after each frame is handed to the user. */
+		nvmpi_context->bufFrame = av_frame_alloc();
+		nvmpi_context->bufFrame->width = avctx->width;
+		nvmpi_context->bufFrame->height = avctx->height;
+		if (ff_get_buffer(avctx, nvmpi_context->bufFrame, 0) < 0)
+		{
+			av_frame_free(&(nvmpi_context->bufFrame));
+			nvmpi_context->bufFrame = NULL;
+			return AVERROR(ENOMEM);
+		}
+	} else {
 		nvmpi_context->bufFrame = NULL;
-		return AVERROR(ENOMEM);
 	}
 
 	nvmpi_context->ctx=nvmpi_create_decoder(&param);
@@ -353,6 +414,97 @@ static int nvmpi_decode(AVCodecContext *avctx, AVFrame *data, int *got_frame, AV
 		}
 	}
 
+	/* ---- DRM_PRIME path: wrap DMA-BUF fd in AVDRMFrameDescriptor ---- */
+	if (avctx->pix_fmt == AV_PIX_FMT_DRM_PRIME) {
+		int dmabuf_fd, width, height, pitch;
+		int64_t timestamp;
+		nvmpi_frame_release_cb release_cb;
+		void *release_opaque;
+
+		res = nvmpi_decoder_get_frame_fd(nvmpi_context->ctx,
+			&dmabuf_fd, &width, &height, &pitch, &timestamp,
+			&release_cb, &release_opaque,
+			avctx->flags & AV_CODEC_FLAG_LOW_DELAY);
+
+		if (res < 0)
+			return decode_ret;
+
+		/* dup() the borrowed fd — FFmpeg frame lifetime is unpredictable
+		 * (filters, encoder queues hold refs). The dup'd fd is closed
+		 * in nvmpi_drm_release_frame when the last buf[0] ref drops. */
+		int dup_fd = dup(dmabuf_fd);
+		if (dup_fd < 0) {
+			av_log(avctx, AV_LOG_ERROR,
+			       "dup(dmabuf_fd=%d) failed\n", dmabuf_fd);
+			release_cb(release_opaque);
+			return AVERROR_EXTERNAL;
+		}
+
+		/* Allocated here; freed in nvmpi_drm_release_frame via av_free(data) */
+		AVDRMFrameDescriptor *desc = av_mallocz(sizeof(*desc));
+		if (!desc) {
+			close(dup_fd);
+			release_cb(release_opaque);
+			return AVERROR(ENOMEM);
+		}
+
+		/* Single DMA-BUF object, one NV12 layer with luma + chroma planes */
+		desc->nb_objects = 1;
+		desc->objects[0].fd   = dup_fd;
+		desc->objects[0].size = (size_t)pitch * height * 3 / 2;
+
+		desc->nb_layers = 1;
+		desc->layers[0].format    = DRM_FORMAT_NV12;
+		desc->layers[0].nb_planes = 2;
+		desc->layers[0].planes[0].object_index = 0;
+		desc->layers[0].planes[0].offset       = 0;
+		desc->layers[0].planes[0].pitch        = pitch;
+		desc->layers[0].planes[1].object_index = 0;
+		desc->layers[0].planes[1].offset       = (ptrdiff_t)pitch * height;
+		desc->layers[0].planes[1].pitch        = pitch;
+
+		/* Allocated here; freed in nvmpi_drm_release_frame via av_free(opaque) */
+		NvmpiDRMOpaque *drm_opaque = av_mallocz(sizeof(*drm_opaque));
+		if (!drm_opaque) {
+			close(dup_fd);
+			release_cb(release_opaque);
+			av_free(desc);
+			return AVERROR(ENOMEM);
+		}
+		drm_opaque->fd      = dup_fd;
+		drm_opaque->release = release_cb;
+		drm_opaque->opaque  = release_opaque;
+
+		frame->data[0] = (uint8_t *)desc;
+		frame->buf[0]  = av_buffer_create((uint8_t *)desc, sizeof(*desc),
+		                                   nvmpi_drm_release_frame,
+		                                   drm_opaque,
+		                                   AV_BUFFER_FLAG_READONLY);
+		if (!frame->buf[0]) {
+			close(dup_fd);
+			release_cb(release_opaque);
+			av_free(drm_opaque);
+			av_free(desc);
+			return AVERROR(ENOMEM);
+		}
+
+		frame->format  = AV_PIX_FMT_DRM_PRIME;
+		frame->width   = width;
+		frame->height  = height;
+		frame->pts     = timestamp;
+		frame->pkt_dts = AV_NOPTS_VALUE;
+
+		if (width && height) {
+			avctx->width  = width;
+			avctx->height = height;
+		}
+
+		*got_frame = 1;
+		return decode_ret;
+	}
+
+	/* ---- Software-frame path: copy decoded pixels into bufFrame ---- */
+
 	//Point the nvFrame at bufFrame's pre-allocated planes; on success
 	//libnvmpi copies the decoded frame directly into FFmpeg-owned memory.
 	_nvframe.payload[0] = bufFrame->data[0];
@@ -388,7 +540,7 @@ static int nvmpi_decode(AVCodecContext *avctx, AVFrame *data, int *got_frame, AV
 		av_log(avctx, AV_LOG_ERROR, "ff_get_buffer failed\n");
 		return AVERROR(ENOMEM);
 	}
-	
+
 	//keep the metadata that belonged to the returned frame, not the new one
 	frame->metadata = bufFrame->metadata;
 	bufFrame->metadata = NULL;
