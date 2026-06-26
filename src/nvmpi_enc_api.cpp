@@ -73,6 +73,7 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 	ctx->capPlaneGotEOS.store(false, std::memory_order_relaxed);
 	ctx->flushing.store(false, std::memory_order_relaxed);
 	ctx->blocking_mode = true; //TODO non-blocking mode support
+	ctx->dmabuf_external = (param->use_dmabuf != 0);
 	ctx->max_perf = param->max_perf;
 	ctx->poc_type = param->poc_type;
 	ctx->vbv_buffer_size = param->vbv_buffer_size;
@@ -465,11 +466,19 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 	 * crashes leaked DMA memory and cascaded to all subsequent jobs. */
 
 	//ret = ctx->enc->output_plane.setupPlane(V4L2_MEMORY_USERPTR, ctx->packets_num, false, true);
+	if (ctx->dmabuf_external) {
+		/* External DMA-BUF mode: OUTPUT plane uses V4L2_MEMORY_DMABUF
+		 * with caller-provided fds per frame (zero-copy path).
+		 * reqbufs DMABUF, no internal buffer allocation — the fd is
+		 * supplied at qBuffer time by nvmpi_encoder_put_frame_fd. */
+		ret = ctx->enc->output_plane.setupPlane(V4L2_MEMORY_DMABUF, ctx->packets_num, false, false);
+	} else {
 #if (OUTPLANE_MEMTYPE == OUTPLANE_MEMTYPE_MMAP)
-	ret = ctx->enc->output_plane.setupPlane(V4L2_MEMORY_MMAP, ctx->packets_num, true, false);
+		ret = ctx->enc->output_plane.setupPlane(V4L2_MEMORY_MMAP, ctx->packets_num, true, false);
 #else
-	ret = setup_output_dmabuf(ctx,ctx->packets_num); //V4L2_MEMORY_DMABUF
+		ret = setup_output_dmabuf(ctx,ctx->packets_num); //V4L2_MEMORY_DMABUF
 #endif
+	}
 	if (ret < 0) {
 		NVMPI_LOG(NVMPI_LOG_ERROR, "Could not setup output plane");
 		goto cleanup;
@@ -699,6 +708,128 @@ int nvmpi_encoder_put_frame(nvmpictx* ctx,nvFrame* frame)
 	ret = ctx->enc->output_plane.qBuffer(v4l2_buf, NULL);
 	if (ret < 0) {
 		NVMPI_LOG(NVMPI_LOG_ERROR, "Error while queueing buffer at output plane (code=%d)", ret);
+		return ret;
+	}
+
+	return 0;
+}
+
+//Public API: zero-copy variant of nvmpi_encoder_put_frame.
+//Submits a raw frame to the encoder via an external DMA-BUF fd instead
+//of copying pixel data from caller-owned memory. The encoder accesses
+//the buffer directly through V4L2_MEMORY_DMABUF — no CPU memcpy.
+//
+//Requires use_dmabuf=1 in nvEncParam at encoder creation time
+//(sets ctx->dmabuf_external, which configures the OUTPUT plane for
+//V4L2_MEMORY_DMABUF instead of MMAP).
+//
+//The fd must reference a pitch-linear NV12 DMA-BUF surface with
+//matching dimensions (e.g. from nvmpi_surface_alloc or from the
+//decoder's get_frame_fd). The encoder does NOT take ownership —
+//the caller may release the fd after this call returns.
+//
+//dmabuf_fd == -1 signals EOS (same as frame==NULL in put_frame).
+//Returns 0 on success, -2 if already flushing, negative on error.
+int nvmpi_encoder_put_frame_fd(nvmpictx* ctx,
+	int dmabuf_fd, int width, int height, int pitch,
+	int64_t timestamp)
+{
+	(void)width;
+	(void)height;
+	(void)pitch;
+
+	if (ctx->flushing.load(std::memory_order_acquire)) return -2;
+
+	if (!ctx->dmabuf_external) {
+		NVMPI_LOG(NVMPI_LOG_ERROR, "put_frame_fd called but encoder was not "
+			  "created with use_dmabuf=1");
+		return -1;
+	}
+
+	int ret;
+	struct v4l2_buffer v4l2_buf;
+	struct v4l2_plane planes[MAX_PLANES];
+
+	memset(&v4l2_buf, 0, sizeof(v4l2_buf));
+	memset(planes, 0, sizeof(planes));
+
+	v4l2_buf.m.planes = planes;
+	v4l2_buf.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
+	v4l2_buf.memory = V4L2_MEMORY_DMABUF;
+
+	if (ctx->enc->isInError())
+		return -1;
+
+	/* Buffer acquisition: same index-then-dqBuffer pattern as put_frame.
+	 * In DMABUF mode, getNthBuffer returns a metadata-only NvBuffer
+	 * (no data mapping); the actual buffer content comes from the fd. */
+	if (ctx->index < ctx->enc->output_plane.getNumBuffers())
+	{
+		v4l2_buf.index = ctx->index;
+		ctx->index++;
+	}
+	else
+	{
+		NvBuffer *nvBuffer;
+		ret = ctx->enc->output_plane.dqBuffer(v4l2_buf, &nvBuffer, NULL, -1);
+		if (ret < 0)
+		{
+			NVMPI_LOG(NVMPI_LOG_ERROR, "Error DQing buffer at output plane (dmabuf mode)");
+			return -1;
+		}
+	}
+
+	if (dmabuf_fd >= 0)
+	{
+		/* Normal frame: set both NV12M planes to the same fd.
+		 * NV12M has 2 planes (Y and interleaved UV); both reside in
+		 * the same DMA-BUF allocation at different offsets. The V4L2
+		 * M2M encoder resolves plane offsets from the NvBufSurface
+		 * metadata associated with the fd. */
+		v4l2_buf.m.planes[0].m.fd = dmabuf_fd;
+		v4l2_buf.m.planes[0].bytesused = pitch * height;
+		if (ctx->raw_pixfmt == V4L2_PIX_FMT_NV12M ||
+		    ctx->raw_pixfmt == V4L2_PIX_FMT_YUV420M) {
+			v4l2_buf.m.planes[1].m.fd = dmabuf_fd;
+			/* UV plane: half height, same pitch for NV12M;
+			 * for YUV420M: U and V at quarter size each, but
+			 * the V4L2 driver reads actual sizes from the surface. */
+			v4l2_buf.m.planes[1].bytesused = pitch * height / 2;
+		}
+
+		v4l2_buf.flags |= V4L2_BUF_FLAG_TIMESTAMP_COPY;
+		v4l2_buf.timestamp.tv_sec = timestamp / 1000000;
+		v4l2_buf.timestamp.tv_usec = timestamp % 1000000;
+
+		/* Sync CPU caches → device for the external DMA-BUF.
+		 * The caller may have written into the buffer via CPU
+		 * (e.g. memcpy from a software source); the hw encoder
+		 * reads via DMA so caches must be flushed. */
+#ifdef WITH_NVUTILS
+		NvBufSurface *nvbuf_surf = NULL;
+		ret = NvBufSurfaceFromFd(dmabuf_fd, (void **)(&nvbuf_surf));
+		if (ret == 0) {
+			NvBufSurfaceSyncForDevice(nvbuf_surf, 0, -1);
+		}
+#else
+		/* Legacy API: sync each plane individually. For NV12 the fd
+		 * is the same for both planes. */
+		void *dummy = NULL;
+		NvBufferMemSyncForDevice(dmabuf_fd, 0, &dummy);
+		NvBufferMemSyncForDevice(dmabuf_fd, 1, &dummy);
+#endif
+	}
+	else
+	{
+		/* EOS: queue a zero-byte buffer to tell the encoder to drain. */
+		ctx->flushing.store(true, std::memory_order_release);
+		v4l2_buf.m.planes[0].bytesused = 0;
+		v4l2_buf.m.planes[1].bytesused = 0;
+	}
+
+	ret = ctx->enc->output_plane.qBuffer(v4l2_buf, NULL);
+	if (ret < 0) {
+		NVMPI_LOG(NVMPI_LOG_ERROR, "Error while queueing buffer at output plane (dmabuf mode, code=%d)", ret);
 		return ret;
 	}
 

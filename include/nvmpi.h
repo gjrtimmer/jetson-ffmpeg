@@ -19,6 +19,7 @@
 #define __NVMPI_H__
 #include <stdlib.h>
 #include <stdbool.h>
+#include <stdint.h>
 
 //Maximum size of the encoded buffers on the capture plane in bytes
 //Also used by the FFmpeg wrapper as the allocation size of each pooled
@@ -94,6 +95,8 @@ typedef struct _NVENCPARAM{
 	unsigned int wait_timeout;     //blocking-wait timeout in ms (0 = default 500ms)
 	char enable_cabac;             //non-zero: enable CABAC entropy coding (H.264 only; default CAVLC)
 	char insert_aud;               //non-zero: insert Access Unit Delimiter NALs
+	int use_dmabuf;                //non-zero: encoder OUTPUT plane uses V4L2_MEMORY_DMABUF,
+	                               //enabling zero-copy frame input via nvmpi_encoder_put_frame_fd()
 } nvEncParam;
 
 //Decoder creation parameters, consumed once by nvmpi_create_decoder().
@@ -140,6 +143,15 @@ typedef struct _NVFRAME{
 	unsigned int height;
 	time_t timestamp;              //microseconds (carried via the V4L2 buffer timestamp)
 }nvFrame;
+
+//Release callback for borrowed DMA-BUF fds returned by get_frame_fd.
+//The caller MUST invoke this callback (passing the opaque pointer) when
+//done with the fd — it returns the underlying frame buffer to the
+//decoder's internal pool so it can be reused for future frames. If the
+//caller needs the fd to outlive the callback, it must dup() the fd
+//before calling back. Failure to invoke the callback starves the pool
+//and stalls decoding.
+typedef void (*nvmpi_frame_release_cb)(void *opaque);
 
 #ifdef __cplusplus
 extern "C" {
@@ -268,6 +280,52 @@ extern "C" {
 	//Stops the dequeue thread and frees the context. Packets still held in
 	//the pools are NOT freed here — drain them first (see FFmpeg wrapper).
 	int nvmpi_encoder_close(nvmpictx* ctx);
+
+	//--- DMA-BUF fd passthrough (zero-copy path) ---
+
+	//Retrieve one decoded frame as a borrowed DMA-BUF fd instead of copying
+	//pixel data into caller-owned memory (zero-copy alternative to
+	//nvmpi_decoder_get_frame). The fd points to a pitch-linear NV12/YUV420
+	//buffer that has already been VIC-transformed from the decoder's
+	//block-linear capture plane. The caller receives:
+	//  *dmabuf_fd  — the DMA-BUF file descriptor (borrowed, not dup'd)
+	//  *width, *height, *pitch — buffer geometry
+	//  *timestamp  — presentation timestamp in microseconds
+	//  *release    — callback the caller MUST invoke when done with the fd
+	//  *opaque     — cookie to pass to the release callback
+	//The fd is valid only until the release callback is invoked. If the
+	//caller needs it longer (e.g. for encoder input), it must dup() first.
+	//When wait is false: non-blocking, returns -1 when no frame is ready.
+	//When wait is true: blocks up to wait_timeout_ms (default 500ms).
+	//Returns 0 on success, -1 on no frame / timeout.
+	int nvmpi_decoder_get_frame_fd(nvmpictx* ctx,
+		int *dmabuf_fd, int *width, int *height, int *pitch,
+		int64_t *timestamp,
+		nvmpi_frame_release_cb *release, void **opaque, bool wait);
+
+	//Submit one raw frame to the encoder via DMA-BUF fd (zero-copy
+	//alternative to nvmpi_encoder_put_frame). The fd must reference an
+	//NV12 DMA-BUF surface with pitch-linear layout and matching
+	//dimensions. The encoder accesses the buffer directly via
+	//V4L2_MEMORY_DMABUF — no CPU memcpy. Requires use_dmabuf=1 in
+	//nvEncParam at encoder creation time. dmabuf_fd==−1 signals EOS.
+	//Returns 0 on success, negative on error or if already flushing.
+	int nvmpi_encoder_put_frame_fd(nvmpictx* ctx,
+		int dmabuf_fd, int width, int height, int pitch,
+		int64_t timestamp);
+
+	//Allocate a pitch-linear NV12 DMA-BUF surface suitable for passing
+	//to nvmpi_encoder_put_frame_fd. The surface is allocated with
+	//NvBufSurfaceTag_VIDEO_CONVERT so the encoder's VIC hardware can
+	//access it. Returns 0 on success and writes the dmabuf fd to
+	//*dmabuf_fd. On failure returns -1 and *dmabuf_fd is set to -1.
+	int nvmpi_surface_alloc(unsigned int width, unsigned int height,
+		int *dmabuf_fd);
+
+	//Destroy a surface previously allocated with nvmpi_surface_alloc.
+	//Safe to call with dmabuf_fd == -1 (no-op). Returns 0 on success,
+	//-1 on NvBufferDestroy failure.
+	int nvmpi_surface_destroy(int dmabuf_fd);
 
 #ifdef __cplusplus
 }

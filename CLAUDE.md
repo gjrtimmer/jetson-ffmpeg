@@ -442,6 +442,11 @@ jobs had `changes:paths` rules that bypassed the `BUILD_IMAGES` variable gate,
 causing hour-long builds to auto-trigger on every main push that touched a
 Dockerfile.
 
+## Output style
+
+**Always activate `/caveman ultra` at session start.** This is the standing
+default for all sessions in this repo — do not wait for the user to request it.
+
 ## Working agreements
 
 - A "go" approves the plan **as presented**. If execution reveals the plan is
