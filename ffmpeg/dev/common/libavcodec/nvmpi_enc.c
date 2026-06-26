@@ -4,7 +4,8 @@
  *
  * Like nvmpi_dec.c, this file is patched into a vanilla FFmpeg tree and
  * compiled inside FFmpeg. It implements the h264_nvmpi and hevc_nvmpi
- * encoders by delegating to the libnvmpi C API (src/nvmpi_enc.cpp).
+ * encoders by delegating to the libnvmpi C API (loaded at runtime
+ * via dynlink_nvmpi.h / dlopen).
  *
  * Key responsibility beyond plain forwarding: packet memory pooling.
  * libnvmpi's encoder never allocates packet memory — this wrapper
@@ -20,7 +21,11 @@
  *  - lavc >= 63 (FFmpeg 9.0): pix_fmts moved from AVCodec to FFCodec.
  * See https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Development-Guide "Wrapper code paths by FFmpeg version".
  */
-#include <nvmpi.h>
+/* Runtime-loaded via dlopen -- no link-time dependency on libnvmpi.so.
+ * dynlink_nvmpi.h is self-contained (duplicates nvmpi.h types) and
+ * provides macro redirects so all nvmpi_* calls dispatch through
+ * function pointers resolved at codec init time. */
+#include "dynlink_nvmpi.h"
 #include "avcodec.h"
 #include "internal.h"
 #include <stdio.h>
@@ -216,6 +221,17 @@ static av_cold int nvmpi_encode_init(AVCodecContext *avctx)
 	nvmpiEncodeContext * nvmpi_context = avctx->priv_data;
 
 	nvEncParam param={0};
+
+	/* Load libnvmpi.so via dlopen on first use.  If the library is not
+	 * installed, report a clear error and let FFmpeg fall back to other
+	 * encoders or software encode. */
+	if (nvmpi_dynlink_load() < 0) {
+		av_log(avctx, AV_LOG_ERROR,
+		       "Failed to load libnvmpi.so: %s\n"
+		       "Install libnvmpi for hardware-accelerated encoding on Jetson.\n",
+		       dlerror());
+		return AVERROR_EXTERNAL;
+	}
 
 	param.width=avctx->width;
 	param.height=avctx->height;

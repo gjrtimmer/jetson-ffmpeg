@@ -7,8 +7,9 @@
  *   - No bitrate/GOP/profile/level options — only quality
  *   - Uses NvJPEGEncoder, not NvVideoEncoder
  *
- * One source supports FFmpeg 6.0 .. 8.0+ via preprocessor guards:
+ * One source supports FFmpeg 6.0 .. 9.0+ via preprocessor guards:
  *   - LIBAVCODEC_VERSION_MAJOR >= 60: FFCodec + FF_CODEC_ENCODE_CB
+ *   - lavc >= 63 (FFmpeg 9.0): pix_fmts moved from AVCodec to FFCodec.
  *
  * Quality mapping: FFmpeg's global_quality (from -q:v) is in
  * FF_QP2LAMBDA units. We convert: libjpeg_quality = 2 + (31 - qscale) * 98 / 30
@@ -16,7 +17,11 @@
  * -q:v 1 (best) → quality ~100; -q:v 31 (worst) → quality ~2.
  * If no -q:v is set, default quality is 85.
  */
-#include <nvmpi.h>
+/* Runtime-loaded via dlopen -- no link-time dependency on libnvmpi.so.
+ * dynlink_nvmpi.h is self-contained (duplicates nvmpi.h types) and
+ * provides macro redirects so all nvmpi_* calls dispatch through
+ * function pointers resolved at codec init time. */
+#include "dynlink_nvmpi.h"
 #include "avcodec.h"
 #include "internal.h"
 #include <stdio.h>
@@ -31,6 +36,18 @@
 
 #include "encode.h"
 #include "codec_internal.h"
+
+/*
+ * libavcodec 63 (FFmpeg 9.0+): pix_fmts moved from the public AVCodec (.p)
+ * to a direct field on FFCodec in codec_internal.h.
+ */
+#if LIBAVCODEC_VERSION_MAJOR >= 63
+#define NVMPI_MJPEG_ENC_PIXFMTS \
+    .pix_fmts = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NONE}
+#else
+#define NVMPI_MJPEG_ENC_PIXFMTS \
+    .p.pix_fmts = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NONE}
+#endif
 
 /* Private encoder context — wraps the opaque libnvmpi JPEG encoder handle. */
 typedef struct {
@@ -76,6 +93,15 @@ static av_cold int nvmpi_jpegenc_init(AVCodecContext *avctx)
 {
     nvmpiJpegEncContext *s = avctx->priv_data;
     int quality;
+
+    /* Load libnvmpi.so via dlopen on first use. */
+    if (nvmpi_dynlink_load() < 0) {
+        av_log(avctx, AV_LOG_ERROR,
+               "Failed to load libnvmpi.so: %s\n"
+               "Install libnvmpi for hardware-accelerated MJPEG encoding on Jetson.\n",
+               dlerror());
+        return AVERROR_EXTERNAL;
+    }
 
     avctx->pix_fmt = AV_PIX_FMT_YUV420P;
     avctx->color_range = AVCOL_RANGE_JPEG;
@@ -241,10 +267,8 @@ const FFCodec ff_mjpeg_nvmpi_encoder = {
     .init           = nvmpi_jpegenc_init,
     FF_CODEC_ENCODE_CB(nvmpi_jpegenc_encode),
     .close          = nvmpi_jpegenc_close,
-    .p.pix_fmts       = (const enum AVPixelFormat[]) {
-        AV_PIX_FMT_YUV420P,
-        AV_PIX_FMT_NONE
-    },
+    /* libavcodec 63 (FFmpeg 9.0+): pix_fmts moved from AVCodec to FFCodec */
+    NVMPI_MJPEG_ENC_PIXFMTS,
     .p.capabilities   = AV_CODEC_CAP_HARDWARE,
     .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
     .p.wrapper_name   = "nvmpi",
