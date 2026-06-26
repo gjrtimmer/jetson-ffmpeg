@@ -342,6 +342,12 @@ GitHub issues for this project live at **`gjrtimmer/jetson-ffmpeg`**. Use
 `gh issue create -R gjrtimmer/jetson-ffmpeg` (and `gh issue list -R …`, etc.)
 for all issue operations — do not search for the remote or guess the repo slug.
 
+**GitHub is the sole issue tracker.** Never create issues on GitLab — all
+issues, including sub-issues from splitting, are created on GitHub. The only
+exception is GitLab #1 (APT repository licensing). If sub-issues were
+mistakenly created on GitLab, migrate them: create on GitHub, close on GitLab
+with a redirect comment.
+
 **Always label issues on creation.** Every `gh issue create` must include
 `--label` flags for: type (`bug`, `enhancement`, `task`, `refactor`, …),
 area (`area:decoder`, `area:encoder`, `area:libnvmpi`, `area:ffmpeg`), and
@@ -549,6 +555,11 @@ Dockerfile.
   the MR's head pipeline — this unsets auto-merge. On MR branches, either
   let the full pipeline run or wait for the current pipeline to finish
   before pushing docs-only changes.
+- **Arm a pipeline monitor immediately after enabling auto-merge.** When
+  `glab mr merge --auto-merge` succeeds, set up a Monitor for the MR pipeline
+  right away — don't wait for the user to ask. After merge, re-arm for the
+  post-merge main pipeline. The user should never need to ask "do you have a
+  monitor running?"
 - **Verify pipeline monitor targets after MR merge.** When an MR merges, the
   MR pipeline is no longer relevant. Monitor the main branch pipeline
   triggered by the merge commit — specify the exact pipeline ID or branch
