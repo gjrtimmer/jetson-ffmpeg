@@ -69,6 +69,11 @@ struct nvmpictx
 	bool enable_extended_colorformat;
 	bool enableLossless;           //constant QP 0 + High 4:4:4 profile (H.264)
 	bool blocking_mode;            //true: use NvVideoEncoder's DQ thread (only mode implemented)
+	bool dmabuf_external{false};   //true: OUTPUT plane uses V4L2_MEMORY_DMABUF from
+	                               //external DMA-BUF fds (zero-copy encoder input via
+	                               //nvmpi_encoder_put_frame_fd). Set at creation time
+	                               //when nvEncParam.use_dmabuf is non-zero. When false
+	                               //(default), OUTPUT plane uses MMAP and put_frame copies.
 	/* Set to true in nvmpi_create_encoder() after startDQThread succeeds;
 	 * checked in nvmpi_encoder_close() to avoid calling stopDQThread on
 	 * an un-started thread (pthread_join on uninitialized thread = UB).

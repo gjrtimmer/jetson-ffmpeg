@@ -558,6 +558,86 @@ int nvmpi_decoder_get_frame(nvmpictx* ctx, nvFrame* frame, bool wait)
 	return ret;
 }
 
+//Wrapper that pairs a frame buffer with its owning pool for the
+//release callback. Allocated on the heap per get_frame_fd call;
+//freed inside frame_fd_release_impl.
+struct nvmpi_frame_ref {
+	nvmpi_frame_buffer *fb;
+	NVMPI_bufPool<nvmpi_frame_buffer*> *pool;
+};
+
+//Release callback for nvmpi_decoder_get_frame_fd.
+//Returns the borrowed frame buffer to the pool's empty queue so it can
+//be reused by the capture thread for future decoded frames, then frees
+//the nvmpi_frame_ref wrapper.
+/* Allocated in: nvmpi_decoder_get_frame_fd (below) */
+/* Freed in: this function (via delete) */
+static void frame_fd_release_impl(void *opaque)
+{
+	nvmpi_frame_ref *ref = static_cast<nvmpi_frame_ref*>(opaque);
+	if (!ref) return;
+
+	/* Return the frame buffer to the pool's empty queue so the
+	 * capture thread can reuse it for future decoded frames. */
+	if (ref->pool && ref->fb)
+		ref->pool->qEmptyBuf(ref->fb);
+
+	delete ref;
+}
+
+//Public API: zero-copy variant of nvmpi_decoder_get_frame.
+//Returns the next decoded frame as a borrowed DMA-BUF fd instead of
+//copying pixel data. The fd points to a pitch-linear NV12/YUV420
+//buffer that was VIC-transformed from the decoder's block-linear
+//capture plane — the same buffer that get_frame would memcpy from.
+//
+//The caller receives metadata (dimensions, pitch, timestamp) and a
+//release callback+opaque pair. The fd is valid only until the release
+//callback is invoked; if the caller needs it longer (e.g. to pass to
+//an encoder), it must dup() the fd before calling back.
+//
+//Ownership: the frame buffer is borrowed from the pool. Invoking the
+//release callback returns it to the empty queue. Failure to release
+//starves the pool and stalls decoding.
+int nvmpi_decoder_get_frame_fd(nvmpictx* ctx,
+	int *dmabuf_fd, int *width, int *height, int *pitch,
+	int64_t *timestamp,
+	nvmpi_frame_release_cb *release, void **opaque, bool wait)
+{
+	nvmpi_frame_buffer* fb;
+
+	/* Dequeue a filled frame buffer — same path as get_frame. */
+	if (wait)
+		fb = ctx->framePool->dqFilledBuf(
+			std::chrono::milliseconds(ctx->wait_timeout_ms));
+	else
+		fb = ctx->framePool->dqFilledBuf();
+
+	if (!fb) return -1;
+
+	/* Expose the underlying DMA-BUF fd and buffer geometry.
+	 * frame_linesize[0] is the Y plane pitch; for NV12 (2-plane) this
+	 * is also the UV plane pitch (interleaved U/V at half height). */
+	*dmabuf_fd = fb->dst_dma_fd;
+	*width = (int)ctx->output_width;
+	*height = (int)ctx->output_height;
+	*pitch = (int)ctx->frame_linesize[0];
+	*timestamp = (int64_t)fb->timestamp;
+
+	/* Allocate a ref wrapper so the release callback can return this
+	 * specific buffer to this specific pool. The wrapper is freed
+	 * inside frame_fd_release_impl. */
+	/* Allocated here; freed in frame_fd_release_impl() */
+	nvmpi_frame_ref *ref = new nvmpi_frame_ref();
+	ref->fb = fb;
+	ref->pool = ctx->framePool;
+
+	*release = frame_fd_release_impl;
+	*opaque = ref;
+
+	return 0;
+}
+
 //Public API: shut the decoder down and free everything.
 //
 //Reset the decoder pipeline without destroying it (seek / stream restart).

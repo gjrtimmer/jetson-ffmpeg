@@ -39,6 +39,7 @@
 
 #include <stdlib.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <dlfcn.h>
 
 /* ------------------------------------------------------------------ */
@@ -109,6 +110,7 @@ typedef struct _NVENCPARAM {
     unsigned int wait_timeout;
     char enable_cabac;
     char insert_aud;
+    int use_dmabuf;
 } nvEncParam;
 
 /* Decoder creation parameters. */
@@ -146,6 +148,9 @@ typedef struct _NVFRAME {
     time_t timestamp;
 } nvFrame;
 
+/* Release callback for borrowed DMA-BUF fds from get_frame_fd. */
+typedef void (*nvmpi_frame_release_cb)(void *opaque);
+
 /* ------------------------------------------------------------------ */
 /* Function pointer typedefs                                           */
 /* ------------------------------------------------------------------ */
@@ -180,6 +185,18 @@ typedef int       (*fn_nvmpi_jpeg_encoder_put_frame)(nvmpictx *ctx, nvFrame *fra
 typedef int       (*fn_nvmpi_jpeg_encoder_get_packet)(nvmpictx *ctx, nvPacket *packet);
 typedef int       (*fn_nvmpi_jpeg_encoder_close)(nvmpictx *ctx);
 
+/* DMA-BUF fd passthrough (zero-copy) */
+typedef int       (*fn_nvmpi_decoder_get_frame_fd)(nvmpictx *ctx,
+    int *dmabuf_fd, int *width, int *height, int *pitch,
+    int64_t *timestamp, nvmpi_frame_release_cb *release,
+    void **opaque, bool wait);
+typedef int       (*fn_nvmpi_encoder_put_frame_fd)(nvmpictx *ctx,
+    int dmabuf_fd, int width, int height, int pitch,
+    int64_t timestamp);
+typedef int       (*fn_nvmpi_surface_alloc)(unsigned int width,
+    unsigned int height, int *dmabuf_fd);
+typedef int       (*fn_nvmpi_surface_destroy)(int dmabuf_fd);
+
 /* ------------------------------------------------------------------ */
 /* Static function pointers (one set per translation unit)             */
 /* ------------------------------------------------------------------ */
@@ -213,6 +230,12 @@ static fn_nvmpi_create_jpeg_encoder      nvmpi_create_jpeg_encoder_dl;
 static fn_nvmpi_jpeg_encoder_put_frame   nvmpi_jpeg_encoder_put_frame_dl;
 static fn_nvmpi_jpeg_encoder_get_packet  nvmpi_jpeg_encoder_get_packet_dl;
 static fn_nvmpi_jpeg_encoder_close       nvmpi_jpeg_encoder_close_dl;
+
+/* DMA-BUF fd passthrough (zero-copy) */
+static fn_nvmpi_decoder_get_frame_fd    nvmpi_decoder_get_frame_fd_dl;
+static fn_nvmpi_encoder_put_frame_fd    nvmpi_encoder_put_frame_fd_dl;
+static fn_nvmpi_surface_alloc           nvmpi_surface_alloc_dl;
+static fn_nvmpi_surface_destroy         nvmpi_surface_destroy_dl;
 
 /* Library handle (per-TU; dlopen is reference-counted internally). */
 static void *nvmpi_lib_handle;
@@ -281,6 +304,12 @@ static int nvmpi_dynlink_load(void)
     NVMPI_LOAD_SYM(nvmpi_jpeg_encoder_get_packet_dl, nvmpi_jpeg_encoder_get_packet);
     NVMPI_LOAD_SYM(nvmpi_jpeg_encoder_close_dl,      nvmpi_jpeg_encoder_close);
 
+    /* DMA-BUF fd passthrough symbols (zero-copy, issue #60) */
+    NVMPI_LOAD_SYM(nvmpi_decoder_get_frame_fd_dl,   nvmpi_decoder_get_frame_fd);
+    NVMPI_LOAD_SYM(nvmpi_encoder_put_frame_fd_dl,   nvmpi_encoder_put_frame_fd);
+    NVMPI_LOAD_SYM(nvmpi_surface_alloc_dl,           nvmpi_surface_alloc);
+    NVMPI_LOAD_SYM(nvmpi_surface_destroy_dl,         nvmpi_surface_destroy);
+
     return 0;
 
 fail:
@@ -330,5 +359,11 @@ fail:
 #define nvmpi_jpeg_encoder_put_frame  nvmpi_jpeg_encoder_put_frame_dl
 #define nvmpi_jpeg_encoder_get_packet nvmpi_jpeg_encoder_get_packet_dl
 #define nvmpi_jpeg_encoder_close      nvmpi_jpeg_encoder_close_dl
+
+/* DMA-BUF fd passthrough (zero-copy) */
+#define nvmpi_decoder_get_frame_fd    nvmpi_decoder_get_frame_fd_dl
+#define nvmpi_encoder_put_frame_fd    nvmpi_encoder_put_frame_fd_dl
+#define nvmpi_surface_alloc           nvmpi_surface_alloc_dl
+#define nvmpi_surface_destroy         nvmpi_surface_destroy_dl
 
 #endif /* DYNLINK_NVMPI_H */

@@ -150,7 +150,8 @@ set(NVMPI_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_enc_output.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_frame_buffer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_dec_jpeg.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_enc_jpeg.cpp)
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_enc_jpeg.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_surface.cpp)
     
 set(NVMPI_DEP_LIBS ${CMAKE_THREAD_LIBS_INIT} ${LIB_V4L2} ${LIB_NVJPEG} ${LIB_JPEG})
 
