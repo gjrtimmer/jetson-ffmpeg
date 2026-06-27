@@ -36,6 +36,9 @@
 #include "libavutil/log.h"
 #include "libavutil/opt.h"
 #include "libavutil/mem.h"
+/* AVDRMFrameDescriptor: extracts DMA-BUF fd + pitch from DRM_PRIME input
+ * frames for zero-copy encode via nvmpi_encoder_put_frame_fd(). */
+#include "libavutil/hwcontext_drm.h"
 
 #include "version.h"
 
@@ -58,12 +61,14 @@
  * libavcodec 63 (FFmpeg 9.0+): pix_fmts moved from the public AVCodec (.p)
  * to a direct field on FFCodec in codec_internal.h.
  */
+/* libavcodec 63 (FFmpeg 9.0+): pix_fmts moved from AVCodec (.p) to FFCodec.
+ * DRM_PRIME enables zero-copy encode from DMA-BUF fd input frames (#62). */
 #if LIBAVCODEC_VERSION_MAJOR >= 63
 #define NVMPI_ENC_PIXFMTS \
-	.pix_fmts = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NV12, AV_PIX_FMT_NONE}
+	.pix_fmts = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NV12, AV_PIX_FMT_DRM_PRIME, AV_PIX_FMT_NONE}
 #else
 #define NVMPI_ENC_PIXFMTS \
-	.p.pix_fmts = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NV12, AV_PIX_FMT_NONE}
+	.p.pix_fmts = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NV12, AV_PIX_FMT_DRM_PRIME, AV_PIX_FMT_NONE}
 #endif
 
 //libnvmpi exchanges timestamps in microseconds; used with av_rescale_q to
@@ -100,6 +105,7 @@ typedef struct {
 	int lossless;               //enable lossless encoding (H.264 only, QP 0 + High 4:4:4)
 	int wait_timeout;           //blocking-wait ceiling in ms (0 = default 500ms)
 	int encoder_flushing;       //set after EOS was sent to libnvmpi
+	int dmabuf_input;           //set when pix_fmt is DRM_PRIME (zero-copy fd path)
 	int64_t last_bitrate;       //track last-set bitrate for dynamic change detection
 	AVFrame *frame; //tmp frame
 	                //(holds the pulled-but-not-yet-sent input frame in the
@@ -270,6 +276,16 @@ static av_cold int nvmpi_encode_init(AVCodecContext *avctx)
 	//flag would not (the latent bug in the bradcagle/xsacha forks).
 	param.pixFormat = (avctx->pix_fmt == AV_PIX_FMT_NV12) ? NV_PIX_NV12 : NV_PIX_YUV420;
 
+	/* DRM_PRIME input: the DMA-BUF fd arrives via AVDRMFrameDescriptor;
+	 * the underlying pixel format is NV12 (Jetson's native hw layout).
+	 * Set use_dmabuf so libnvmpi creates the encoder with V4L2_MEMORY_DMABUF
+	 * on the OUTPUT plane, enabling zero-copy frame input. */
+	if (avctx->pix_fmt == AV_PIX_FMT_DRM_PRIME) {
+		param.pixFormat = NV_PIX_NV12;
+		param.use_dmabuf = 1;
+		nvmpi_context->dmabuf_input = 1;
+	}
+
 	nvmpi_context->frame = av_frame_alloc();
 	if (!nvmpi_context->frame) return AVERROR(ENOMEM);
 
@@ -312,9 +328,20 @@ static av_cold int nvmpi_encode_init(AVCodecContext *avctx)
 		int i;
 		int ret;
 		int64_t shiftPts = 1000000/param.fps_n;
+
+		/* GLOBAL_HEADER temp encoder must NOT use DMA-BUF mode — it feeds
+		 * CPU-allocated blank frames for SPS/PPS extraction. When the real
+		 * encoder uses DRM_PRIME, temporarily disable use_dmabuf and
+		 * allocate the blank frame as NV12 (DRM_PRIME has no pixel
+		 * description, so av_image_alloc would fail). */
+		int saved_use_dmabuf = param.use_dmabuf;
+		enum AVPixelFormat alloc_fmt = (avctx->pix_fmt == AV_PIX_FMT_DRM_PRIME)
+			? AV_PIX_FMT_NV12 : avctx->pix_fmt;
+		param.use_dmabuf = 0;
+
 		if(avctx->codec->id == AV_CODEC_ID_H264) param.codingType = NV_VIDEO_CodingH264;
 		else param.codingType = NV_VIDEO_CodingHEVC;
-		av_image_alloc(dst, linesize,avctx->width,avctx->height,avctx->pix_fmt,1);
+		av_image_alloc(dst, linesize, avctx->width, avctx->height, alloc_fmt, 1);
 
 		nvmpi_context->ctx = nvmpi_create_encoder(&param);
 		_ctx = nvmpi_context->ctx;
@@ -411,6 +438,9 @@ static av_cold int nvmpi_encode_init(AVCodecContext *avctx)
 		nvmpienc_deinitPktPool(avctx);
 		nvmpi_encoder_close(nvmpi_context->ctx);
 		nvmpi_context->ctx = NULL;
+
+		/* Restore use_dmabuf for the real encoder creation below. */
+		param.use_dmabuf = saved_use_dmabuf;
 	}
 
 	//create the real encoder used for the rest of the session
@@ -473,6 +503,33 @@ static int ff_nvmpi_send_frame(AVCodecContext *avctx,const AVFrame *frame)
 			nvmpi_context->last_bitrate = avctx->bit_rate;
 		}
 
+		/* DRM_PRIME path: extract DMA-BUF fd from AVDRMFrameDescriptor
+		 * and pass directly to the V4L2 encoder via put_frame_fd
+		 * (zero CPU copy). The fd is borrowed from the upstream frame
+		 * — libnvmpi does not take ownership. */
+		if (nvmpi_context->dmabuf_input) {
+			AVDRMFrameDescriptor *desc = (AVDRMFrameDescriptor *)frame->data[0];
+			int64_t ts;
+
+			if (!desc || desc->nb_objects < 1) {
+				av_log(avctx, AV_LOG_ERROR,
+				       "nvmpi: DRM_PRIME frame missing descriptor or objects\n");
+				return AVERROR(EINVAL);
+			}
+
+			ts = av_rescale_q(frame->pts, avctx->time_base, NVENC_TIMEBASE);
+
+			res = nvmpi_encoder_put_frame_fd(nvmpi_context->ctx,
+				desc->objects[0].fd,
+				frame->width, frame->height,
+				desc->layers[0].planes[0].pitch,
+				ts);
+
+			return res < 0 ? res : 0;
+		}
+
+		/* Software frame path: copy plane pointers into nvFrame for
+		 * libnvmpi to memcpy into its V4L2 buffer. */
 		_nvframe.payload[0]=frame->data[0];
 		_nvframe.payload[1]=frame->data[1];
 		_nvframe.payload[2]=frame->data[2];
@@ -485,9 +542,7 @@ static int ff_nvmpi_send_frame(AVCodecContext *avctx,const AVFrame *frame)
 		_nvframe.linesize[1]=frame->linesize[1];
 		_nvframe.linesize[2]=frame->linesize[2];
 
-		//_nvframe.timestamp=frame->pts;
 		_nvframe.timestamp=av_rescale_q(frame->pts, avctx->time_base, NVENC_TIMEBASE);
-		//_nvframe.timestamp=frame->pts*avctx->time_base.num*1000*1000/avctx->time_base.den;
 
 		res=nvmpi_encoder_put_frame(nvmpi_context->ctx,&_nvframe);
 
@@ -496,8 +551,13 @@ static int ff_nvmpi_send_frame(AVCodecContext *avctx,const AVFrame *frame)
 	}
 	else
 	{
+		/* EOS: signal end-of-stream to libnvmpi. DMA-BUF mode uses
+		 * put_frame_fd with fd=-1; software mode uses put_frame(NULL). */
 		nvmpi_context->encoder_flushing = 1;
-		nvmpi_encoder_put_frame(nvmpi_context->ctx,NULL);
+		if (nvmpi_context->dmabuf_input)
+			nvmpi_encoder_put_frame_fd(nvmpi_context->ctx, -1, 0, 0, 0, 0);
+		else
+			nvmpi_encoder_put_frame(nvmpi_context->ctx, NULL);
 	}
 
 	return 0;
@@ -621,7 +681,11 @@ static av_cold int nvmpi_encode_close(AVCodecContext *avctx)
 		if(!nvmpi_context->encoder_flushing)
 		{
 			nvmpi_context->encoder_flushing = 1;
-			nvmpi_encoder_put_frame(nvmpi_context->ctx,NULL);
+			/* DMA-BUF mode: fd=-1 signals EOS; SW mode: NULL frame. */
+			if (nvmpi_context->dmabuf_input)
+				nvmpi_encoder_put_frame_fd(nvmpi_context->ctx, -1, 0, 0, 0, 0);
+			else
+				nvmpi_encoder_put_frame(nvmpi_context->ctx, NULL);
 		}
 		
 		while(1)
