@@ -8,16 +8,25 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
 FF_DIR_ROOT=${1}
 FF_DIR_LIBAVCODEC=${FF_DIR_ROOT}"/libavcodec"
+FF_DIR_LIBAVUTIL=${FF_DIR_ROOT}"/libavutil"
 FF_FILE_CONFIGURE=${FF_DIR_ROOT}"/configure"
 FF_FILE_LIBAVCODEC_MAKEFILE=${FF_DIR_LIBAVCODEC}"/Makefile"
 FF_FILE_LIBAVCODEC_ALLCODECSC=${FF_DIR_LIBAVCODEC}"/allcodecs.c"
 FF_FILE_LIBAVCODEC_VERSIONH=${FF_DIR_LIBAVCODEC}"/version.h"
 FF_FILE_LIBAVCODEC_VERSIONMAJORH=${FF_DIR_LIBAVCODEC}"/version_major.h"
+FF_FILE_LIBAVUTIL_MAKEFILE=${FF_DIR_LIBAVUTIL}"/Makefile"
+FF_FILE_LIBAVUTIL_HWCONTEXTH=${FF_DIR_LIBAVUTIL}"/hwcontext.h"
+FF_FILE_LIBAVUTIL_HWCONTEXTC=${FF_DIR_LIBAVUTIL}"/hwcontext.c"
+FF_FILE_LIBAVUTIL_HWCONTEXT_INTERNALH=${FF_DIR_LIBAVUTIL}"/hwcontext_internal.h"
 FF_LIBAVCODEC_VERSION_MAJOR=0
 BKP_DIR="${REPO_ROOT}/bkp"
 BKP_FILE_CONFIGURE=${BKP_DIR}/configure
 BKP_FILE_LIBAVCODEC_MAKEFILE=${BKP_DIR}/Makefile
 BKP_FILE_LIBAVCODEC_ALLCODECSC=${BKP_DIR}/allcodecs.c
+BKP_FILE_LIBAVUTIL_MAKEFILE=${BKP_DIR}/libavutil_Makefile
+BKP_FILE_LIBAVUTIL_HWCONTEXTH=${BKP_DIR}/hwcontext.h
+BKP_FILE_LIBAVUTIL_HWCONTEXTC=${BKP_DIR}/hwcontext.c
+BKP_FILE_LIBAVUTIL_HWCONTEXT_INTERNALH=${BKP_DIR}/hwcontext_internal.h
 
 if [ ! -d "$FF_DIR_ROOT" ]; then
 	echo "[E]: $FF_DIR_ROOT does not exist or not a directory. You must specify path to ffmpeg sources directory."
@@ -41,6 +50,16 @@ fi
 
 if [ ! -f "$FF_FILE_LIBAVCODEC_ALLCODECSC" ]; then
 	echo "[E]: $FF_FILE_LIBAVCODEC_ALLCODECSC does not exist or not a file. Your ffmpeg sources are not complete or this ffmpeg version not supported by the script yet."
+	exit 1
+fi
+
+if [ ! -d "$FF_DIR_LIBAVUTIL" ]; then
+	echo "[E]: $FF_DIR_LIBAVUTIL does not exist or not a directory. Your ffmpeg sources are not complete or this ffmpeg version not supported by the script yet."
+	exit 1
+fi
+
+if [ ! -f "$FF_FILE_LIBAVUTIL_HWCONTEXTH" ]; then
+	echo "[E]: $FF_FILE_LIBAVUTIL_HWCONTEXTH does not exist. Your ffmpeg sources are not complete."
 	exit 1
 fi
 
@@ -74,6 +93,10 @@ fi
 cp "$FF_FILE_CONFIGURE" "$BKP_FILE_CONFIGURE"
 cp "$FF_FILE_LIBAVCODEC_MAKEFILE" "$BKP_FILE_LIBAVCODEC_MAKEFILE"
 cp "$FF_FILE_LIBAVCODEC_ALLCODECSC" "$BKP_FILE_LIBAVCODEC_ALLCODECSC"
+cp "$FF_FILE_LIBAVUTIL_MAKEFILE" "$BKP_FILE_LIBAVUTIL_MAKEFILE"
+cp "$FF_FILE_LIBAVUTIL_HWCONTEXTH" "$BKP_FILE_LIBAVUTIL_HWCONTEXTH"
+cp "$FF_FILE_LIBAVUTIL_HWCONTEXTC" "$BKP_FILE_LIBAVUTIL_HWCONTEXTC"
+cp "$FF_FILE_LIBAVUTIL_HWCONTEXT_INTERNALH" "$BKP_FILE_LIBAVUTIL_HWCONTEXT_INTERNALH"
 
 ################## MODIFY configure ############################
 function path_ff_configure ()
@@ -289,19 +312,91 @@ return 0;
 }
 ################## MODIFY libavcodec/allcodecs.c ############################
 
+################## MODIFY libavutil (hwcontext_nvmpi) ############################
+function patch_ff_libavutil ()
+{
+#add AV_HWDEVICE_TYPE_NVMPI to AVHWDeviceType enum in hwcontext.h.
+#insert before the closing }; of the enum, anchored from AV_HWDEVICE_TYPE_VULKAN
+#(present in all supported FFmpeg versions 6.0+). Works regardless of how many
+#entries exist between VULKAN and }; (D3D12VA, AMF, OHCODEC in 8.0+).
+if ! grep -q 'AV_HWDEVICE_TYPE_NVMPI' "$BKP_FILE_LIBAVUTIL_HWCONTEXTH"; then
+	cp "$BKP_FILE_LIBAVUTIL_HWCONTEXTH" "$BKP_FILE_LIBAVUTIL_HWCONTEXTH.1"
+	sed -i '/AV_HWDEVICE_TYPE_VULKAN/,/};/{/};/i\    AV_HWDEVICE_TYPE_NVMPI,
+}' "$BKP_FILE_LIBAVUTIL_HWCONTEXTH"
+	if cmp "$BKP_FILE_LIBAVUTIL_HWCONTEXTH" "$BKP_FILE_LIBAVUTIL_HWCONTEXTH.1"; then return 1; fi;
+fi
+
+#add &ff_hwcontext_type_nvmpi to hw_table[] in hwcontext.c.
+#insert before the NULL sentinel, anchored from ff_hwcontext_type_vulkan.
+if ! grep -q 'ff_hwcontext_type_nvmpi' "$BKP_FILE_LIBAVUTIL_HWCONTEXTC"; then
+	cp "$BKP_FILE_LIBAVUTIL_HWCONTEXTC" "$BKP_FILE_LIBAVUTIL_HWCONTEXTC.1"
+	sed -i '/ff_hwcontext_type_vulkan/,/NULL,/{/NULL,/i\#if CONFIG_NVMPI\
+    \&ff_hwcontext_type_nvmpi,\
+#endif
+}' "$BKP_FILE_LIBAVUTIL_HWCONTEXTC"
+	if cmp "$BKP_FILE_LIBAVUTIL_HWCONTEXTC" "$BKP_FILE_LIBAVUTIL_HWCONTEXTC.1"; then return 1; fi;
+fi
+
+#add "nvmpi" to hw_type_names[] in hwcontext.c.
+#insert before the closing }; of the array definition. Anchor on empty brackets
+#hw_type_names[] to avoid matching usage sites like hw_type_names[type].
+if ! grep -q 'AV_HWDEVICE_TYPE_NVMPI.*nvmpi' "$BKP_FILE_LIBAVUTIL_HWCONTEXTC"; then
+	cp "$BKP_FILE_LIBAVUTIL_HWCONTEXTC" "$BKP_FILE_LIBAVUTIL_HWCONTEXTC.1"
+	sed -i '/hw_type_names\[\]/,/};/{/};/i\    [AV_HWDEVICE_TYPE_NVMPI]    = "nvmpi",
+}' "$BKP_FILE_LIBAVUTIL_HWCONTEXTC"
+	if cmp "$BKP_FILE_LIBAVUTIL_HWCONTEXTC" "$BKP_FILE_LIBAVUTIL_HWCONTEXTC.1"; then return 1; fi;
+fi
+
+#add extern declaration for ff_hwcontext_type_nvmpi in hwcontext_internal.h.
+#insert after ff_hwcontext_type_vulkan (present in all supported versions).
+if ! grep -q 'ff_hwcontext_type_nvmpi' "$BKP_FILE_LIBAVUTIL_HWCONTEXT_INTERNALH"; then
+	cp "$BKP_FILE_LIBAVUTIL_HWCONTEXT_INTERNALH" "$BKP_FILE_LIBAVUTIL_HWCONTEXT_INTERNALH.1"
+	sed -i '/ff_hwcontext_type_vulkan/a extern const HWContextType ff_hwcontext_type_nvmpi;' "$BKP_FILE_LIBAVUTIL_HWCONTEXT_INTERNALH"
+	if cmp "$BKP_FILE_LIBAVUTIL_HWCONTEXT_INTERNALH" "$BKP_FILE_LIBAVUTIL_HWCONTEXT_INTERNALH.1"; then return 1; fi;
+fi
+
+#add hwcontext_nvmpi.h to HEADERS in libavutil/Makefile.
+#insert after hwcontext_drm.h line.
+if ! grep -q 'hwcontext_nvmpi.h' "$BKP_FILE_LIBAVUTIL_MAKEFILE"; then
+	cp "$BKP_FILE_LIBAVUTIL_MAKEFILE" "$BKP_FILE_LIBAVUTIL_MAKEFILE.1"
+	sed -i '/hwcontext_drm.h/a\                                 hwcontext_nvmpi.h                          \\' "$BKP_FILE_LIBAVUTIL_MAKEFILE"
+	if cmp "$BKP_FILE_LIBAVUTIL_MAKEFILE" "$BKP_FILE_LIBAVUTIL_MAKEFILE.1"; then return 1; fi;
+fi
+
+#add hwcontext_nvmpi.o to OBJS in libavutil/Makefile.
+#insert after CONFIG_LIBDRM hwcontext_drm.o line.
+if ! grep -q 'hwcontext_nvmpi.o' "$BKP_FILE_LIBAVUTIL_MAKEFILE"; then
+	cp "$BKP_FILE_LIBAVUTIL_MAKEFILE" "$BKP_FILE_LIBAVUTIL_MAKEFILE.1"
+	sed -i '/OBJS-\$(CONFIG_LIBDRM).*hwcontext_drm.o/a OBJS-$(CONFIG_NVMPI)                    += hwcontext_nvmpi.o' "$BKP_FILE_LIBAVUTIL_MAKEFILE"
+	if cmp "$BKP_FILE_LIBAVUTIL_MAKEFILE" "$BKP_FILE_LIBAVUTIL_MAKEFILE.1"; then return 1; fi;
+fi
+
+return 0;
+}
+################## MODIFY libavutil (hwcontext_nvmpi) ############################
+
 if path_ff_configure 2>&1 > /dev/null; then echo "$FF_FILE_CONFIGURE is successfully patched!"; else echo "Patching $FF_FILE_CONFIGURE failed!"; exit 1; fi;
 if path_ff_libavcodec_Makefile 2>&1 > /dev/null; then echo "$FF_FILE_LIBAVCODEC_MAKEFILE is successfully patched!"; else echo "Patching $FF_FILE_LIBAVCODEC_MAKEFILE failed!"; exit 1; fi;
 if path_ff_libavcodec_allcodecsc 2>&1 > /dev/null; then echo "$FF_FILE_LIBAVCODEC_ALLCODECSC is successfully patched!"; else echo "Patching $FF_FILE_LIBAVCODEC_ALLCODECSC failed!"; exit 1; fi;
+if patch_ff_libavutil 2>&1 > /dev/null; then echo "libavutil hwcontext_nvmpi is successfully patched!"; else echo "Patching libavutil failed!"; exit 1; fi;
 
 cp "$BKP_FILE_CONFIGURE" "$FF_FILE_CONFIGURE"
 cp "$BKP_FILE_LIBAVCODEC_MAKEFILE" "$FF_FILE_LIBAVCODEC_MAKEFILE"
 cp "$BKP_FILE_LIBAVCODEC_ALLCODECSC" "$FF_FILE_LIBAVCODEC_ALLCODECSC"
+cp "$BKP_FILE_LIBAVUTIL_MAKEFILE" "$FF_FILE_LIBAVUTIL_MAKEFILE"
+cp "$BKP_FILE_LIBAVUTIL_HWCONTEXTH" "$FF_FILE_LIBAVUTIL_HWCONTEXTH"
+cp "$BKP_FILE_LIBAVUTIL_HWCONTEXTC" "$FF_FILE_LIBAVUTIL_HWCONTEXTC"
+cp "$BKP_FILE_LIBAVUTIL_HWCONTEXT_INTERNALH" "$FF_FILE_LIBAVUTIL_HWCONTEXT_INTERNALH"
 
 #copy nvmpi enc, dec, and dynlink files to ffmpeg libavcodec dir
 cp "${REPO_ROOT}/ffmpeg/dev/common/libavcodec/dynlink_nvmpi.h" ${FF_DIR_LIBAVCODEC}"/dynlink_nvmpi.h"
 cp "${REPO_ROOT}/ffmpeg/dev/common/libavcodec/nvmpi_dec.c" ${FF_DIR_LIBAVCODEC}"/nvmpi_dec.c"
 cp "${REPO_ROOT}/ffmpeg/dev/common/libavcodec/nvmpi_enc.c" ${FF_DIR_LIBAVCODEC}"/nvmpi_enc.c"
 cp "${REPO_ROOT}/ffmpeg/dev/common/libavcodec/nvmpi_enc_jpeg.c" ${FF_DIR_LIBAVCODEC}"/nvmpi_enc_jpeg.c"
+
+#copy hwcontext_nvmpi files to ffmpeg libavutil dir
+cp "${REPO_ROOT}/ffmpeg/dev/common/libavutil/hwcontext_nvmpi.h" ${FF_DIR_LIBAVUTIL}"/hwcontext_nvmpi.h"
+cp "${REPO_ROOT}/ffmpeg/dev/common/libavutil/hwcontext_nvmpi.c" ${FF_DIR_LIBAVUTIL}"/hwcontext_nvmpi.c"
 
 echo "Success!"
 
