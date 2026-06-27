@@ -68,5 +68,5 @@
         }
     },
     "postCreateCommand": "cat /etc/skel/.bashrc /etc/bashrc-custom > ~/.bashrc",
-    "postStartCommand": "brew update && brew upgrade"
+    "postStartCommand": "brew update && brew upgrade -y"
 }
