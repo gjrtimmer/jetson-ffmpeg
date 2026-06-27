@@ -489,9 +489,15 @@ default for all sessions in this repo — do not wait for the user to request it
   user just says "fix #N" or "highest prio issue." The skill encodes branch
   naming, commit conventions, issue communication, and phase gates so they
   aren't repeated by hand.
-- **Subagents default to the cheapest model that holds quality.** Use sonnet
-  for investigation, search, and simple edits; escalate to opus only when
-  reasoning depth demands it. Ladder: sonnet → opus 4.6 → latest opus → fable.
+- **Subagents default to the cheapest model that holds quality — this is a
+  hard rule, not a suggestion.** Start at haiku for pure grunt work (grep,
+  glob, file listing, pipeline status checks, mechanical transforms,
+  search-and-report). Use sonnet for investigation, search, and simple edits.
+  Escalate to opus only when reasoning depth demands it. Ladder:
+  haiku → sonnet → opus 4.6 → latest opus → fable. Always pass `model:`
+  explicitly on Agent calls — never inherit the parent model by default.
+  Wasting tokens on an expensive model for a `glab api` call or file grep
+  is a violation of this rule.
 - **Write specs, design docs, and implementation plans to `.work/`** in the
   repo root (create it if absent) — not `.claude/work/`, `docs/`, or a skill's
   default location. This overrides any skill's default spec path.
