@@ -7,9 +7,8 @@
  * -hwaccel nvmpi works from the ffmpeg command line.
  *
  * No NVIDIA-specific headers are required — libnvmpi handles all V4L2
- * and DMA-BUF management internally. The device context is intentionally
- * minimal: it serves as a type marker for format negotiation, not as a
- * resource manager.
+ * and DMA-BUF management internally. CUDA/EGL state is managed by
+ * hwcontext_nvmpi.c using dlopen (no build-time CUDA dependency).
  */
 
 #ifndef AVUTIL_HWCONTEXT_NVMPI_H
@@ -18,17 +17,40 @@
 /**
  * NVMPI device context.
  *
- * Allocated as AVHWDeviceContext.hwctx. Empty because libnvmpi manages
- * V4L2 device lifecycle internally — no caller-visible state is needed.
- * The struct exists solely to satisfy the HWContextType registration
- * (device_hwctx_size must be non-zero for av_hwdevice_ctx_alloc).
+ * Allocated as AVHWDeviceContext.hwctx. The struct holds optional
+ * CUDA/EGL interop state for DRM_PRIME ↔ CUDA transfers — these
+ * fields are populated lazily on first transfer request and cleaned
+ * up in device_uninit.
+ *
+ * All pointer fields use void* to avoid requiring CUDA/EGL headers.
  */
 typedef struct AVNVMPIDeviceContext {
     /**
-     * Reserved for future use (e.g. device selection when multiple
-     * Jetson decode/encode engines are available). Currently unused.
+     * CUDA interop state — lazy-initialized by nvmpi_cuda_init().
+     * Set to 1 after successful CUDA + EGL initialization.
+     * If CUDA libraries are unavailable, remains 0 and transfers
+     * fall back to the DRM mmap path (CPU readback).
      */
-    int reserved;
+    int cuda_initialized;
+
+    /**
+     * CUDA device ordinal (CUdevice). Always 0 on Jetson
+     * (single integrated GPU). Set by nvmpi_cuda_init().
+     */
+    int cuda_device;
+
+    /**
+     * CUDA context (CUcontext, cast to void*).
+     * Created in nvmpi_cuda_init(); destroyed in nvmpi_cuda_uninit().
+     */
+    void *cuda_ctx;
+
+    /**
+     * EGL display handle (EGLDisplay, cast to void*).
+     * Initialized in nvmpi_cuda_init(); terminated in nvmpi_cuda_uninit().
+     * Used by eglCreateImageKHR to import DMA-BUF fds.
+     */
+    void *egl_display;
 } AVNVMPIDeviceContext;
 
 #endif /* AVUTIL_HWCONTEXT_NVMPI_H */

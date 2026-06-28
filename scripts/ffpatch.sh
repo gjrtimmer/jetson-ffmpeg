@@ -397,6 +397,7 @@ cp "${REPO_ROOT}/ffmpeg/dev/common/libavcodec/nvmpi_enc_jpeg.c" ${FF_DIR_LIBAVCO
 #copy hwcontext_nvmpi files to ffmpeg libavutil dir
 cp "${REPO_ROOT}/ffmpeg/dev/common/libavutil/hwcontext_nvmpi.h" ${FF_DIR_LIBAVUTIL}"/hwcontext_nvmpi.h"
 cp "${REPO_ROOT}/ffmpeg/dev/common/libavutil/hwcontext_nvmpi.c" ${FF_DIR_LIBAVUTIL}"/hwcontext_nvmpi.c"
+cp "${REPO_ROOT}/ffmpeg/dev/common/libavutil/dynlink_nvmpi_cuda.h" ${FF_DIR_LIBAVUTIL}"/dynlink_nvmpi_cuda.h"
 
 echo "Success!"
 
