@@ -588,10 +588,10 @@ index 0000000..7f18a44
 +#endif /* DYNLINK_NVMPI_H */
 diff --git a/libavcodec/nvmpi_dec.c b/libavcodec/nvmpi_dec.c
 new file mode 100644
-index 0000000..6db6b1c
+index 0000000..806cec6
 --- /dev/null
 +++ b/libavcodec/nvmpi_dec.c
-@@ -0,0 +1,879 @@
+@@ -0,0 +1,896 @@
 +/*
 + * nvmpi_dec.c — FFmpeg decoder wrapper for libnvmpi (layer 2 of
 + * jetson-ffmpeg, the FFmpeg integration layer).
@@ -642,6 +642,19 @@ index 0000000..6db6b1c
 +    (((uint32_t)('N')) | ((uint32_t)('V') << 8) | \
 +     ((uint32_t)('1') << 16) | ((uint32_t)('2') << 24))
 +#endif
++
++/* Private DRM format modifier: carries the original NvBufSurface-registered
++ * DMA-BUF fd through dup'd-fd frames.  The decoder dup()s fds for FFmpeg
++ * frame lifetime safety, but the dup'd fd is not registered in
++ * NvBufSurface's internal table.  Downstream consumers that need a
++ * registered fd (e.g. scale_vic filter calling NvBufSurfTransform) extract
++ * the original fd from this modifier.
++ *
++ * Vendor byte 0x4E ("N" for nvmpi) avoids collision with standard
++ * DRM_FORMAT_MOD vendors (0x00–0x0F) and NVIDIA's own (0x03). */
++#define NVMPI_DRM_MOD_VENDOR       0x4EULL
++#define NVMPI_DRM_MOD_ORIG_FD(fd)  \
++    ((NVMPI_DRM_MOD_VENDOR << 56) | ((uint64_t)(unsigned int)(fd)))
 +
 +/*
 + * libavcodec 63 (FFmpeg 9.0+): pix_fmts moved from the public AVCodec (.p)
@@ -1086,10 +1099,14 @@ index 0000000..6db6b1c
 +			return AVERROR(ENOMEM);
 +		}
 +
-+		/* Single DMA-BUF object, one NV12 layer with luma + chroma planes */
++		/* Single DMA-BUF object, one NV12 layer with luma + chroma planes.
++		 * format_modifier carries the original NvBufSurface-registered fd
++		 * so downstream hw filters (scale_vic) can call NvBufSurfTransform
++		 * without hitting the dup'd-fd lookup failure. */
 +		desc->nb_objects = 1;
-+		desc->objects[0].fd   = dup_fd;
-+		desc->objects[0].size = (size_t)pitch * height * 3 / 2;
++		desc->objects[0].fd              = dup_fd;
++		desc->objects[0].size            = (size_t)pitch * height * 3 / 2;
++		desc->objects[0].format_modifier = NVMPI_DRM_MOD_ORIG_FD(dmabuf_fd);
 +
 +		desc->nb_layers = 1;
 +		desc->layers[0].format    = DRM_FORMAT_NV12;
@@ -2731,10 +2748,10 @@ index 0000000..d8938fe
 +#endif /* DYNLINK_NVMPI_VIC_H */
 diff --git a/libavfilter/vf_scale_vic.c b/libavfilter/vf_scale_vic.c
 new file mode 100644
-index 0000000..84c271a
+index 0000000..4cbb893
 --- /dev/null
 +++ b/libavfilter/vf_scale_vic.c
-@@ -0,0 +1,464 @@
+@@ -0,0 +1,482 @@
 +/*
 + * vf_scale_vic.c — Tegra VIC hardware scale/CSC filter for FFmpeg.
 + *
@@ -2801,6 +2818,14 @@ index 0000000..84c271a
 +#ifndef DRM_FORMAT_NV12
 +#define DRM_FORMAT_NV12 0x3231564E
 +#endif
++
++/* Private DRM format modifier: the nvmpi decoder tags dup'd DRM_PRIME
++ * frames with the original NvBufSurface-registered fd so that hardware
++ * consumers can call NvBufSurfTransform (which requires a registered fd).
++ * Must match the definitions in nvmpi_dec.c. */
++#define NVMPI_DRM_MOD_VENDOR           0x4EULL
++#define NVMPI_DRM_MOD_IS_ORIG_FD(mod)  (((mod) >> 56) == NVMPI_DRM_MOD_VENDOR)
++#define NVMPI_DRM_MOD_GET_ORIG_FD(mod) ((int)((mod) & 0xFFFFFFFF))
 +
 +/* Runtime-loaded via dlopen — no link-time dependency on libnvmpi.so.
 + * Only VIC + surface symbols are resolved (not decoder/encoder). */
@@ -3011,7 +3036,17 @@ index 0000000..84c271a
 +        av_frame_free(&in);
 +        return AVERROR(EINVAL);
 +    }
-+    src_fd = in_desc->objects[0].fd;
++
++    /* Prefer the original NvBufSurface-registered fd stashed in
++     * format_modifier by the nvmpi decoder.  The dup'd fd in objects[0].fd
++     * is not registered in NvBufSurface's internal table, so
++     * NvBufSurfaceFromFd would fail on it.  The original fd is valid for
++     * the lifetime of this frame (buf[0] holds the release callback). */
++    if (NVMPI_DRM_MOD_IS_ORIG_FD(in_desc->objects[0].format_modifier)) {
++        src_fd = NVMPI_DRM_MOD_GET_ORIG_FD(in_desc->objects[0].format_modifier);
++    } else {
++        src_fd = in_desc->objects[0].fd;
++    }
 +
 +    /* Get next output buffer from the ring pool */
 +    dst_fd = s->out_fds[s->pool_idx];

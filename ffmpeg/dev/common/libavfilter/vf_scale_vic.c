@@ -65,6 +65,14 @@
 #define DRM_FORMAT_NV12 0x3231564E
 #endif
 
+/* Private DRM format modifier: the nvmpi decoder tags dup'd DRM_PRIME
+ * frames with the original NvBufSurface-registered fd so that hardware
+ * consumers can call NvBufSurfTransform (which requires a registered fd).
+ * Must match the definitions in nvmpi_dec.c. */
+#define NVMPI_DRM_MOD_VENDOR           0x4EULL
+#define NVMPI_DRM_MOD_IS_ORIG_FD(mod)  (((mod) >> 56) == NVMPI_DRM_MOD_VENDOR)
+#define NVMPI_DRM_MOD_GET_ORIG_FD(mod) ((int)((mod) & 0xFFFFFFFF))
+
 /* Runtime-loaded via dlopen — no link-time dependency on libnvmpi.so.
  * Only VIC + surface symbols are resolved (not decoder/encoder). */
 #include "dynlink_nvmpi_vic.h"
@@ -274,7 +282,17 @@ static int scale_vic_filter_frame(AVFilterLink *inlink, AVFrame *in)
         av_frame_free(&in);
         return AVERROR(EINVAL);
     }
-    src_fd = in_desc->objects[0].fd;
+
+    /* Prefer the original NvBufSurface-registered fd stashed in
+     * format_modifier by the nvmpi decoder.  The dup'd fd in objects[0].fd
+     * is not registered in NvBufSurface's internal table, so
+     * NvBufSurfaceFromFd would fail on it.  The original fd is valid for
+     * the lifetime of this frame (buf[0] holds the release callback). */
+    if (NVMPI_DRM_MOD_IS_ORIG_FD(in_desc->objects[0].format_modifier)) {
+        src_fd = NVMPI_DRM_MOD_GET_ORIG_FD(in_desc->objects[0].format_modifier);
+    } else {
+        src_fd = in_desc->objects[0].fd;
+    }
 
     /* Get next output buffer from the ring pool */
     dst_fd = s->out_fds[s->pool_idx];
