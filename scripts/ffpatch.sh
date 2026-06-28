@@ -9,6 +9,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 FF_DIR_ROOT=${1}
 FF_DIR_LIBAVCODEC=${FF_DIR_ROOT}"/libavcodec"
 FF_DIR_LIBAVUTIL=${FF_DIR_ROOT}"/libavutil"
+FF_DIR_LIBAVFILTER=${FF_DIR_ROOT}"/libavfilter"
 FF_FILE_CONFIGURE=${FF_DIR_ROOT}"/configure"
 FF_FILE_LIBAVCODEC_MAKEFILE=${FF_DIR_LIBAVCODEC}"/Makefile"
 FF_FILE_LIBAVCODEC_ALLCODECSC=${FF_DIR_LIBAVCODEC}"/allcodecs.c"
@@ -18,6 +19,8 @@ FF_FILE_LIBAVUTIL_MAKEFILE=${FF_DIR_LIBAVUTIL}"/Makefile"
 FF_FILE_LIBAVUTIL_HWCONTEXTH=${FF_DIR_LIBAVUTIL}"/hwcontext.h"
 FF_FILE_LIBAVUTIL_HWCONTEXTC=${FF_DIR_LIBAVUTIL}"/hwcontext.c"
 FF_FILE_LIBAVUTIL_HWCONTEXT_INTERNALH=${FF_DIR_LIBAVUTIL}"/hwcontext_internal.h"
+FF_FILE_LIBAVFILTER_MAKEFILE=${FF_DIR_LIBAVFILTER}"/Makefile"
+FF_FILE_LIBAVFILTER_ALLFILTERSC=${FF_DIR_LIBAVFILTER}"/allfilters.c"
 FF_LIBAVCODEC_VERSION_MAJOR=0
 BKP_DIR="${REPO_ROOT}/bkp"
 BKP_FILE_CONFIGURE=${BKP_DIR}/configure
@@ -27,6 +30,8 @@ BKP_FILE_LIBAVUTIL_MAKEFILE=${BKP_DIR}/libavutil_Makefile
 BKP_FILE_LIBAVUTIL_HWCONTEXTH=${BKP_DIR}/hwcontext.h
 BKP_FILE_LIBAVUTIL_HWCONTEXTC=${BKP_DIR}/hwcontext.c
 BKP_FILE_LIBAVUTIL_HWCONTEXT_INTERNALH=${BKP_DIR}/hwcontext_internal.h
+BKP_FILE_LIBAVFILTER_MAKEFILE=${BKP_DIR}/libavfilter_Makefile
+BKP_FILE_LIBAVFILTER_ALLFILTERSC=${BKP_DIR}/libavfilter_allfilters.c
 
 if [ ! -d "$FF_DIR_ROOT" ]; then
 	echo "[E]: $FF_DIR_ROOT does not exist or not a directory. You must specify path to ffmpeg sources directory."
@@ -55,6 +60,11 @@ fi
 
 if [ ! -d "$FF_DIR_LIBAVUTIL" ]; then
 	echo "[E]: $FF_DIR_LIBAVUTIL does not exist or not a directory. Your ffmpeg sources are not complete or this ffmpeg version not supported by the script yet."
+	exit 1
+fi
+
+if [ ! -d "$FF_DIR_LIBAVFILTER" ]; then
+	echo "[E]: $FF_DIR_LIBAVFILTER does not exist or not a directory. Your ffmpeg sources are not complete or this ffmpeg version not supported by the script yet."
 	exit 1
 fi
 
@@ -97,6 +107,8 @@ cp "$FF_FILE_LIBAVUTIL_MAKEFILE" "$BKP_FILE_LIBAVUTIL_MAKEFILE"
 cp "$FF_FILE_LIBAVUTIL_HWCONTEXTH" "$BKP_FILE_LIBAVUTIL_HWCONTEXTH"
 cp "$FF_FILE_LIBAVUTIL_HWCONTEXTC" "$BKP_FILE_LIBAVUTIL_HWCONTEXTC"
 cp "$FF_FILE_LIBAVUTIL_HWCONTEXT_INTERNALH" "$BKP_FILE_LIBAVUTIL_HWCONTEXT_INTERNALH"
+cp "$FF_FILE_LIBAVFILTER_MAKEFILE" "$BKP_FILE_LIBAVFILTER_MAKEFILE"
+cp "$FF_FILE_LIBAVFILTER_ALLFILTERSC" "$BKP_FILE_LIBAVFILTER_ALLFILTERSC"
 
 ################## MODIFY configure ############################
 function path_ff_configure ()
@@ -375,10 +387,46 @@ return 0;
 }
 ################## MODIFY libavutil (hwcontext_nvmpi) ############################
 
+################## MODIFY libavfilter (scale_vic filter) #########################
+function patch_ff_libavfilter ()
+{
+#add scale_vic_filter_deps="nvmpi" to configure, after scale_vaapi_filter_deps.
+if ! grep -q 'scale_vic_filter_deps="nvmpi"' "$BKP_FILE_CONFIGURE"; then
+	cp "$BKP_FILE_CONFIGURE" "$BKP_FILE_CONFIGURE.1"
+	sed -i '/scale_vaapi_filter_deps="vaapi"/i scale_vic_filter_deps="nvmpi"' "$BKP_FILE_CONFIGURE"
+	if cmp "$BKP_FILE_CONFIGURE" "$BKP_FILE_CONFIGURE.1"; then return 1; fi;
+fi
+
+#add extern declaration for ff_vf_scale_vic in allfilters.c.
+#FFmpeg 8.0+ (libavfilter >= 11) uses FFFilter; earlier versions use AVFilter.
+#detect the correct type from the existing scale_vaapi declaration.
+if ! grep -q 'ff_vf_scale_vic' "$BKP_FILE_LIBAVFILTER_ALLFILTERSC"; then
+	cp "$BKP_FILE_LIBAVFILTER_ALLFILTERSC" "$BKP_FILE_LIBAVFILTER_ALLFILTERSC.1"
+	if grep -q 'FFFilter.*ff_vf_scale_vaapi' "$BKP_FILE_LIBAVFILTER_ALLFILTERSC"; then
+		sed -i '/ff_vf_scale_vaapi/a extern const FFFilter ff_vf_scale_vic;' "$BKP_FILE_LIBAVFILTER_ALLFILTERSC"
+	else
+		sed -i '/ff_vf_scale_vaapi/a extern const AVFilter ff_vf_scale_vic;' "$BKP_FILE_LIBAVFILTER_ALLFILTERSC"
+	fi
+	if cmp "$BKP_FILE_LIBAVFILTER_ALLFILTERSC" "$BKP_FILE_LIBAVFILTER_ALLFILTERSC.1"; then return 1; fi;
+fi
+
+#add OBJS line for vf_scale_vic.o in libavfilter/Makefile.
+#insert after SCALE_VAAPI_FILTER line.
+if ! grep -q 'SCALE_VIC_FILTER' "$BKP_FILE_LIBAVFILTER_MAKEFILE"; then
+	cp "$BKP_FILE_LIBAVFILTER_MAKEFILE" "$BKP_FILE_LIBAVFILTER_MAKEFILE.1"
+	sed -i '/OBJS-\$(CONFIG_SCALE_VAAPI_FILTER)/a OBJS-$(CONFIG_SCALE_VIC_FILTER)              += vf_scale_vic.o' "$BKP_FILE_LIBAVFILTER_MAKEFILE"
+	if cmp "$BKP_FILE_LIBAVFILTER_MAKEFILE" "$BKP_FILE_LIBAVFILTER_MAKEFILE.1"; then return 1; fi;
+fi
+
+return 0;
+}
+################## MODIFY libavfilter (scale_vic filter) #########################
+
 if path_ff_configure 2>&1 > /dev/null; then echo "$FF_FILE_CONFIGURE is successfully patched!"; else echo "Patching $FF_FILE_CONFIGURE failed!"; exit 1; fi;
 if path_ff_libavcodec_Makefile 2>&1 > /dev/null; then echo "$FF_FILE_LIBAVCODEC_MAKEFILE is successfully patched!"; else echo "Patching $FF_FILE_LIBAVCODEC_MAKEFILE failed!"; exit 1; fi;
 if path_ff_libavcodec_allcodecsc 2>&1 > /dev/null; then echo "$FF_FILE_LIBAVCODEC_ALLCODECSC is successfully patched!"; else echo "Patching $FF_FILE_LIBAVCODEC_ALLCODECSC failed!"; exit 1; fi;
 if patch_ff_libavutil 2>&1 > /dev/null; then echo "libavutil hwcontext_nvmpi is successfully patched!"; else echo "Patching libavutil failed!"; exit 1; fi;
+if patch_ff_libavfilter 2>&1 > /dev/null; then echo "libavfilter scale_vic is successfully patched!"; else echo "Patching libavfilter failed!"; exit 1; fi;
 
 cp "$BKP_FILE_CONFIGURE" "$FF_FILE_CONFIGURE"
 cp "$BKP_FILE_LIBAVCODEC_MAKEFILE" "$FF_FILE_LIBAVCODEC_MAKEFILE"
@@ -387,6 +435,8 @@ cp "$BKP_FILE_LIBAVUTIL_MAKEFILE" "$FF_FILE_LIBAVUTIL_MAKEFILE"
 cp "$BKP_FILE_LIBAVUTIL_HWCONTEXTH" "$FF_FILE_LIBAVUTIL_HWCONTEXTH"
 cp "$BKP_FILE_LIBAVUTIL_HWCONTEXTC" "$FF_FILE_LIBAVUTIL_HWCONTEXTC"
 cp "$BKP_FILE_LIBAVUTIL_HWCONTEXT_INTERNALH" "$FF_FILE_LIBAVUTIL_HWCONTEXT_INTERNALH"
+cp "$BKP_FILE_LIBAVFILTER_MAKEFILE" "$FF_FILE_LIBAVFILTER_MAKEFILE"
+cp "$BKP_FILE_LIBAVFILTER_ALLFILTERSC" "$FF_FILE_LIBAVFILTER_ALLFILTERSC"
 
 #copy nvmpi enc, dec, and dynlink files to ffmpeg libavcodec dir
 cp "${REPO_ROOT}/ffmpeg/dev/common/libavcodec/dynlink_nvmpi.h" ${FF_DIR_LIBAVCODEC}"/dynlink_nvmpi.h"
@@ -398,6 +448,10 @@ cp "${REPO_ROOT}/ffmpeg/dev/common/libavcodec/nvmpi_enc_jpeg.c" ${FF_DIR_LIBAVCO
 cp "${REPO_ROOT}/ffmpeg/dev/common/libavutil/hwcontext_nvmpi.h" ${FF_DIR_LIBAVUTIL}"/hwcontext_nvmpi.h"
 cp "${REPO_ROOT}/ffmpeg/dev/common/libavutil/hwcontext_nvmpi.c" ${FF_DIR_LIBAVUTIL}"/hwcontext_nvmpi.c"
 cp "${REPO_ROOT}/ffmpeg/dev/common/libavutil/dynlink_nvmpi_cuda.h" ${FF_DIR_LIBAVUTIL}"/dynlink_nvmpi_cuda.h"
+
+#copy scale_vic filter files to ffmpeg libavfilter dir
+cp "${REPO_ROOT}/ffmpeg/dev/common/libavfilter/vf_scale_vic.c" ${FF_DIR_LIBAVFILTER}"/vf_scale_vic.c"
+cp "${REPO_ROOT}/ffmpeg/dev/common/libavfilter/dynlink_nvmpi_vic.h" ${FF_DIR_LIBAVFILTER}"/dynlink_nvmpi_vic.h"
 
 echo "Success!"
 

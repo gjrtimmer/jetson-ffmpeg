@@ -327,6 +327,35 @@ extern "C" {
 	//-1 on NvBufferDestroy failure.
 	int nvmpi_surface_destroy(int dmabuf_fd);
 
+	//--- VIC hardware transform (standalone scale/CSC) ---
+
+	//Opaque VIC context handle. Created by nvmpi_vic_create(), destroyed
+	//by nvmpi_vic_close(). Holds the VIC session binding and cached
+	//transform parameters. Must not be shared across threads — each
+	//thread needs its own context (VIC session is thread-local).
+	typedef struct nvmpi_vic_ctx nvmpi_vic_ctx;
+
+	//Create a VIC transform context: binds the VIC engine for the
+	//calling thread via NvBufSurfTransformSetSessionParams (NvUtils) or
+	//NvBufferSessionCreate (legacy). Returns NULL on failure.
+	//Allocated here; freed in nvmpi_vic_close().
+	nvmpi_vic_ctx *nvmpi_vic_create(void);
+
+	//Perform a VIC hardware scale/CSC transform between two DMA-BUF
+	//surfaces. Both fds must reference valid NV12 DMA-BUF buffers
+	//(e.g. from nvmpi_surface_alloc or decoder output). The VIC engine
+	//handles scaling, block-linear ↔ pitch-linear conversion, and
+	//color-space conversion in hardware with zero CPU copies.
+	//Returns 0 on success, -1 on error.
+	int nvmpi_vic_transform(nvmpi_vic_ctx *ctx,
+		int src_fd, int dst_fd,
+		unsigned int src_w, unsigned int src_h,
+		unsigned int dst_w, unsigned int dst_h);
+
+	//Destroy a VIC context and release the VIC session. Safe to call
+	//with NULL (no-op). Freed here; allocated in nvmpi_vic_create().
+	void nvmpi_vic_close(nvmpi_vic_ctx *ctx);
+
 #ifdef __cplusplus
 }
 #endif
