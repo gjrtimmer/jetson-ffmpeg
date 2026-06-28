@@ -580,10 +580,10 @@ index 0000000..7f18a44
 +#endif /* DYNLINK_NVMPI_H */
 diff --git a/libavcodec/nvmpi_dec.c b/libavcodec/nvmpi_dec.c
 new file mode 100644
-index 0000000..c8c3af0
+index 0000000..6db6b1c
 --- /dev/null
 +++ b/libavcodec/nvmpi_dec.c
-@@ -0,0 +1,835 @@
+@@ -0,0 +1,879 @@
 +/*
 + * nvmpi_dec.c — FFmpeg decoder wrapper for libnvmpi (layer 2 of
 + * jetson-ffmpeg, the FFmpeg integration layer).
@@ -812,6 +812,17 @@ index 0000000..c8c3af0
 +	choices[nchoices++] = AV_PIX_FMT_DRM_PRIME;
 +	choices[nchoices] = AV_PIX_FMT_NONE;
 +
++	/* -hwaccel nvmpi: when an NVMPI hardware device context is attached,
++	 * auto-select DRM_PRIME output for zero-copy decode. The hw_device_ctx
++	 * is set by FFmpeg's command-line hwaccel machinery before codec init.
++	 * This has highest priority in the format negotiation chain. */
++	if (avctx->hw_device_ctx) {
++		AVHWDeviceContext *device_ctx =
++			(AVHWDeviceContext *)avctx->hw_device_ctx->data;
++		if (device_ctx->type == AV_HWDEVICE_TYPE_NVMPI)
++			avctx->pix_fmt = AV_PIX_FMT_DRM_PRIME;
++	}
++
 +	if(nvmpi_context->output_format != AV_PIX_FMT_NONE)
 +	{
 +		avctx->pix_fmt = nvmpi_context->output_format;
@@ -856,6 +867,39 @@ index 0000000..c8c3af0
 +		default:
 +			av_log(avctx, AV_LOG_ERROR, "Invalid Pix_FMT for NVMPI: only YUV420P, YUVJ420P, NV12, P010LE and DRM_PRIME are supported\n");
 +			return AVERROR_INVALIDDATA;
++	}
++
++	/* Create hw_frames_ctx when an NVMPI hwaccel device is attached and
++	 * the final output format is DRM_PRIME. This tells downstream filters
++	 * and encoders that frames are DRM_PRIME-wrapped DMA-BUF surfaces
++	 * with NV12 software layout. Created after format negotiation so
++	 * -output_format can override -hwaccel if both are specified. */
++	if (avctx->hw_device_ctx && avctx->pix_fmt == AV_PIX_FMT_DRM_PRIME) {
++		AVHWDeviceContext *device_ctx =
++			(AVHWDeviceContext *)avctx->hw_device_ctx->data;
++		if (device_ctx->type == AV_HWDEVICE_TYPE_NVMPI) {
++			avctx->hw_frames_ctx = av_hwframe_ctx_alloc(avctx->hw_device_ctx);
++			if (!avctx->hw_frames_ctx) {
++				av_log(avctx, AV_LOG_ERROR,
++				       "nvmpi: failed to allocate hw_frames_ctx\n");
++				return AVERROR(ENOMEM);
++			}
++
++			AVHWFramesContext *frames_ctx =
++				(AVHWFramesContext *)avctx->hw_frames_ctx->data;
++			frames_ctx->format    = AV_PIX_FMT_DRM_PRIME;
++			frames_ctx->sw_format = AV_PIX_FMT_NV12;
++			frames_ctx->width     = avctx->width;
++			frames_ctx->height    = avctx->height;
++
++			int ret = av_hwframe_ctx_init(avctx->hw_frames_ctx);
++			if (ret < 0) {
++				av_log(avctx, AV_LOG_ERROR,
++				       "nvmpi: failed to init hw_frames_ctx: %d\n", ret);
++				av_buffer_unref(&avctx->hw_frames_ctx);
++				return ret;
++			}
++		}
 +	}
 +
 +    if (nvmpi_context->resize_expr && sscanf(nvmpi_context->resize_expr, "%dx%d",
@@ -2540,3 +2584,244 @@ index 0000000..7814ed2
 +    .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
 +    .p.wrapper_name   = "nvmpi",
 +};
+diff --git a/libavutil/Makefile b/libavutil/Makefile
+index 4711f8c..b529d78 100644
+--- a/libavutil/Makefile
++++ b/libavutil/Makefile
+@@ -43,6 +43,7 @@ HEADERS = adler32.h                                                     \
+           hwcontext_cuda.h                                              \
+           hwcontext_d3d11va.h                                           \
+           hwcontext_drm.h                                               \
++                                 hwcontext_nvmpi.h                          \
+           hwcontext_dxva2.h                                             \
+           hwcontext_qsv.h                                               \
+           hwcontext_mediacodec.h                                        \
+@@ -192,6 +193,7 @@ OBJS-$(CONFIG_CUDA)                     += hwcontext_cuda.o
+ OBJS-$(CONFIG_D3D11VA)                  += hwcontext_d3d11va.o
+ OBJS-$(CONFIG_DXVA2)                    += hwcontext_dxva2.o
+ OBJS-$(CONFIG_LIBDRM)                   += hwcontext_drm.o
++OBJS-$(CONFIG_NVMPI)                    += hwcontext_nvmpi.o
+ OBJS-$(CONFIG_MACOS_KPERF)              += macos_kperf.o
+ OBJS-$(CONFIG_MEDIACODEC)               += hwcontext_mediacodec.o
+ OBJS-$(CONFIG_OPENCL)                   += hwcontext_opencl.o
+diff --git a/libavutil/hwcontext.c b/libavutil/hwcontext.c
+index 0ef3479..3996aba 100644
+--- a/libavutil/hwcontext.c
++++ b/libavutil/hwcontext.c
+@@ -62,6 +62,9 @@ static const HWContextType * const hw_table[] = {
+ #endif
+ #if CONFIG_VULKAN
+     &ff_hwcontext_type_vulkan,
++#endif
++#if CONFIG_NVMPI
++    &ff_hwcontext_type_nvmpi,
+ #endif
+     NULL,
+ };
+@@ -78,6 +81,7 @@ static const char *const hw_type_names[] = {
+     [AV_HWDEVICE_TYPE_VIDEOTOOLBOX] = "videotoolbox",
+     [AV_HWDEVICE_TYPE_MEDIACODEC] = "mediacodec",
+     [AV_HWDEVICE_TYPE_VULKAN] = "vulkan",
++    [AV_HWDEVICE_TYPE_NVMPI]    = "nvmpi",
+ };
+ 
+ enum AVHWDeviceType av_hwdevice_find_type_by_name(const char *name)
+diff --git a/libavutil/hwcontext.h b/libavutil/hwcontext.h
+index 7ff08c8..60dfba7 100644
+--- a/libavutil/hwcontext.h
++++ b/libavutil/hwcontext.h
+@@ -37,6 +37,7 @@ enum AVHWDeviceType {
+     AV_HWDEVICE_TYPE_OPENCL,
+     AV_HWDEVICE_TYPE_MEDIACODEC,
+     AV_HWDEVICE_TYPE_VULKAN,
++    AV_HWDEVICE_TYPE_NVMPI,
+ };
+ 
+ typedef struct AVHWDeviceInternal AVHWDeviceInternal;
+diff --git a/libavutil/hwcontext_internal.h b/libavutil/hwcontext_internal.h
+index e626649..5e62428 100644
+--- a/libavutil/hwcontext_internal.h
++++ b/libavutil/hwcontext_internal.h
+@@ -174,5 +174,6 @@ extern const HWContextType ff_hwcontext_type_vdpau;
+ extern const HWContextType ff_hwcontext_type_videotoolbox;
+ extern const HWContextType ff_hwcontext_type_mediacodec;
+ extern const HWContextType ff_hwcontext_type_vulkan;
++extern const HWContextType ff_hwcontext_type_nvmpi;
+ 
+ #endif /* AVUTIL_HWCONTEXT_INTERNAL_H */
+diff --git a/libavutil/hwcontext_nvmpi.c b/libavutil/hwcontext_nvmpi.c
+new file mode 100644
+index 0000000..1ff62ef
+--- /dev/null
++++ b/libavutil/hwcontext_nvmpi.c
+@@ -0,0 +1,130 @@
++/*
++ * hwcontext_nvmpi.c — FFmpeg hardware device context for NVIDIA Jetson
++ * NVMPI (V4L2 M2M) decode/encode via libnvmpi.
++ *
++ * This file is patched into a vanilla FFmpeg source tree (libavutil/)
++ * by scripts/ffpatch.sh. It registers AV_HWDEVICE_TYPE_NVMPI, enabling
++ * -hwaccel nvmpi from the command line.
++ *
++ * Design: intentionally thin. libnvmpi manages all V4L2 device and
++ * DMA-BUF buffer lifecycle — this hwcontext only provides:
++ *   - device type registration (so -hwaccel nvmpi is recognized)
++ *   - format constraints (DRM_PRIME hw format, NV12/YUV420P sw formats)
++ *   - transfer format negotiation (for sw readback of hw frames)
++ *
++ * The decoder/encoder codec wrappers (nvmpi_dec.c / nvmpi_enc.c) check
++ * for hw_device_ctx type NVMPI and auto-select DRM_PRIME output/input.
++ */
++
++#include "config.h"
++#include "hwcontext.h"
++#include "hwcontext_internal.h"
++#include "hwcontext_nvmpi.h"
++#include "pixfmt.h"
++#include "mem.h"
++
++/* ------------------------------------------------------------------ */
++/* Device context                                                      */
++/* ------------------------------------------------------------------ */
++
++/**
++ * Create an NVMPI hardware device context.
++ *
++ * Succeeds unconditionally — V4L2 device lifecycle is managed inside
++ * libnvmpi (per-codec, not per-device-context). The @p device parameter
++ * is currently ignored; a future extension could use it to select a
++ * specific V4L2 M2M device node (e.g. "/dev/nvhost-nvdec").
++ */
++static int nvmpi_device_create(AVHWDeviceContext *ctx, const char *device,
++                               AVDictionary *opts, int flags)
++{
++    /* No-op: libnvmpi opens /dev/nvhost-nvdec and /dev/nvhost-msenc
++     * internally when a decoder/encoder is created. The hwdevice ctx
++     * exists purely as a type marker for format negotiation. */
++    return 0;
++}
++
++/* ------------------------------------------------------------------ */
++/* Frame constraints                                                   */
++/* ------------------------------------------------------------------ */
++
++/**
++ * Report supported formats and resolution limits.
++ *
++ * Hardware format: AV_PIX_FMT_DRM_PRIME (DMA-BUF fd wrapped in
++ * AVDRMFrameDescriptor). Software formats: NV12 (Jetson's native hw
++ * layout) and YUV420P (VIC-converted). Min resolution 16×16 matches
++ * the NVDEC hardware minimum block size.
++ */
++static int nvmpi_frames_get_constraints(AVHWDeviceContext *hwdev,
++                                        const void *hwconfig,
++                                        AVHWFramesConstraints *constraints)
++{
++    constraints->min_width  = 16;
++    constraints->min_height = 16;
++
++    /* Allocated here; freed by av_hwframe_constraints_free in libavutil */
++    constraints->valid_hw_formats =
++        av_malloc_array(2, sizeof(enum AVPixelFormat));
++    if (!constraints->valid_hw_formats)
++        return AVERROR(ENOMEM);
++    constraints->valid_hw_formats[0] = AV_PIX_FMT_DRM_PRIME;
++    constraints->valid_hw_formats[1] = AV_PIX_FMT_NONE;
++
++    /* Allocated here; freed by av_hwframe_constraints_free in libavutil */
++    constraints->valid_sw_formats =
++        av_malloc_array(3, sizeof(enum AVPixelFormat));
++    if (!constraints->valid_sw_formats)
++        return AVERROR(ENOMEM);
++    constraints->valid_sw_formats[0] = AV_PIX_FMT_NV12;
++    constraints->valid_sw_formats[1] = AV_PIX_FMT_YUV420P;
++    constraints->valid_sw_formats[2] = AV_PIX_FMT_NONE;
++
++    return 0;
++}
++
++/* ------------------------------------------------------------------ */
++/* Transfer format negotiation                                         */
++/* ------------------------------------------------------------------ */
++
++/**
++ * Report formats available for hw↔sw transfer.
++ *
++ * Returns ctx->sw_format — the caller-configured software layout.
++ * Actual DMA-BUF mmap transfer is handled by the DRM hwcontext's
++ * map_from path (DRM_PRIME frames are interoperable with the DRM
++ * hwcontext transfer machinery).
++ */
++static int nvmpi_transfer_get_formats(AVHWFramesContext *ctx,
++                                      enum AVHWFrameTransferDirection dir,
++                                      enum AVPixelFormat **formats)
++{
++    /* Allocated here; freed by caller (av_hwframe_transfer_get_formats) */
++    enum AVPixelFormat *fmts = av_malloc_array(2, sizeof(*fmts));
++    if (!fmts)
++        return AVERROR(ENOMEM);
++    fmts[0] = ctx->sw_format;
++    fmts[1] = AV_PIX_FMT_NONE;
++    *formats = fmts;
++    return 0;
++}
++
++/* ------------------------------------------------------------------ */
++/* HWContextType registration                                          */
++/* ------------------------------------------------------------------ */
++
++const HWContextType ff_hwcontext_type_nvmpi = {
++    .type                   = AV_HWDEVICE_TYPE_NVMPI,
++    .name                   = "NVMPI",
++
++    .device_hwctx_size      = sizeof(AVNVMPIDeviceContext),
++
++    .device_create          = nvmpi_device_create,
++    .frames_get_constraints = nvmpi_frames_get_constraints,
++    .transfer_get_formats   = nvmpi_transfer_get_formats,
++
++    .pix_fmts = (const enum AVPixelFormat[]) {
++        AV_PIX_FMT_DRM_PRIME,
++        AV_PIX_FMT_NONE,
++    },
++};
+diff --git a/libavutil/hwcontext_nvmpi.h b/libavutil/hwcontext_nvmpi.h
+new file mode 100644
+index 0000000..e597b2a
+--- /dev/null
++++ b/libavutil/hwcontext_nvmpi.h
+@@ -0,0 +1,34 @@
++/*
++ * hwcontext_nvmpi.h — FFmpeg hardware device context for NVIDIA Jetson
++ * NVMPI (V4L2 M2M) decode/encode via libnvmpi.
++ *
++ * This file is patched into a vanilla FFmpeg source tree (libavutil/)
++ * by scripts/ffpatch.sh. It registers AV_HWDEVICE_TYPE_NVMPI so that
++ * -hwaccel nvmpi works from the ffmpeg command line.
++ *
++ * No NVIDIA-specific headers are required — libnvmpi handles all V4L2
++ * and DMA-BUF management internally. The device context is intentionally
++ * minimal: it serves as a type marker for format negotiation, not as a
++ * resource manager.
++ */
++
++#ifndef AVUTIL_HWCONTEXT_NVMPI_H
++#define AVUTIL_HWCONTEXT_NVMPI_H
++
++/**
++ * NVMPI device context.
++ *
++ * Allocated as AVHWDeviceContext.hwctx. Empty because libnvmpi manages
++ * V4L2 device lifecycle internally — no caller-visible state is needed.
++ * The struct exists solely to satisfy the HWContextType registration
++ * (device_hwctx_size must be non-zero for av_hwdevice_ctx_alloc).
++ */
++typedef struct AVNVMPIDeviceContext {
++    /**
++     * Reserved for future use (e.g. device selection when multiple
++     * Jetson decode/encode engines are available). Currently unused.
++     */
++    int reserved;
++} AVNVMPIDeviceContext;
++
++#endif /* AVUTIL_HWCONTEXT_NVMPI_H */

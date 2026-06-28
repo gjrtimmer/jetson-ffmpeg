@@ -226,6 +226,17 @@ static int nvmpi_init_decoder(AVCodecContext *avctx)
 	choices[nchoices++] = AV_PIX_FMT_DRM_PRIME;
 	choices[nchoices] = AV_PIX_FMT_NONE;
 
+	/* -hwaccel nvmpi: when an NVMPI hardware device context is attached,
+	 * auto-select DRM_PRIME output for zero-copy decode. The hw_device_ctx
+	 * is set by FFmpeg's command-line hwaccel machinery before codec init.
+	 * This has highest priority in the format negotiation chain. */
+	if (avctx->hw_device_ctx) {
+		AVHWDeviceContext *device_ctx =
+			(AVHWDeviceContext *)avctx->hw_device_ctx->data;
+		if (device_ctx->type == AV_HWDEVICE_TYPE_NVMPI)
+			avctx->pix_fmt = AV_PIX_FMT_DRM_PRIME;
+	}
+
 	if(nvmpi_context->output_format != AV_PIX_FMT_NONE)
 	{
 		avctx->pix_fmt = nvmpi_context->output_format;
@@ -270,6 +281,39 @@ static int nvmpi_init_decoder(AVCodecContext *avctx)
 		default:
 			av_log(avctx, AV_LOG_ERROR, "Invalid Pix_FMT for NVMPI: only YUV420P, YUVJ420P, NV12, P010LE and DRM_PRIME are supported\n");
 			return AVERROR_INVALIDDATA;
+	}
+
+	/* Create hw_frames_ctx when an NVMPI hwaccel device is attached and
+	 * the final output format is DRM_PRIME. This tells downstream filters
+	 * and encoders that frames are DRM_PRIME-wrapped DMA-BUF surfaces
+	 * with NV12 software layout. Created after format negotiation so
+	 * -output_format can override -hwaccel if both are specified. */
+	if (avctx->hw_device_ctx && avctx->pix_fmt == AV_PIX_FMT_DRM_PRIME) {
+		AVHWDeviceContext *device_ctx =
+			(AVHWDeviceContext *)avctx->hw_device_ctx->data;
+		if (device_ctx->type == AV_HWDEVICE_TYPE_NVMPI) {
+			avctx->hw_frames_ctx = av_hwframe_ctx_alloc(avctx->hw_device_ctx);
+			if (!avctx->hw_frames_ctx) {
+				av_log(avctx, AV_LOG_ERROR,
+				       "nvmpi: failed to allocate hw_frames_ctx\n");
+				return AVERROR(ENOMEM);
+			}
+
+			AVHWFramesContext *frames_ctx =
+				(AVHWFramesContext *)avctx->hw_frames_ctx->data;
+			frames_ctx->format    = AV_PIX_FMT_DRM_PRIME;
+			frames_ctx->sw_format = AV_PIX_FMT_NV12;
+			frames_ctx->width     = avctx->width;
+			frames_ctx->height    = avctx->height;
+
+			int ret = av_hwframe_ctx_init(avctx->hw_frames_ctx);
+			if (ret < 0) {
+				av_log(avctx, AV_LOG_ERROR,
+				       "nvmpi: failed to init hw_frames_ctx: %d\n", ret);
+				av_buffer_unref(&avctx->hw_frames_ctx);
+				return ret;
+			}
+		}
 	}
 
     if (nvmpi_context->resize_expr && sscanf(nvmpi_context->resize_expr, "%dx%d",
