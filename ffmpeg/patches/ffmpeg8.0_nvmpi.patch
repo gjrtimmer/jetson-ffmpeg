@@ -2604,6 +2604,393 @@ index ee77e51..d3dfc42 100644
  OBJS-$(CONFIG_MACOS_KPERF)              += macos_kperf.o
  OBJS-$(CONFIG_MEDIACODEC)               += hwcontext_mediacodec.o
  OBJS-$(CONFIG_OHCODEC)                  += hwcontext_oh.o
+diff --git a/libavutil/dynlink_nvmpi_cuda.h b/libavutil/dynlink_nvmpi_cuda.h
+new file mode 100644
+index 0000000..1e6f385
+--- /dev/null
++++ b/libavutil/dynlink_nvmpi_cuda.h
+@@ -0,0 +1,381 @@
++/*
++ * dynlink_nvmpi_cuda.h -- Runtime lazy-loading of CUDA + EGL for
++ *                         DRM_PRIME ↔ CUDA interop on NVIDIA Jetson.
++ *
++ * Used by hwcontext_nvmpi.c (libavutil) to transfer frames between
++ * AV_PIX_FMT_DRM_PRIME and AV_PIX_FMT_CUDA without CPU copies.
++ *
++ * Interop path:
++ *   DMA-BUF fd → eglCreateImageKHR(EGL_LINUX_DMA_BUF_EXT)
++ *              → cuGraphicsEGLRegisterImage
++ *              → cuGraphicsResourceGetMappedEglFrame → CUdeviceptr
++ *              → cuMemcpy2D (device-to-device, block-linear→pitch-linear)
++ *
++ * Two shared libraries are loaded at runtime:
++ *   - libEGL.so    — EGL display + DMA-BUF image import
++ *   - libcuda.so   — CUDA driver API + EGL interop
++ *
++ * No build-time dependency on CUDA SDK or EGL SDK — all types are
++ * defined here with ABI-compatible layouts.  The header is fully
++ * self-contained (no #include of CUDA or EGL headers).
++ *
++ * Load sequence: same as dynlink_nvmpi.h — idempotent, no dlclose,
++ * per-TU static pointers.  EGL extension functions (eglCreateImageKHR,
++ * eglDestroyImageKHR) are resolved via eglGetProcAddress because they
++ * are KHR extensions not exported by all libEGL builds.
++ */
++#ifndef DYNLINK_NVMPI_CUDA_H
++#define DYNLINK_NVMPI_CUDA_H
++
++#include <dlfcn.h>
++#include <stddef.h>
++
++/* ------------------------------------------------------------------ */
++/* EGL type definitions (ABI-compatible with EGL/egl.h + eglext.h)     */
++/* ------------------------------------------------------------------ */
++
++typedef void          *nvmpi_EGLDisplay;
++typedef void          *nvmpi_EGLImageKHR;
++typedef int            nvmpi_EGLint;
++typedef unsigned int   nvmpi_EGLBoolean;
++typedef unsigned int   nvmpi_EGLenum;
++typedef void          *nvmpi_EGLClientBuffer;
++
++/* EGL constants */
++#define NVMPI_EGL_DEFAULT_DISPLAY       ((nvmpi_EGLDisplay)0)
++#define NVMPI_EGL_NO_CONTEXT            ((void *)0)
++#define NVMPI_EGL_NO_IMAGE_KHR          ((nvmpi_EGLImageKHR)0)
++#define NVMPI_EGL_TRUE                  1
++#define NVMPI_EGL_FALSE                 0
++
++/* EGL_EXT_image_dma_buf_import constants */
++#define NVMPI_EGL_LINUX_DMA_BUF_EXT     0x3270
++#define NVMPI_EGL_LINUX_DRM_FOURCC_EXT  0x3271
++#define NVMPI_EGL_DMA_BUF_PLANE0_FD_EXT         0x3272
++#define NVMPI_EGL_DMA_BUF_PLANE0_OFFSET_EXT     0x3273
++#define NVMPI_EGL_DMA_BUF_PLANE0_PITCH_EXT      0x3274
++#define NVMPI_EGL_DMA_BUF_PLANE1_FD_EXT         0x3278
++#define NVMPI_EGL_DMA_BUF_PLANE1_OFFSET_EXT     0x3279
++#define NVMPI_EGL_DMA_BUF_PLANE1_PITCH_EXT      0x327A
++
++/* DRM fourcc for NV12: 'N' | 'V' << 8 | '1' << 16 | '2' << 24 */
++#define NVMPI_DRM_FORMAT_NV12  0x3231564E
++
++/* EGL misc */
++#define NVMPI_EGL_WIDTH                 0x3057
++#define NVMPI_EGL_HEIGHT                0x3056
++#define NVMPI_EGL_NONE                  0x3038
++
++/* ------------------------------------------------------------------ */
++/* CUDA driver API type definitions (ABI-compatible with cuda.h)       */
++/* ------------------------------------------------------------------ */
++
++typedef int                     nvmpi_CUresult;
++typedef int                     nvmpi_CUdevice;
++typedef struct CUctx_st        *nvmpi_CUcontext;
++#if defined(__LP64__) || defined(_WIN64)
++typedef unsigned long long      nvmpi_CUdeviceptr;
++#else
++typedef unsigned int            nvmpi_CUdeviceptr;
++#endif
++typedef struct CUgraphicsResource_st *nvmpi_CUgraphicsResource;
++typedef struct CUarray_st      *nvmpi_CUarray;
++
++/* CUDA success code */
++#define NVMPI_CUDA_SUCCESS  0
++
++/* CUmemorytype values */
++#define NVMPI_CU_MEMORYTYPE_HOST    0x01
++#define NVMPI_CU_MEMORYTYPE_DEVICE  0x02
++
++/* CU_GRAPHICS_REGISTER_FLAGS */
++#define NVMPI_CU_GRAPHICS_REGISTER_FLAGS_NONE       0x00
++#define NVMPI_CU_GRAPHICS_REGISTER_FLAGS_READ_ONLY  0x01
++
++/* CUDA_MEMCPY2D — ABI-compatible with CUDA_MEMCPY2D_v2 in cuda.h.
++ * Only DEVICE↔DEVICE and HOST↔DEVICE copies are used;
++ * array fields are set to NULL. */
++typedef struct nvmpi_CUDA_MEMCPY2D {
++    size_t srcXInBytes;
++    size_t srcY;
++    unsigned int srcMemoryType; /* nvmpi_CU_MEMORYTYPE_* */
++    const void *srcHost;
++    nvmpi_CUdeviceptr srcDevice;
++    nvmpi_CUarray srcArray;
++    size_t srcPitch;
++
++    size_t dstXInBytes;
++    size_t dstY;
++    unsigned int dstMemoryType;
++    void *dstHost;
++    nvmpi_CUdeviceptr dstDevice;
++    nvmpi_CUarray dstArray;
++    size_t dstPitch;
++
++    size_t WidthInBytes;
++    size_t Height;
++} nvmpi_CUDA_MEMCPY2D;
++
++/* ------------------------------------------------------------------ */
++/* CUeglFrame — ABI-compatible with CUeglFrame_v1 in cudaEGL.h.       */
++/*                                                                     */
++/* For CU_EGL_FRAME_TYPE_PITCH, frame.pPitch[i] is a CUdeviceptr      */
++/* cast to void* — the CUDA device address of plane i.                 */
++/* ------------------------------------------------------------------ */
++
++#define NVMPI_MAX_PLANES 3
++
++typedef enum {
++    NVMPI_CU_EGL_FRAME_TYPE_ARRAY = 0,
++    NVMPI_CU_EGL_FRAME_TYPE_PITCH = 1
++} nvmpi_CUeglFrameType;
++
++/* CUeglColorFormat — only values used by NV12/YUV420P decode */
++#define NVMPI_CU_EGL_COLOR_FORMAT_YUV420_PLANAR     0x00
++#define NVMPI_CU_EGL_COLOR_FORMAT_YUV420_SEMIPLANAR 0x01
++
++typedef struct nvmpi_CUeglFrame {
++    union {
++        nvmpi_CUarray pArray[NVMPI_MAX_PLANES];
++        void         *pPitch[NVMPI_MAX_PLANES];
++    } frame;
++    unsigned int width;
++    unsigned int height;
++    unsigned int depth;
++    unsigned int pitch;
++    unsigned int planeCount;
++    unsigned int numChannels;
++    nvmpi_CUeglFrameType frameType;
++    unsigned int eglColorFormat;  /* CUeglColorFormat enum */
++    unsigned int cuFormat;        /* CUarray_format enum */
++} nvmpi_CUeglFrame;
++
++/* ------------------------------------------------------------------ */
++/* EGL function pointer typedefs                                       */
++/* ------------------------------------------------------------------ */
++
++typedef nvmpi_EGLDisplay  (*fn_eglGetDisplay)(void *display_id);
++typedef nvmpi_EGLBoolean  (*fn_eglInitialize)(nvmpi_EGLDisplay dpy,
++                               nvmpi_EGLint *major, nvmpi_EGLint *minor);
++typedef nvmpi_EGLBoolean  (*fn_eglTerminate)(nvmpi_EGLDisplay dpy);
++typedef nvmpi_EGLint      (*fn_eglGetError)(void);
++typedef void             *(*fn_eglGetProcAddress)(const char *procname);
++
++/* KHR extensions — resolved via eglGetProcAddress at load time */
++typedef nvmpi_EGLImageKHR (*fn_eglCreateImageKHR)(nvmpi_EGLDisplay dpy,
++                               void *ctx, nvmpi_EGLenum target,
++                               nvmpi_EGLClientBuffer buffer,
++                               const nvmpi_EGLint *attrib_list);
++typedef nvmpi_EGLBoolean  (*fn_eglDestroyImageKHR)(nvmpi_EGLDisplay dpy,
++                               nvmpi_EGLImageKHR image);
++
++/* ------------------------------------------------------------------ */
++/* CUDA driver API function pointer typedefs                           */
++/* ------------------------------------------------------------------ */
++
++typedef nvmpi_CUresult (*fn_cuInit)(unsigned int flags);
++typedef nvmpi_CUresult (*fn_cuDeviceGet)(nvmpi_CUdevice *dev, int ordinal);
++typedef nvmpi_CUresult (*fn_cuCtxCreate)(nvmpi_CUcontext *pctx,
++                           unsigned int flags, nvmpi_CUdevice dev);
++typedef nvmpi_CUresult (*fn_cuCtxDestroy)(nvmpi_CUcontext ctx);
++typedef nvmpi_CUresult (*fn_cuCtxPushCurrent)(nvmpi_CUcontext ctx);
++typedef nvmpi_CUresult (*fn_cuCtxPopCurrent)(nvmpi_CUcontext *pctx);
++
++/* CUDA-EGL interop (from cudaEGL.h, exported by libcuda.so) */
++typedef nvmpi_CUresult (*fn_cuGraphicsEGLRegisterImage)(
++                           nvmpi_CUgraphicsResource *pCudaResource,
++                           nvmpi_EGLImageKHR image,
++                           unsigned int flags);
++typedef nvmpi_CUresult (*fn_cuGraphicsUnregisterResource)(
++                           nvmpi_CUgraphicsResource resource);
++typedef nvmpi_CUresult (*fn_cuGraphicsResourceGetMappedEglFrame)(
++                           nvmpi_CUeglFrame *eglFrame,
++                           nvmpi_CUgraphicsResource resource,
++                           unsigned int index, unsigned int mipLevel);
++
++/* Memory operations */
++typedef nvmpi_CUresult (*fn_cuMemcpy2D)(const nvmpi_CUDA_MEMCPY2D *pCopy);
++typedef nvmpi_CUresult (*fn_cuMemAlloc)(nvmpi_CUdeviceptr *dptr,
++                           size_t bytesize);
++typedef nvmpi_CUresult (*fn_cuMemFree)(nvmpi_CUdeviceptr dptr);
++typedef nvmpi_CUresult (*fn_cuMemAllocPitch)(nvmpi_CUdeviceptr *dptr,
++                           size_t *pPitch, size_t WidthInBytes,
++                           size_t Height, unsigned int ElementSizeBytes);
++
++/* ------------------------------------------------------------------ */
++/* Static function pointers (one set per translation unit)             */
++/* ------------------------------------------------------------------ */
++
++/* EGL */
++static fn_eglGetDisplay         eglGetDisplay_dl;
++static fn_eglInitialize         eglInitialize_dl;
++static fn_eglTerminate          eglTerminate_dl;
++static fn_eglGetError           eglGetError_dl;
++static fn_eglGetProcAddress     eglGetProcAddress_dl;
++static fn_eglCreateImageKHR     eglCreateImageKHR_dl;
++static fn_eglDestroyImageKHR    eglDestroyImageKHR_dl;
++
++/* CUDA core */
++static fn_cuInit                cuInit_dl;
++static fn_cuDeviceGet           cuDeviceGet_dl;
++static fn_cuCtxCreate           cuCtxCreate_dl;
++static fn_cuCtxDestroy          cuCtxDestroy_dl;
++static fn_cuCtxPushCurrent      cuCtxPushCurrent_dl;
++static fn_cuCtxPopCurrent       cuCtxPopCurrent_dl;
++
++/* CUDA-EGL interop */
++static fn_cuGraphicsEGLRegisterImage        cuGraphicsEGLRegisterImage_dl;
++static fn_cuGraphicsUnregisterResource      cuGraphicsUnregisterResource_dl;
++static fn_cuGraphicsResourceGetMappedEglFrame cuGraphicsResourceGetMappedEglFrame_dl;
++
++/* CUDA memory */
++static fn_cuMemcpy2D            cuMemcpy2D_dl;
++static fn_cuMemAlloc            cuMemAlloc_dl;
++static fn_cuMemFree             cuMemFree_dl;
++static fn_cuMemAllocPitch       cuMemAllocPitch_dl;
++
++static void *nvmpi_egl_lib_handle;
++static void *nvmpi_cuda_lib_handle;
++
++/* ------------------------------------------------------------------ */
++/* Loader                                                              */
++/* ------------------------------------------------------------------ */
++
++#define NVMPI_CUDA_LOAD_SYM(handle, ptr, name) do {                 \
++    *(void **)&(ptr) = dlsym(handle, #name);                        \
++    if (!(ptr)) goto fail;                                          \
++} while (0)
++
++/*
++ * Load libEGL.so and resolve base + KHR extension symbols.
++ * Returns 0 on success, -1 on failure.  Idempotent.
++ */
++static int nvmpi_egl_dynlink_load(void)
++{
++    if (nvmpi_egl_lib_handle)
++        return 0;
++
++    nvmpi_egl_lib_handle = dlopen("libEGL.so.1", RTLD_LAZY);
++    if (!nvmpi_egl_lib_handle)
++        nvmpi_egl_lib_handle = dlopen("libEGL.so", RTLD_LAZY);
++    if (!nvmpi_egl_lib_handle)
++        return -1;
++
++    /* Base EGL functions — direct dlsym */
++    NVMPI_CUDA_LOAD_SYM(nvmpi_egl_lib_handle, eglGetDisplay_dl,     eglGetDisplay);
++    NVMPI_CUDA_LOAD_SYM(nvmpi_egl_lib_handle, eglInitialize_dl,     eglInitialize);
++    NVMPI_CUDA_LOAD_SYM(nvmpi_egl_lib_handle, eglTerminate_dl,      eglTerminate);
++    NVMPI_CUDA_LOAD_SYM(nvmpi_egl_lib_handle, eglGetError_dl,       eglGetError);
++    NVMPI_CUDA_LOAD_SYM(nvmpi_egl_lib_handle, eglGetProcAddress_dl, eglGetProcAddress);
++
++    /* KHR extensions — must use eglGetProcAddress because some libEGL
++     * builds (e.g. Mesa) do not export these directly. */
++    eglCreateImageKHR_dl  = (fn_eglCreateImageKHR)eglGetProcAddress_dl("eglCreateImageKHR");
++    eglDestroyImageKHR_dl = (fn_eglDestroyImageKHR)eglGetProcAddress_dl("eglDestroyImageKHR");
++    if (!eglCreateImageKHR_dl || !eglDestroyImageKHR_dl)
++        goto fail;
++
++    return 0;
++
++fail:
++    dlclose(nvmpi_egl_lib_handle);
++    nvmpi_egl_lib_handle = NULL;
++    return -1;
++}
++
++/*
++ * Load libcuda.so and resolve CUDA driver API + EGL interop symbols.
++ * Returns 0 on success, -1 on failure.  Idempotent.
++ *
++ * Uses versioned symbol names (_v2) where the CUDA driver API has
++ * evolved the ABI (cuCtxCreate, cuCtxDestroy, cuCtxPushCurrent,
++ * cuCtxPopCurrent, cuMemcpy2D, cuMemAlloc, cuMemFree).
++ */
++static int nvmpi_cuda_dynlink_load(void)
++{
++    if (nvmpi_cuda_lib_handle)
++        return 0;
++
++    nvmpi_cuda_lib_handle = dlopen("libcuda.so.1", RTLD_LAZY);
++    if (!nvmpi_cuda_lib_handle)
++        nvmpi_cuda_lib_handle = dlopen("libcuda.so", RTLD_LAZY);
++    if (!nvmpi_cuda_lib_handle)
++        return -1;
++
++    /* Core CUDA driver API */
++    NVMPI_CUDA_LOAD_SYM(nvmpi_cuda_lib_handle, cuInit_dl,           cuInit);
++    NVMPI_CUDA_LOAD_SYM(nvmpi_cuda_lib_handle, cuDeviceGet_dl,      cuDeviceGet);
++
++    /* Versioned symbols (_v2) — ABI change between CUDA driver versions */
++    NVMPI_CUDA_LOAD_SYM(nvmpi_cuda_lib_handle, cuCtxCreate_dl,      cuCtxCreate_v2);
++    NVMPI_CUDA_LOAD_SYM(nvmpi_cuda_lib_handle, cuCtxDestroy_dl,     cuCtxDestroy_v2);
++    NVMPI_CUDA_LOAD_SYM(nvmpi_cuda_lib_handle, cuCtxPushCurrent_dl, cuCtxPushCurrent_v2);
++    NVMPI_CUDA_LOAD_SYM(nvmpi_cuda_lib_handle, cuCtxPopCurrent_dl,  cuCtxPopCurrent_v2);
++
++    /* CUDA-EGL interop — no _v2 suffix for these */
++    NVMPI_CUDA_LOAD_SYM(nvmpi_cuda_lib_handle, cuGraphicsEGLRegisterImage_dl,
++                         cuGraphicsEGLRegisterImage);
++    NVMPI_CUDA_LOAD_SYM(nvmpi_cuda_lib_handle, cuGraphicsUnregisterResource_dl,
++                         cuGraphicsUnregisterResource);
++    NVMPI_CUDA_LOAD_SYM(nvmpi_cuda_lib_handle, cuGraphicsResourceGetMappedEglFrame_dl,
++                         cuGraphicsResourceGetMappedEglFrame);
++
++    /* Memory operations — versioned */
++    NVMPI_CUDA_LOAD_SYM(nvmpi_cuda_lib_handle, cuMemcpy2D_dl,       cuMemcpy2D_v2);
++    NVMPI_CUDA_LOAD_SYM(nvmpi_cuda_lib_handle, cuMemAlloc_dl,       cuMemAlloc_v2);
++    NVMPI_CUDA_LOAD_SYM(nvmpi_cuda_lib_handle, cuMemFree_dl,        cuMemFree_v2);
++    NVMPI_CUDA_LOAD_SYM(nvmpi_cuda_lib_handle, cuMemAllocPitch_dl,  cuMemAllocPitch_v2);
++
++    return 0;
++
++fail:
++    dlclose(nvmpi_cuda_lib_handle);
++    nvmpi_cuda_lib_handle = NULL;
++    return -1;
++}
++
++/*
++ * Load both EGL and CUDA libraries.
++ * Returns 0 on success, -1 if either fails.  Idempotent.
++ */
++static int nvmpi_cuda_dynlink_load_all(void)
++{
++    if (nvmpi_egl_dynlink_load() < 0)
++        return -1;
++    if (nvmpi_cuda_dynlink_load() < 0)
++        return -1;
++    return 0;
++}
++
++/* ------------------------------------------------------------------ */
++/* Macro redirects — call sites use these names, hiding the _dl suffix */
++/* ------------------------------------------------------------------ */
++
++/* EGL */
++#define nvmpi_eglGetDisplay         eglGetDisplay_dl
++#define nvmpi_eglInitialize         eglInitialize_dl
++#define nvmpi_eglTerminate          eglTerminate_dl
++#define nvmpi_eglGetError           eglGetError_dl
++#define nvmpi_eglCreateImageKHR     eglCreateImageKHR_dl
++#define nvmpi_eglDestroyImageKHR    eglDestroyImageKHR_dl
++
++/* CUDA core */
++#define nvmpi_cuInit                cuInit_dl
++#define nvmpi_cuDeviceGet           cuDeviceGet_dl
++#define nvmpi_cuCtxCreate           cuCtxCreate_dl
++#define nvmpi_cuCtxDestroy          cuCtxDestroy_dl
++#define nvmpi_cuCtxPushCurrent      cuCtxPushCurrent_dl
++#define nvmpi_cuCtxPopCurrent       cuCtxPopCurrent_dl
++
++/* CUDA-EGL interop */
++#define nvmpi_cuGraphicsEGLRegisterImage        cuGraphicsEGLRegisterImage_dl
++#define nvmpi_cuGraphicsUnregisterResource      cuGraphicsUnregisterResource_dl
++#define nvmpi_cuGraphicsResourceGetMappedEglFrame cuGraphicsResourceGetMappedEglFrame_dl
++
++/* CUDA memory */
++#define nvmpi_cuMemcpy2D            cuMemcpy2D_dl
++#define nvmpi_cuMemAlloc            cuMemAlloc_dl
++#define nvmpi_cuMemFree             cuMemFree_dl
++#define nvmpi_cuMemAllocPitch       cuMemAllocPitch_dl
++
++#endif /* DYNLINK_NVMPI_CUDA_H */
 diff --git a/libavutil/hwcontext.c b/libavutil/hwcontext.c
 index 83bd745..5ce7d98 100644
 --- a/libavutil/hwcontext.c
@@ -2652,10 +3039,10 @@ index dcfdc20..8c7ac36 100644
  
 diff --git a/libavutil/hwcontext_nvmpi.c b/libavutil/hwcontext_nvmpi.c
 new file mode 100644
-index 0000000..1ff62ef
+index 0000000..44811f1
 --- /dev/null
 +++ b/libavutil/hwcontext_nvmpi.c
-@@ -0,0 +1,130 @@
+@@ -0,0 +1,482 @@
 +/*
 + * hwcontext_nvmpi.c — FFmpeg hardware device context for NVIDIA Jetson
 + * NVMPI (V4L2 M2M) decode/encode via libnvmpi.
@@ -2664,11 +3051,22 @@ index 0000000..1ff62ef
 + * by scripts/ffpatch.sh. It registers AV_HWDEVICE_TYPE_NVMPI, enabling
 + * -hwaccel nvmpi from the command line.
 + *
-+ * Design: intentionally thin. libnvmpi manages all V4L2 device and
-+ * DMA-BUF buffer lifecycle — this hwcontext only provides:
++ * Design: libnvmpi manages all V4L2 device and DMA-BUF buffer lifecycle.
++ * This hwcontext provides:
 + *   - device type registration (so -hwaccel nvmpi is recognized)
 + *   - format constraints (DRM_PRIME hw format, NV12/YUV420P sw formats)
 + *   - transfer format negotiation (for sw readback of hw frames)
++ *   - DRM_PRIME -> CUDA transfer via EGL interop (zero CPU-copy)
++ *
++ * CUDA interop path:
++ *   DMA-BUF fd (from AVDRMFrameDescriptor)
++ *     -> eglCreateImageKHR(EGL_LINUX_DMA_BUF_EXT)
++ *     -> cuGraphicsEGLRegisterImage -> cuGraphicsResourceGetMappedEglFrame
++ *     -> cuMemcpy2D device-to-device (block-linear -> pitch-linear)
++ *     -> AV_PIX_FMT_CUDA AVFrame
++ *
++ * EGL and CUDA libraries are loaded at runtime via dlopen (see
++ * dynlink_nvmpi_cuda.h) — no build-time dependency on CUDA SDK.
 + *
 + * The decoder/encoder codec wrappers (nvmpi_dec.c / nvmpi_enc.c) check
 + * for hw_device_ctx type NVMPI and auto-select DRM_PRIME output/input.
@@ -2680,6 +3078,298 @@ index 0000000..1ff62ef
 +#include "hwcontext_nvmpi.h"
 +#include "pixfmt.h"
 +#include "mem.h"
++#include "log.h"
++#include "imgutils.h"
++#include "pixdesc.h"
++
++/* DRM_PRIME frame descriptor access */
++#include "hwcontext_drm.h"
++
++/* Runtime CUDA + EGL symbol loading — no build-time CUDA dependency */
++#include "dynlink_nvmpi_cuda.h"
++
++/* ------------------------------------------------------------------ */
++/* CUDA interop state — stored in AVNVMPIDeviceContext                  */
++/* ------------------------------------------------------------------ */
++
++/*
++ * Lazy-initialize CUDA + EGL on first transfer request.
++ *
++ * Creates an EGL display and CUDA context that persist for the lifetime
++ * of the AVHWDeviceContext.  Thread safety: the FFmpeg hwcontext layer
++ * serializes device_create and device_uninit, and transfer_data calls
++ * are serialized by the caller (single decode thread).
++ *
++ * Returns 0 on success, AVERROR on failure.
++ */
++static int nvmpi_cuda_init(AVHWDeviceContext *ctx)
++{
++    AVNVMPIDeviceContext *hwctx = ctx->hwctx;
++    nvmpi_CUdevice cu_dev;
++    nvmpi_CUcontext dummy;
++    nvmpi_EGLint egl_major, egl_minor;
++
++    if (hwctx->cuda_initialized)
++        return 0;
++
++    /* Load CUDA + EGL shared libraries via dlopen */
++    if (nvmpi_cuda_dynlink_load_all() < 0) {
++        av_log(ctx, AV_LOG_ERROR, "nvmpi: failed to load CUDA/EGL "
++               "libraries — CUDA interop unavailable\n");
++        return AVERROR_EXTERNAL;
++    }
++
++    /* Initialize EGL display (headless, no surface needed).
++     * Allocated here; terminated in nvmpi_cuda_uninit(). */
++    hwctx->egl_display = nvmpi_eglGetDisplay(NVMPI_EGL_DEFAULT_DISPLAY);
++    if (!hwctx->egl_display) {
++        av_log(ctx, AV_LOG_ERROR, "nvmpi: eglGetDisplay failed\n");
++        return AVERROR_EXTERNAL;
++    }
++
++    if (!nvmpi_eglInitialize(hwctx->egl_display, &egl_major, &egl_minor)) {
++        av_log(ctx, AV_LOG_ERROR, "nvmpi: eglInitialize failed "
++               "(error 0x%x)\n", nvmpi_eglGetError());
++        hwctx->egl_display = NULL;
++        return AVERROR_EXTERNAL;
++    }
++    av_log(ctx, AV_LOG_DEBUG, "nvmpi: EGL %d.%d initialized\n",
++           egl_major, egl_minor);
++
++    /* Initialize CUDA driver and create context on device 0
++     * (Jetson has one integrated GPU). */
++    if (nvmpi_cuInit(0) != NVMPI_CUDA_SUCCESS) {
++        av_log(ctx, AV_LOG_ERROR, "nvmpi: cuInit failed\n");
++        goto fail_egl;
++    }
++
++    if (nvmpi_cuDeviceGet(&cu_dev, 0) != NVMPI_CUDA_SUCCESS) {
++        av_log(ctx, AV_LOG_ERROR, "nvmpi: cuDeviceGet(0) failed\n");
++        goto fail_egl;
++    }
++
++    /* Flags=0: default scheduling, no special flags.
++     * Created here; destroyed in nvmpi_cuda_uninit(). */
++    if (nvmpi_cuCtxCreate(&hwctx->cuda_ctx, 0, cu_dev) != NVMPI_CUDA_SUCCESS) {
++        av_log(ctx, AV_LOG_ERROR, "nvmpi: cuCtxCreate failed\n");
++        goto fail_egl;
++    }
++
++    /* Pop context from thread-local stack — we push/pop around each
++     * transfer to stay compatible with any other CUDA contexts. */
++    nvmpi_cuCtxPopCurrent(&dummy);
++
++    hwctx->cuda_device = cu_dev;
++    hwctx->cuda_initialized = 1;
++    av_log(ctx, AV_LOG_DEBUG, "nvmpi: CUDA context created on device %d\n",
++           cu_dev);
++    return 0;
++
++fail_egl:
++    /* Clean up EGL on CUDA init failure */
++    nvmpi_eglTerminate(hwctx->egl_display);
++    hwctx->egl_display = NULL;
++    return AVERROR_EXTERNAL;
++}
++
++/*
++ * Tear down CUDA context and EGL display.
++ * Called from nvmpi_device_uninit when the hwdevice is freed.
++ * Safe to call even if CUDA was never initialized.
++ */
++static void nvmpi_cuda_uninit(AVHWDeviceContext *ctx)
++{
++    AVNVMPIDeviceContext *hwctx = ctx->hwctx;
++
++    if (!hwctx->cuda_initialized)
++        return;
++
++    /* Freed here; created in nvmpi_cuda_init() */
++    if (hwctx->cuda_ctx) {
++        nvmpi_cuCtxDestroy(hwctx->cuda_ctx);
++        hwctx->cuda_ctx = NULL;
++    }
++
++    /* Freed here; created in nvmpi_cuda_init() */
++    if (hwctx->egl_display) {
++        nvmpi_eglTerminate(hwctx->egl_display);
++        hwctx->egl_display = NULL;
++    }
++
++    hwctx->cuda_initialized = 0;
++}
++
++/* ------------------------------------------------------------------ */
++/* DRM_PRIME -> CUDA transfer                                          */
++/* ------------------------------------------------------------------ */
++
++/*
++ * Transfer one DRM_PRIME frame to a CUDA device allocation.
++ *
++ * Steps:
++ *   1. Extract DMA-BUF fd + geometry from AVDRMFrameDescriptor
++ *   2. Create EGLImageKHR from DMA-BUF fd (EGL_LINUX_DMA_BUF_EXT)
++ *   3. Register EGL image with CUDA -> CUgraphicsResource
++ *   4. Map -> CUeglFrame (plane device pointers)
++ *   5. cuMemcpy2D device->device per plane into dst AVFrame
++ *   6. Unregister + destroy EGL image (per-frame, not cached —
++ *      the DMA-BUF fd changes each frame)
++ *
++ * dst must be a CUDA AVFrame with data[0] = Y plane CUdeviceptr,
++ * data[1] = UV plane CUdeviceptr (NV12), allocated by caller.
++ */
++static int nvmpi_transfer_drm_to_cuda(AVHWFramesContext *hwfc,
++                                       AVFrame *dst, const AVFrame *src)
++{
++    AVHWDeviceContext *dev_ctx = hwfc->device_ctx;
++    AVNVMPIDeviceContext *hwctx = dev_ctx->hwctx;
++    const AVDRMFrameDescriptor *drm_desc;
++    nvmpi_EGLImageKHR egl_image = NVMPI_EGL_NO_IMAGE_KHR;
++    nvmpi_CUgraphicsResource cu_res = NULL;
++    nvmpi_CUeglFrame egl_frame;
++    nvmpi_CUcontext dummy;
++    nvmpi_CUresult cu_err;
++    int ret = 0;
++    int fd, width, height, stride;
++    unsigned int p;
++
++    /* Validate DRM frame descriptor from decoder */
++    drm_desc = (const AVDRMFrameDescriptor *)src->data[0];
++    if (!drm_desc || drm_desc->nb_objects < 1) {
++        av_log(dev_ctx, AV_LOG_ERROR, "nvmpi: invalid DRM frame descriptor\n");
++        return AVERROR(EINVAL);
++    }
++
++    /* Step 1: Extract DMA-BUF geometry.
++     * For NV12: single DMA-BUF object, two layers (Y + UV). */
++    fd     = drm_desc->objects[0].fd;
++    width  = src->width;
++    height = src->height;
++
++    /* Compute stride from first layer, first plane */
++    stride = 0;
++    if (drm_desc->nb_layers > 0 && drm_desc->layers[0].nb_planes > 0)
++        stride = drm_desc->layers[0].planes[0].pitch;
++    if (stride <= 0)
++        stride = width;  /* fallback */
++
++    /* EGL attrib list for DMA-BUF import.
++     * Plane 0 = Y, Plane 1 = UV (at offset stride * height for NV12). */
++    {
++        nvmpi_EGLint attribs[] = {
++            NVMPI_EGL_WIDTH,                    width,
++            NVMPI_EGL_HEIGHT,                   height,
++            NVMPI_EGL_LINUX_DRM_FOURCC_EXT,     NVMPI_DRM_FORMAT_NV12,
++            NVMPI_EGL_DMA_BUF_PLANE0_FD_EXT,   fd,
++            NVMPI_EGL_DMA_BUF_PLANE0_OFFSET_EXT, 0,
++            NVMPI_EGL_DMA_BUF_PLANE0_PITCH_EXT,  stride,
++            /* UV plane (NV12: interleaved UV at offset = stride * height) */
++            NVMPI_EGL_DMA_BUF_PLANE1_FD_EXT,   fd,
++            NVMPI_EGL_DMA_BUF_PLANE1_OFFSET_EXT, stride * height,
++            NVMPI_EGL_DMA_BUF_PLANE1_PITCH_EXT,  stride,
++            NVMPI_EGL_NONE
++        };
++
++        /* Step 2: Create EGL image from DMA-BUF.
++         * Created here; destroyed in cleanup below. */
++        egl_image = nvmpi_eglCreateImageKHR(hwctx->egl_display,
++                                             NVMPI_EGL_NO_CONTEXT,
++                                             NVMPI_EGL_LINUX_DMA_BUF_EXT,
++                                             NULL, attribs);
++    }
++
++    if (egl_image == NVMPI_EGL_NO_IMAGE_KHR) {
++        av_log(dev_ctx, AV_LOG_ERROR, "nvmpi: eglCreateImageKHR failed "
++               "(error 0x%x) for %dx%d fd=%d\n",
++               nvmpi_eglGetError(), width, height, fd);
++        return AVERROR_EXTERNAL;
++    }
++
++    /* Push CUDA context for this thread */
++    nvmpi_cuCtxPushCurrent(hwctx->cuda_ctx);
++
++    /* Step 3: Register EGL image with CUDA.
++     * Created here; unregistered in cleanup below. */
++    cu_err = nvmpi_cuGraphicsEGLRegisterImage(
++        &cu_res, egl_image, NVMPI_CU_GRAPHICS_REGISTER_FLAGS_READ_ONLY);
++    if (cu_err != NVMPI_CUDA_SUCCESS) {
++        av_log(dev_ctx, AV_LOG_ERROR, "nvmpi: cuGraphicsEGLRegisterImage "
++               "failed (CUresult %d)\n", cu_err);
++        ret = AVERROR_EXTERNAL;
++        goto cleanup;
++    }
++
++    /* Step 4: Get mapped EGL frame with CUDA device pointers */
++    cu_err = nvmpi_cuGraphicsResourceGetMappedEglFrame(
++        &egl_frame, cu_res, 0, 0);
++    if (cu_err != NVMPI_CUDA_SUCCESS) {
++        av_log(dev_ctx, AV_LOG_ERROR, "nvmpi: "
++               "cuGraphicsResourceGetMappedEglFrame failed "
++               "(CUresult %d)\n", cu_err);
++        ret = AVERROR_EXTERNAL;
++        goto cleanup;
++    }
++
++    /* Verify we got pitch-linear planes (not CUDA arrays) */
++    if (egl_frame.frameType != NVMPI_CU_EGL_FRAME_TYPE_PITCH) {
++        av_log(dev_ctx, AV_LOG_ERROR, "nvmpi: EGL frame is array type, "
++               "expected pitch (type=%d)\n", egl_frame.frameType);
++        ret = AVERROR_EXTERNAL;
++        goto cleanup;
++    }
++
++    /* Step 5: cuMemcpy2D per plane — device-to-device copy from
++     * EGL-mapped block-linear surface to pitch-linear CUDA allocation.
++     *
++     * For NV12: plane 0 = Y (width x height), plane 1 = UV (width x height/2)
++     * dst->data[0] = Y CUdeviceptr, dst->data[1] = UV CUdeviceptr
++     * dst->linesize[0] = Y pitch, dst->linesize[1] = UV pitch */
++    for (p = 0; p < egl_frame.planeCount && p < 2; p++) {
++        nvmpi_CUDA_MEMCPY2D cpy;
++        /* Zero-init prevents stale array/host fields from confusing
++         * the CUDA driver — only device fields are used. */
++        memset(&cpy, 0, sizeof(cpy));
++
++        /* Source: EGL-mapped device pointer (block-linear DMA-BUF) */
++        cpy.srcMemoryType = NVMPI_CU_MEMORYTYPE_DEVICE;
++        cpy.srcDevice     = (nvmpi_CUdeviceptr)egl_frame.frame.pPitch[p];
++        cpy.srcPitch      = egl_frame.pitch;
++
++        /* Destination: caller-allocated pitch-linear CUDA buffer */
++        cpy.dstMemoryType = NVMPI_CU_MEMORYTYPE_DEVICE;
++        cpy.dstDevice     = (nvmpi_CUdeviceptr)dst->data[p];
++        cpy.dstPitch      = dst->linesize[p];
++
++        /* NV12: Y plane is full height, UV plane is half height */
++        cpy.WidthInBytes  = width;
++        cpy.Height        = (p == 0) ? (unsigned int)height
++                                     : (unsigned int)height / 2;
++
++        cu_err = nvmpi_cuMemcpy2D(&cpy);
++        if (cu_err != NVMPI_CUDA_SUCCESS) {
++            av_log(dev_ctx, AV_LOG_ERROR, "nvmpi: cuMemcpy2D failed "
++                   "for plane %u (CUresult %d)\n", p, cu_err);
++            ret = AVERROR_EXTERNAL;
++            goto cleanup;
++        }
++    }
++
++cleanup:
++    /* Step 6: Unregister and destroy — per-frame, not cached.
++     * Different DMA-BUF fds each frame require fresh EGL images. */
++    if (cu_res) {
++        /* Freed here; allocated by cuGraphicsEGLRegisterImage above */
++        nvmpi_cuGraphicsUnregisterResource(cu_res);
++    }
++    nvmpi_cuCtxPopCurrent(&dummy);
++
++    if (egl_image != NVMPI_EGL_NO_IMAGE_KHR) {
++        /* Freed here; allocated by eglCreateImageKHR above */
++        nvmpi_eglDestroyImageKHR(hwctx->egl_display, egl_image);
++    }
++
++    return ret;
++}
 +
 +/* ------------------------------------------------------------------ */
 +/* Device context                                                      */
@@ -2692,14 +3382,26 @@ index 0000000..1ff62ef
 + * libnvmpi (per-codec, not per-device-context). The @p device parameter
 + * is currently ignored; a future extension could use it to select a
 + * specific V4L2 M2M device node (e.g. "/dev/nvhost-nvdec").
++ *
++ * CUDA/EGL init is deferred to first transfer_data call to avoid
++ * loading CUDA libraries when only software readback is used.
 + */
 +static int nvmpi_device_create(AVHWDeviceContext *ctx, const char *device,
 +                               AVDictionary *opts, int flags)
 +{
-+    /* No-op: libnvmpi opens /dev/nvhost-nvdec and /dev/nvhost-msenc
-+     * internally when a decoder/encoder is created. The hwdevice ctx
-+     * exists purely as a type marker for format negotiation. */
++    AVNVMPIDeviceContext *hwctx = ctx->hwctx;
++    /* Zero all fields — CUDA init is deferred to first transfer */
++    memset(hwctx, 0, sizeof(*hwctx));
 +    return 0;
++}
++
++/**
++ * Clean up CUDA context and EGL display on device destruction.
++ * Safe to call even if CUDA was never initialized.
++ */
++static void nvmpi_device_uninit(AVHWDeviceContext *ctx)
++{
++    nvmpi_cuda_uninit(ctx);
 +}
 +
 +/* ------------------------------------------------------------------ */
@@ -2711,7 +3413,7 @@ index 0000000..1ff62ef
 + *
 + * Hardware format: AV_PIX_FMT_DRM_PRIME (DMA-BUF fd wrapped in
 + * AVDRMFrameDescriptor). Software formats: NV12 (Jetson's native hw
-+ * layout) and YUV420P (VIC-converted). Min resolution 16×16 matches
++ * layout) and YUV420P (VIC-converted). Min resolution 16x16 matches
 + * the NVDEC hardware minimum block size.
 + */
 +static int nvmpi_frames_get_constraints(AVHWDeviceContext *hwdev,
@@ -2746,7 +3448,7 @@ index 0000000..1ff62ef
 +/* ------------------------------------------------------------------ */
 +
 +/**
-+ * Report formats available for hw↔sw transfer.
++ * Report formats available for hw<->sw transfer.
 + *
 + * Returns ctx->sw_format — the caller-configured software layout.
 + * Actual DMA-BUF mmap transfer is handled by the DRM hwcontext's
@@ -2768,6 +3470,41 @@ index 0000000..1ff62ef
 +}
 +
 +/* ------------------------------------------------------------------ */
++/* Frame data transfer                                                 */
++/* ------------------------------------------------------------------ */
++
++/**
++ * Transfer data FROM an NVMPI hardware frame (DRM_PRIME) to dst.
++ *
++ * If dst is a CUDA frame (has hw_frames_ctx with AV_PIX_FMT_CUDA):
++ *   -> EGL interop path (device-to-device, no CPU copy)
++ *
++ * Otherwise: returns ENOSYS to fall through to the DRM hwcontext's
++ * mmap-based sw transfer (which handles DRM_PRIME -> CPU natively).
++ */
++static int nvmpi_transfer_data_from(AVHWFramesContext *ctx,
++                                    AVFrame *dst, const AVFrame *src)
++{
++    /* Only handle CUDA destination — sw fallback handled by
++     * the DRM hwcontext layer or av_hwframe_transfer_data's
++     * generic mmap path. */
++    if (dst->hw_frames_ctx) {
++        AVHWFramesContext *dst_fc =
++            (AVHWFramesContext *)dst->hw_frames_ctx->data;
++        if (dst_fc->device_ctx->type == AV_HWDEVICE_TYPE_CUDA) {
++            /* Lazy-init CUDA + EGL on first transfer */
++            int err = nvmpi_cuda_init(ctx->device_ctx);
++            if (err < 0)
++                return err;
++            return nvmpi_transfer_drm_to_cuda(ctx, dst, src);
++        }
++    }
++
++    /* Not a CUDA destination — let FFmpeg try other paths */
++    return AVERROR(ENOSYS);
++}
++
++/* ------------------------------------------------------------------ */
 +/* HWContextType registration                                          */
 +/* ------------------------------------------------------------------ */
 +
@@ -2778,8 +3515,10 @@ index 0000000..1ff62ef
 +    .device_hwctx_size      = sizeof(AVNVMPIDeviceContext),
 +
 +    .device_create          = nvmpi_device_create,
++    .device_uninit          = nvmpi_device_uninit,
 +    .frames_get_constraints = nvmpi_frames_get_constraints,
 +    .transfer_get_formats   = nvmpi_transfer_get_formats,
++    .transfer_data_from     = nvmpi_transfer_data_from,
 +
 +    .pix_fmts = (const enum AVPixelFormat[]) {
 +        AV_PIX_FMT_DRM_PRIME,
@@ -2788,10 +3527,10 @@ index 0000000..1ff62ef
 +};
 diff --git a/libavutil/hwcontext_nvmpi.h b/libavutil/hwcontext_nvmpi.h
 new file mode 100644
-index 0000000..e597b2a
+index 0000000..91e219d
 --- /dev/null
 +++ b/libavutil/hwcontext_nvmpi.h
-@@ -0,0 +1,34 @@
+@@ -0,0 +1,56 @@
 +/*
 + * hwcontext_nvmpi.h — FFmpeg hardware device context for NVIDIA Jetson
 + * NVMPI (V4L2 M2M) decode/encode via libnvmpi.
@@ -2801,9 +3540,8 @@ index 0000000..e597b2a
 + * -hwaccel nvmpi works from the ffmpeg command line.
 + *
 + * No NVIDIA-specific headers are required — libnvmpi handles all V4L2
-+ * and DMA-BUF management internally. The device context is intentionally
-+ * minimal: it serves as a type marker for format negotiation, not as a
-+ * resource manager.
++ * and DMA-BUF management internally. CUDA/EGL state is managed by
++ * hwcontext_nvmpi.c using dlopen (no build-time CUDA dependency).
 + */
 +
 +#ifndef AVUTIL_HWCONTEXT_NVMPI_H
@@ -2812,17 +3550,40 @@ index 0000000..e597b2a
 +/**
 + * NVMPI device context.
 + *
-+ * Allocated as AVHWDeviceContext.hwctx. Empty because libnvmpi manages
-+ * V4L2 device lifecycle internally — no caller-visible state is needed.
-+ * The struct exists solely to satisfy the HWContextType registration
-+ * (device_hwctx_size must be non-zero for av_hwdevice_ctx_alloc).
++ * Allocated as AVHWDeviceContext.hwctx. The struct holds optional
++ * CUDA/EGL interop state for DRM_PRIME ↔ CUDA transfers — these
++ * fields are populated lazily on first transfer request and cleaned
++ * up in device_uninit.
++ *
++ * All pointer fields use void* to avoid requiring CUDA/EGL headers.
 + */
 +typedef struct AVNVMPIDeviceContext {
 +    /**
-+     * Reserved for future use (e.g. device selection when multiple
-+     * Jetson decode/encode engines are available). Currently unused.
++     * CUDA interop state — lazy-initialized by nvmpi_cuda_init().
++     * Set to 1 after successful CUDA + EGL initialization.
++     * If CUDA libraries are unavailable, remains 0 and transfers
++     * fall back to the DRM mmap path (CPU readback).
 +     */
-+    int reserved;
++    int cuda_initialized;
++
++    /**
++     * CUDA device ordinal (CUdevice). Always 0 on Jetson
++     * (single integrated GPU). Set by nvmpi_cuda_init().
++     */
++    int cuda_device;
++
++    /**
++     * CUDA context (CUcontext, cast to void*).
++     * Created in nvmpi_cuda_init(); destroyed in nvmpi_cuda_uninit().
++     */
++    void *cuda_ctx;
++
++    /**
++     * EGL display handle (EGLDisplay, cast to void*).
++     * Initialized in nvmpi_cuda_init(); terminated in nvmpi_cuda_uninit().
++     * Used by eglCreateImageKHR to import DMA-BUF fds.
++     */
++    void *egl_display;
 +} AVNVMPIDeviceContext;
 +
 +#endif /* AVUTIL_HWCONTEXT_NVMPI_H */
