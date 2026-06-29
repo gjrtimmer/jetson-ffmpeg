@@ -18,10 +18,15 @@ vic_scale_case() {
   local tmpout="/tmp/nvmpi-scale-vic-${label}.mkv"
   local rc=0 out w h
 
-  out=$(ffmpeg -y -hide_banner -loglevel error \
+  out=$(timeout --kill-after=5 60 ffmpeg -y -hide_banner -loglevel error \
     -hwaccel nvmpi -c:v h264_nvmpi -i "${SAMPLE_H264_720P}" \
     -vf "scale_vic=${tgt_w}:${tgt_h}" \
     -c:v h264_nvmpi "$tmpout" 2>&1) || rc=$?
+  if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+    echo "FAIL(${label}): pipeline hung (killed after timeout, rc=${rc})."
+    echo "      Likely cause: missing hw_frames_ctx or NvBufSurfTransform deadlock."
+    exit 1
+  fi
   if [ "$rc" -ne 0 ]; then
     echo "FAIL(${label}): scale_vic ${tgt_w}:${tgt_h} pipeline failed (rc=${rc})."
     echo "      Pipeline: h264_nvmpi -hwaccel nvmpi → scale_vic → h264_nvmpi"
@@ -54,7 +59,7 @@ fi
 echo "   scale_vic filter registered"
 
 echo "== 2. diagnostic: 30s verbose run (uncaptured output) =="
-timeout 30 ffmpeg -y -hide_banner -loglevel verbose \
+timeout --kill-after=5 30 ffmpeg -y -hide_banner -loglevel verbose \
     -hwaccel nvmpi -c:v h264_nvmpi -i "${SAMPLE_H264_720P}" \
     -vf "scale_vic=640:360" \
     -c:v h264_nvmpi "/tmp/nvmpi-scale-vic-diag.mkv" 2>&1 || \

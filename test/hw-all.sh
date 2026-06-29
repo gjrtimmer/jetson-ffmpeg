@@ -67,8 +67,8 @@ for s in $SUITES; do
   fi
   ts_before="$(date +%s)"
   rc=0
-  out="$(timeout "${SUITE_TIMEOUT}" bash "$script" 2>&1)" || rc=$?
-  if [ "$rc" -eq 124 ]; then
+  out="$(timeout --kill-after=10 "${SUITE_TIMEOUT}" bash "$script" 2>&1)" || rc=$?
+  if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
     echo "######## suite: hw-${s} — TIMEOUT (${SUITE_TIMEOUT}s) ########"
     printf '%s\n' "$out"
     echo "######## suite hung — killed after ${SUITE_TIMEOUT}s ########"
