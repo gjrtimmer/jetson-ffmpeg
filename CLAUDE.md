@@ -582,6 +582,12 @@ default for all sessions in this repo — do not wait for the user to request it
 - **Verify current branch before file edits.** Run `git branch --show-current`
   before any Write/Edit to a tracked file. Wrong-branch edits are expensive to
   undo and may corrupt an in-progress release or MR.
+- **Never poll background tasks.** When a Monitor or `run_in_background` task
+  is armed for a long-running process (build, pipeline, smoke-all), wait
+  silently for the notification. Do NOT make repeated Bash calls to check
+  progress — each call wastes tokens and context. One check to confirm the
+  monitor is armed, then stop. If you need interim visibility, set up the
+  Monitor with the right grep filter upfront, not by polling manually.
 - **Validate release scope before tagging.** Before creating a release tag,
   list all planned items (issues, MRs, fixes) and verify each has landed on
   main via `git log`. A premature release requires retraction — deleting tags,
