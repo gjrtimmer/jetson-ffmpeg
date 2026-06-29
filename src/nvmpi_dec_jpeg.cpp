@@ -18,6 +18,10 @@
  * Allocated by nvmpi_create_jpeg_decoder(); freed by nvmpi_jpeg_decoder_close().
  */
 #include "nvmpi_dec_jpeg_internal.h"
+#include <pthread.h>
+
+/* Defined in nvmpi_vic.cpp — serializes NvBufSurfTransform calls. */
+extern pthread_mutex_t nvmpi_transform_mutex;
 
 /* ------------------------------------------------------------------ */
 /* Frame pool management (mirrors nvmpi_dec_api.cpp patterns)          */
@@ -384,7 +388,11 @@ int nvmpi_jpeg_decoder_put_packet(nvmpictx* handle, nvPacket* packet)
 	}
 
 	/* VIC transform: block-linear (NVJPG output) → pitch-linear (our pool).
-	 * decode_fd is owned by libnvjpeg internals — do NOT destroy it. */
+	 * decode_fd is owned by libnvjpeg internals — do NOT destroy it.
+	 * Lock the global transform mutex for consistency with the capture
+	 * thread path (nvmpi_dec_capture.cpp) — JPEG decode is synchronous
+	 * so contention is rare, but a VIC filter running on the same stream
+	 * would interleave calls from the filter thread. */
 #ifdef WITH_NVUTILS
 	/* Need NvBufSurface view of the decode fd for NvBufSurfTransform. */
 	NvBufSurface *decode_surface = NULL;
@@ -394,11 +402,16 @@ int nvmpi_jpeg_decoder_put_packet(nvmpictx* handle, nvPacket* packet)
 		ctx->framePool->qEmptyBuf(fb);
 		return -1;
 	}
+	pthread_mutex_lock(&nvmpi_transform_mutex);
+	NvBufSurfTransformSetSessionParams(&(ctx->session));
 	ret = NvBufSurfTransform(decode_surface, fb->dst_dma_surface,
 	                         &(ctx->transform_params));
+	pthread_mutex_unlock(&nvmpi_transform_mutex);
 #else
+	pthread_mutex_lock(&nvmpi_transform_mutex);
 	ret = NvBufferTransform(decode_fd, fb->dst_dma_fd,
 	                        &(ctx->transform_params));
+	pthread_mutex_unlock(&nvmpi_transform_mutex);
 #endif
 	if (ret != 0) {
 		NVMPI_LOG_SUB(NVMPI_LOG_ERROR, "jpeg", "VIC transform failed");

@@ -24,6 +24,16 @@
 #include "nvmpi_log.h"
 #include <string.h>
 #include <stdlib.h>
+#include <pthread.h>
+
+/* Global mutex serializing NvBufSurfTransform calls across all threads.
+ * The Tegra driver's NvBufSurfTransformSetSessionParams is documented
+ * as thread-local, but in practice concurrent NvBufSurfTransform calls
+ * from the decoder capture thread (VIC compute) and the filter's main
+ * thread (GPU compute) deadlock the driver.  This mutex ensures only
+ * one NvBufSurfTransform executes at a time.  Defined here (nvmpi_vic.cpp);
+ * extern'd in nvmpi_dec_capture.cpp. */
+pthread_mutex_t nvmpi_transform_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 /* Internal VIC context — opaque to callers via the nvmpi_vic_ctx typedef.
  * Allocated in nvmpi_vic_create(); freed in nvmpi_vic_close(). */
@@ -151,18 +161,14 @@ int nvmpi_vic_transform(nvmpi_vic_ctx *ctx,
     ctx->transform_params.session   = ctx->session;
 #endif
 
-    /* Execute the hardware transform */
+    /* Execute the hardware transform.
+     * Lock the global transform mutex to prevent concurrent calls —
+     * see mutex definition at file scope for rationale. */
     int ret;
-#ifdef WITH_NVUTILS
-    /* Re-set session params before each transform — ensures this thread's
-     * session binding is current even if NvBufSurfTransformSetSessionParams
-     * was called on a different thread (e.g. decoder capture thread)
-     * between nvmpi_vic_create and this call. */
-    NvBufSurfTransformSetSessionParams(&ctx->session);
 
-    /* Resolve NvBufSurface pointers from the fd pair — NvBufSurfTransform
-     * requires NvBufSurface*, not raw fds.  The surface structs are
-     * transient (stack-local); the underlying DMA buffers are not copied. */
+    /* Resolve NvBufSurface pointers OUTSIDE the lock — NvBufSurfaceFromFd
+     * is a hash-table lookup, not a driver call, so it doesn't race. */
+#ifdef WITH_NVUTILS
     NvBufSurface *src_surface = NULL;
     NvBufSurface *dst_surface = NULL;
 
@@ -182,10 +188,18 @@ int nvmpi_vic_transform(nvmpi_vic_ctx *ctx,
         return -1;
     }
 
+    pthread_mutex_lock(&nvmpi_transform_mutex);
+    /* Re-set session params under the lock — ensures the session binding
+     * is this thread's (GPU compute) when NvBufSurfTransform executes,
+     * not the decoder capture thread's (VIC compute). */
+    NvBufSurfTransformSetSessionParams(&ctx->session);
     ret = NvBufSurfTransform(src_surface, dst_surface,
                              &ctx->transform_params);
+    pthread_mutex_unlock(&nvmpi_transform_mutex);
 #else
+    pthread_mutex_lock(&nvmpi_transform_mutex);
     ret = NvBufferTransform(src_fd, dst_fd, &ctx->transform_params);
+    pthread_mutex_unlock(&nvmpi_transform_mutex);
 #endif
 
     if (ret != 0) {

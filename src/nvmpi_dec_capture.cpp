@@ -1,4 +1,9 @@
 #include "nvmpi_dec_internal.h"
+#include <pthread.h>
+
+/* Defined in nvmpi_vic.cpp — serializes NvBufSurfTransform calls to
+ * prevent driver deadlock between capture thread and filter thread. */
+extern pthread_mutex_t nvmpi_transform_mutex;
 
 void respondToResolutionEvent(v4l2_format &format, v4l2_crop &crop,nvmpictx* ctx)
 {
@@ -235,12 +240,20 @@ void dec_capture_loop_fcn(void *arg)
 
 			if(fb)
 			{
-				//hw transform: block-linear decoder output -> pitch-linear
-				//dst buffer, converting format and scaling as configured
+				/* hw transform: block-linear decoder output → pitch-linear
+			 * dst buffer, converting format and scaling as configured.
+			 * Lock the global transform mutex to prevent concurrent
+			 * NvBufSurfTransform calls from the filter thread (VIC/GPU
+			 * deadlock — see nvmpi_vic.cpp for rationale). */
 #ifdef WITH_NVUTILS
+				pthread_mutex_lock(&nvmpi_transform_mutex);
+				NvBufSurfTransformSetSessionParams(&(ctx->session));
 				ret = NvBufSurfTransform(ctx->dmaBufferSurface[v4l2_buf.index], fb->dst_dma_surface, &(ctx->transform_params));
+				pthread_mutex_unlock(&nvmpi_transform_mutex);
 #else
+				pthread_mutex_lock(&nvmpi_transform_mutex);
 				ret = NvBufferTransform(dec_buffer->planes[0].fd, fb->dst_dma_fd, &(ctx->transform_params));
+				pthread_mutex_unlock(&nvmpi_transform_mutex);
 #endif
 				TEST_ERROR(ret==-1, "Transform failed",ret);
 				//carry the pts through (V4L2 timeval -> microseconds)
@@ -264,9 +277,14 @@ void dec_capture_loop_fcn(void *arg)
 					if(fb)
 					{
 #ifdef WITH_NVUTILS
+						pthread_mutex_lock(&nvmpi_transform_mutex);
+						NvBufSurfTransformSetSessionParams(&(ctx->session));
 						ret = NvBufSurfTransform(ctx->dmaBufferSurface[v4l2_buf.index], fb->dst_dma_surface, &(ctx->transform_params));
+						pthread_mutex_unlock(&nvmpi_transform_mutex);
 #else
+						pthread_mutex_lock(&nvmpi_transform_mutex);
 						ret = NvBufferTransform(dec_buffer->planes[0].fd, fb->dst_dma_fd, &(ctx->transform_params));
+						pthread_mutex_unlock(&nvmpi_transform_mutex);
 #endif
 						TEST_ERROR(ret==-1, "Transform failed",ret);
 						fb->timestamp = (v4l2_buf.timestamp.tv_usec % 1000000) + (v4l2_buf.timestamp.tv_sec * 1000000UL);

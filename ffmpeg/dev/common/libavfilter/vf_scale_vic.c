@@ -26,6 +26,7 @@
  * or (at your option) any later version.
  */
 
+#include <inttypes.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -153,6 +154,9 @@ static av_cold int scale_vic_init(AVFilterContext *avctx)
         return AVERROR_EXTERNAL;
     }
     s->dynlink_loaded = 1;
+
+    av_log(avctx, AV_LOG_INFO,
+           "scale_vic: init — dynlink loaded, creating VIC context\n");
 
     /* Create VIC engine context — binds VIC compute for this thread */
     s->vic_ctx = nvmpi_vic_create();
@@ -297,6 +301,10 @@ static int scale_vic_filter_frame(AVFilterLink *inlink, AVFrame *in)
     int src_fd, dst_fd, dup_fd, ret;
     int dst_pitch;
 
+    av_log(avctx, AV_LOG_INFO,
+           "scale_vic: filter_frame entry pts=%" PRId64 " %dx%d fmt=%d\n",
+           in->pts, in->width, in->height, in->format);
+
     /* Extract source DMA-BUF fd from input DRM_PRIME frame */
     if (in->format != AV_PIX_FMT_DRM_PRIME) {
         av_log(avctx, AV_LOG_ERROR,
@@ -313,6 +321,11 @@ static int scale_vic_filter_frame(AVFilterLink *inlink, AVFrame *in)
         av_frame_free(&in);
         return AVERROR(EINVAL);
     }
+
+    av_log(avctx, AV_LOG_INFO,
+           "scale_vic: input fd=%d pitch=%d, starting copy to registered surface\n",
+           in_desc->objects[0].fd,
+           (int)in_desc->layers[0].planes[0].pitch);
 
     /* Copy the dup'd DMA-BUF frame data into a registered source buffer.
      * The decoder dup()s its fds for AVFrame lifetime safety, but dup'd
@@ -333,6 +346,12 @@ static int scale_vic_filter_frame(AVFilterLink *inlink, AVFrame *in)
         return AVERROR_EXTERNAL;
     }
 
+    av_log(avctx, AV_LOG_INFO,
+           "scale_vic: copy done, starting transform src_fd=%d → dst_fd=%d "
+           "(%dx%d → %dx%d)\n",
+           src_fd, s->out_fds[s->pool_idx],
+           in->width, in->height, outlink->w, outlink->h);
+
     /* Get next output buffer from the ring pool */
     dst_fd = s->out_fds[s->pool_idx];
     s->pool_idx = (s->pool_idx + 1) % s->pool_size;
@@ -348,6 +367,9 @@ static int scale_vic_filter_frame(AVFilterLink *inlink, AVFrame *in)
         av_frame_free(&in);
         return AVERROR_EXTERNAL;
     }
+
+    av_log(avctx, AV_LOG_INFO,
+           "scale_vic: transform done, building output frame\n");
 
     /* Build output frame */
     out = av_frame_alloc();
@@ -432,6 +454,11 @@ static int scale_vic_filter_frame(AVFilterLink *inlink, AVFrame *in)
     out->color_trc       = in->color_trc;
 
     av_frame_free(&in);
+
+    av_log(avctx, AV_LOG_INFO,
+           "scale_vic: calling ff_filter_frame (output %dx%d, fd=%d)\n",
+           out->width, out->height, dup_fd);
+
     return ff_filter_frame(outlink, out);
 }
 
