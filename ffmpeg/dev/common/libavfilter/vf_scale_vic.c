@@ -65,14 +65,6 @@
 #define DRM_FORMAT_NV12 0x3231564E
 #endif
 
-/* Private DRM format modifier: the nvmpi decoder tags dup'd DRM_PRIME
- * frames with the original NvBufSurface-registered fd so that hardware
- * consumers can call NvBufSurfTransform (which requires a registered fd).
- * Must match the definitions in nvmpi_dec.c. */
-#define NVMPI_DRM_MOD_VENDOR           0x4EULL
-#define NVMPI_DRM_MOD_IS_ORIG_FD(mod)  (((mod) >> 56) == NVMPI_DRM_MOD_VENDOR)
-#define NVMPI_DRM_MOD_GET_ORIG_FD(mod) ((int)((mod) & 0xFFFFFFFF))
-
 /* Runtime-loaded via dlopen — no link-time dependency on libnvmpi.so.
  * Only VIC + surface symbols are resolved (not decoder/encoder). */
 #include "dynlink_nvmpi_vic.h"
@@ -105,6 +97,16 @@ typedef struct ScaleVICContext {
     int pool_size;
     int pool_idx;
 
+    /* Source buffer pool: registered NV12 surfaces at input dimensions.
+     * The decoder outputs dup'd DMA-BUF fds that are NOT registered in
+     * NvBufSurface — NvBufSurfTransform rejects them.  Frame data is
+     * copied from the dup'd fd into a source pool buffer before VIC
+     * transform.  Ring-buffered like the output pool.
+     * Allocated in scale_vic_config_output(); freed in scale_vic_uninit(). */
+    int in_fds[VIC_OUTPUT_POOL_SIZE];
+    int in_pool_size;
+    int in_pool_idx;
+
     /* Track whether dynlink was loaded */
     int dynlink_loaded;
 } ScaleVICContext;
@@ -135,10 +137,14 @@ static av_cold int scale_vic_init(AVFilterContext *avctx)
     int i;
 
     /* Zero-initialize pool fds — marks all slots as unallocated */
-    for (i = 0; i < VIC_OUTPUT_POOL_SIZE; i++)
+    for (i = 0; i < VIC_OUTPUT_POOL_SIZE; i++) {
         s->out_fds[i] = -1;
-    s->pool_size = 0;
-    s->pool_idx  = 0;
+        s->in_fds[i]  = -1;
+    }
+    s->pool_size    = 0;
+    s->pool_idx     = 0;
+    s->in_pool_size = 0;
+    s->in_pool_idx  = 0;
 
     /* Load libnvmpi.so via dlopen on first use */
     if (nvmpi_vic_dynlink_load() < 0) {
@@ -164,12 +170,20 @@ static av_cold void scale_vic_uninit(AVFilterContext *avctx)
     ScaleVICContext *s = avctx->priv;
     int i;
 
-    /* Destroy output pool surfaces */
     if (s->dynlink_loaded) {
+        /* Destroy output pool surfaces */
         for (i = 0; i < s->pool_size; i++) {
             if (s->out_fds[i] >= 0) {
                 nvmpi_surface_destroy(s->out_fds[i]);
                 s->out_fds[i] = -1;
+            }
+        }
+
+        /* Destroy source pool surfaces */
+        for (i = 0; i < s->in_pool_size; i++) {
+            if (s->in_fds[i] >= 0) {
+                nvmpi_surface_destroy(s->in_fds[i]);
+                s->in_fds[i] = -1;
             }
         }
 
@@ -231,6 +245,22 @@ static int scale_vic_config_output(AVFilterLink *outlink)
     outlink->w = out_w;
     outlink->h = out_h;
 
+    /* Pre-allocate source DMA-BUF surface pool at input resolution.
+     * The decoder outputs dup'd fds that are not registered in NvBufSurface.
+     * Frame data is copied into these registered buffers before VIC transform. */
+    for (i = 0; i < VIC_OUTPUT_POOL_SIZE; i++) {
+        /* Allocated here; freed in scale_vic_uninit() via nvmpi_surface_destroy */
+        ret = nvmpi_surface_alloc(inlink->w, inlink->h, &s->in_fds[i]);
+        if (ret < 0) {
+            av_log(avctx, AV_LOG_ERROR,
+                   "scale_vic: failed to allocate input surface %d (%dx%d)\n",
+                   i, inlink->w, inlink->h);
+            return AVERROR_EXTERNAL;
+        }
+    }
+    s->in_pool_size = VIC_OUTPUT_POOL_SIZE;
+    s->in_pool_idx  = 0;
+
     /* Pre-allocate output DMA-BUF surface pool at target resolution */
     for (i = 0; i < VIC_OUTPUT_POOL_SIZE; i++) {
         /* Allocated here; freed in scale_vic_uninit() via nvmpi_surface_destroy */
@@ -246,8 +276,9 @@ static int scale_vic_config_output(AVFilterLink *outlink)
     s->pool_idx  = 0;
 
     av_log(avctx, AV_LOG_INFO,
-           "scale_vic: %dx%d → %dx%d (VIC hardware, %d output buffers)\n",
-           inlink->w, inlink->h, out_w, out_h, s->pool_size);
+           "scale_vic: %dx%d → %dx%d (hardware, %d source + %d output buffers)\n",
+           inlink->w, inlink->h, out_w, out_h,
+           s->in_pool_size, s->pool_size);
 
     return 0;
 }
@@ -283,22 +314,30 @@ static int scale_vic_filter_frame(AVFilterLink *inlink, AVFrame *in)
         return AVERROR(EINVAL);
     }
 
-    /* Prefer the original NvBufSurface-registered fd stashed in
-     * format_modifier by the nvmpi decoder.  The dup'd fd in objects[0].fd
-     * is not registered in NvBufSurface's internal table, so
-     * NvBufSurfaceFromFd would fail on it.  The original fd is valid for
-     * the lifetime of this frame (buf[0] holds the release callback). */
-    if (NVMPI_DRM_MOD_IS_ORIG_FD(in_desc->objects[0].format_modifier)) {
-        src_fd = NVMPI_DRM_MOD_GET_ORIG_FD(in_desc->objects[0].format_modifier);
-    } else {
-        src_fd = in_desc->objects[0].fd;
+    /* Copy the dup'd DMA-BUF frame data into a registered source buffer.
+     * The decoder dup()s its fds for AVFrame lifetime safety, but dup'd
+     * fds are not registered in NvBufSurface's internal table — the VIC
+     * hardware transform API (NvBufSurfTransform) requires registered
+     * surfaces.  This copy bridges that gap at the cost of one CPU memcpy
+     * per frame (~1.4 MB for 720p NV12). */
+    src_fd = s->in_fds[s->in_pool_idx];
+    s->in_pool_idx = (s->in_pool_idx + 1) % s->in_pool_size;
+
+    ret = nvmpi_surface_copy_from_dmabuf(src_fd, in_desc->objects[0].fd,
+                                         in->width, in->height,
+                                         in_desc->layers[0].planes[0].pitch);
+    if (ret < 0) {
+        av_log(avctx, AV_LOG_ERROR,
+               "scale_vic: failed to copy input frame to registered surface\n");
+        av_frame_free(&in);
+        return AVERROR_EXTERNAL;
     }
 
     /* Get next output buffer from the ring pool */
     dst_fd = s->out_fds[s->pool_idx];
     s->pool_idx = (s->pool_idx + 1) % s->pool_size;
 
-    /* Execute VIC hardware transform: scale src → dst */
+    /* Execute hardware transform: scale src → dst */
     ret = nvmpi_vic_transform(s->vic_ctx, src_fd, dst_fd,
                               in->width, in->height,
                               outlink->w, outlink->h);

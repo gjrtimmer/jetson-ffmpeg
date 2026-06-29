@@ -327,6 +327,15 @@ extern "C" {
 	//-1 on NvBufferDestroy failure.
 	int nvmpi_surface_destroy(int dmabuf_fd);
 
+	//Copy NV12 frame data from an unregistered DMA-BUF fd (e.g. dup'd
+	//from decoder DRM_PRIME output) into a registered NvBufSurface fd.
+	//Uses mmap + CPU copy + DMA-BUF sync. dst_fd must have been
+	//allocated via nvmpi_surface_alloc at matching dimensions.
+	//src_pitch = source row stride in bytes (from DRM descriptor).
+	int nvmpi_surface_copy_from_dmabuf(int dst_fd, int src_fd,
+		unsigned int width, unsigned int height,
+		unsigned int src_pitch);
+
 	//--- VIC hardware transform (standalone scale/CSC) ---
 
 	//Opaque VIC context handle. Created by nvmpi_vic_create(), destroyed

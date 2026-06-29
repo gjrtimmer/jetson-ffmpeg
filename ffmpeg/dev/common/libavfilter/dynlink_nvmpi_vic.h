@@ -38,10 +38,13 @@ typedef int            (*fn_nvmpi_vic_transform)(nvmpi_vic_ctx *ctx,
                            unsigned int dst_w, unsigned int dst_h);
 typedef void           (*fn_nvmpi_vic_close)(nvmpi_vic_ctx *ctx);
 
-/* Surface alloc/free (shared with encoder path, same libnvmpi.so) */
+/* Surface alloc/free/copy (shared with encoder path, same libnvmpi.so) */
 typedef int            (*fn_nvmpi_surface_alloc)(unsigned int width,
                            unsigned int height, int *dmabuf_fd);
 typedef int            (*fn_nvmpi_surface_destroy)(int dmabuf_fd);
+typedef int            (*fn_nvmpi_surface_copy_from_dmabuf)(int dst_fd,
+                           int src_fd, unsigned int width,
+                           unsigned int height, unsigned int src_pitch);
 
 /* ------------------------------------------------------------------ */
 /* Static function pointers (one set per translation unit)             */
@@ -50,8 +53,9 @@ typedef int            (*fn_nvmpi_surface_destroy)(int dmabuf_fd);
 static fn_nvmpi_vic_create       nvmpi_vic_create_dl;
 static fn_nvmpi_vic_transform    nvmpi_vic_transform_dl;
 static fn_nvmpi_vic_close        nvmpi_vic_close_dl;
-static fn_nvmpi_surface_alloc    nvmpi_surface_alloc_dl;
-static fn_nvmpi_surface_destroy  nvmpi_surface_destroy_dl;
+static fn_nvmpi_surface_alloc              nvmpi_surface_alloc_dl;
+static fn_nvmpi_surface_destroy            nvmpi_surface_destroy_dl;
+static fn_nvmpi_surface_copy_from_dmabuf   nvmpi_surface_copy_from_dmabuf_dl;
 
 static void *nvmpi_vic_lib_handle;
 
@@ -85,6 +89,8 @@ static int nvmpi_vic_dynlink_load(void)
     /* Surface allocation symbols (same .so, shared with encoder path) */
     NVMPI_VIC_LOAD_SYM(nvmpi_surface_alloc_dl,   nvmpi_surface_alloc);
     NVMPI_VIC_LOAD_SYM(nvmpi_surface_destroy_dl, nvmpi_surface_destroy);
+    NVMPI_VIC_LOAD_SYM(nvmpi_surface_copy_from_dmabuf_dl,
+                        nvmpi_surface_copy_from_dmabuf);
 
     return 0;
 
@@ -101,7 +107,8 @@ fail:
 #define nvmpi_vic_create       nvmpi_vic_create_dl
 #define nvmpi_vic_transform    nvmpi_vic_transform_dl
 #define nvmpi_vic_close        nvmpi_vic_close_dl
-#define nvmpi_surface_alloc    nvmpi_surface_alloc_dl
-#define nvmpi_surface_destroy  nvmpi_surface_destroy_dl
+#define nvmpi_surface_alloc              nvmpi_surface_alloc_dl
+#define nvmpi_surface_destroy            nvmpi_surface_destroy_dl
+#define nvmpi_surface_copy_from_dmabuf   nvmpi_surface_copy_from_dmabuf_dl
 
 #endif /* DYNLINK_NVMPI_VIC_H */

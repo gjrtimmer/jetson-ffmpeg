@@ -58,9 +58,6 @@
  *
  * Vendor byte 0x4E ("N" for nvmpi) avoids collision with standard
  * DRM_FORMAT_MOD vendors (0x00–0x0F) and NVIDIA's own (0x03). */
-#define NVMPI_DRM_MOD_VENDOR       0x4EULL
-#define NVMPI_DRM_MOD_ORIG_FD(fd)  \
-    ((NVMPI_DRM_MOD_VENDOR << 56) | ((uint64_t)(unsigned int)(fd)))
 
 /*
  * libavcodec 63 (FFmpeg 9.0+): pix_fmts moved from the public AVCodec (.p)
@@ -505,14 +502,11 @@ static int nvmpi_decode(AVCodecContext *avctx, AVFrame *data, int *got_frame, AV
 			return AVERROR(ENOMEM);
 		}
 
-		/* Single DMA-BUF object, one NV12 layer with luma + chroma planes.
-		 * format_modifier carries the original NvBufSurface-registered fd
-		 * so downstream hw filters (scale_vic) can call NvBufSurfTransform
-		 * without hitting the dup'd-fd lookup failure. */
+		/* Single DMA-BUF object, one NV12 layer with luma + chroma planes */
 		desc->nb_objects = 1;
 		desc->objects[0].fd              = dup_fd;
 		desc->objects[0].size            = (size_t)pitch * height * 3 / 2;
-		desc->objects[0].format_modifier = NVMPI_DRM_MOD_ORIG_FD(dmabuf_fd);
+		desc->objects[0].format_modifier = 0;
 
 		desc->nb_layers = 1;
 		desc->layers[0].format    = DRM_FORMAT_NV12;
