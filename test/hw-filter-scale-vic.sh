@@ -53,16 +53,23 @@ if ! ffmpeg -hide_banner -filters 2>&1 | grep -q 'scale_vic'; then
 fi
 echo "   scale_vic filter registered"
 
-echo "== 2. downscale 1280x720 → 640x360 =="
+echo "== 2. diagnostic: 30s verbose run (uncaptured output) =="
+timeout 30 ffmpeg -y -hide_banner -loglevel verbose \
+    -hwaccel nvmpi -c:v h264_nvmpi -i "${SAMPLE_H264_720P}" \
+    -vf "scale_vic=640:360" \
+    -c:v h264_nvmpi "/tmp/nvmpi-scale-vic-diag.mkv" 2>&1 || \
+    echo "DIAG: ffmpeg exit rc=$? (124=timeout, 137=killed)"
+
+echo "== 3. downscale 1280x720 → 640x360 =="
 vic_scale_case down-640x360 640 360
 
-echo "== 3. downscale 1280x720 → 320x240 =="
+echo "== 4. downscale 1280x720 → 320x240 =="
 vic_scale_case down-320x240 320 240
 
-echo "== 4. non-proportional scale 1280x720 → 640x480 =="
+echo "== 5. non-proportional scale 1280x720 → 640x480 =="
 vic_scale_case nonprop-640x480 640 480
 
-echo "== 5. passthrough (same resolution) =="
+echo "== 6. passthrough (same resolution) =="
 vic_scale_case passthrough-1280x720 1280 720
 
 echo "OK: hw-filter-scale-vic passed on ${variant}."
