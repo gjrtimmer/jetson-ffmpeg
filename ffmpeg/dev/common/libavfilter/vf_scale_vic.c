@@ -40,13 +40,27 @@
 #include "video.h"
 #include "formats.h"
 
+/* avfilter.h only includes version_major.h during internal FFmpeg builds
+ * (HAVE_AV_CONFIG_H is defined) — version.h is intentionally skipped to
+ * reduce rebuild scope.  We need LIBAVFILTER_VERSION_MINOR for the
+ * hw_frames_ctx location guard (AVFilterLink vs FilterLink at 10.5+),
+ * so pull it in explicitly.  Present in all supported versions (6.0–8.1);
+ * __has_include guard for safety against future restructuring. */
+#if defined(__has_include)
+#if __has_include("libavfilter/version.h")
+#include "libavfilter/version.h"
+#endif
+#else
+#include "libavfilter/version.h"
+#endif
+
 /* Version-gated includes:
  *   - filters.h: present in FFmpeg 6.0+ (libavfilter >= 9); contains
- *     FILTER_INPUTS/OUTPUTS macros and FF_FILTER_FLAG_HWFRAME_AWARE.
+ *     FILTER_INPUTS/OUTPUTS macros, FilterLink, and ff_filter_link().
  *   - internal.h: present up to FFmpeg 7.0; removed in FFmpeg 7.1
  *     (content merged into filters.h).  Both 7.0 and 7.1 share
- *     LIBAVFILTER_VERSION_MAJOR=10 and VERSION_MINOR is unavailable in
- *     internal builds, so __has_include is the reliable check.
+ *     LIBAVFILTER_VERSION_MAJOR=10 and VERSION_MINOR distinguishes them,
+ *     but internal.h detection uses __has_include as the reliable check.
  *     GCC 5+ / Clang 3+ support __has_include (all Jetson toolchains). */
 #if LIBAVFILTER_VERSION_MAJOR >= 9
 #include "filters.h"
@@ -248,6 +262,37 @@ static int scale_vic_config_output(AVFilterLink *outlink)
 
     outlink->w = out_w;
     outlink->h = out_h;
+
+    /* Propagate the hardware frames context from the decoder's output
+     * to this filter's output.  Without this, FFmpeg's filter graph
+     * does not know the output is DRM_PRIME hardware frames and may
+     * insert an automatic format converter that tries to read the
+     * DRM_PRIME AVDRMFrameDescriptor as raw pixel data — hanging the
+     * pipeline in a kernel DMA-BUF read.  All FFmpeg hardware filters
+     * (scale_vaapi, scale_cuda, scale_npp) propagate hw_frames_ctx;
+     * omitting it is the root cause of the filter pipeline hang.
+     *
+     * FFmpeg 7.1+ (libavfilter 10.5+): hw_frames_ctx moved from
+     * AVFilterLink to FilterLink (accessed via ff_filter_link()).
+     * Earlier versions (6.0–7.0) have it directly on AVFilterLink. */
+#if (LIBAVFILTER_VERSION_MAJOR > 10) || \
+    (LIBAVFILTER_VERSION_MAJOR == 10 && LIBAVFILTER_VERSION_MINOR >= 5)
+    {
+        FilterLink *il = ff_filter_link(inlink);
+        FilterLink *ol = ff_filter_link(outlink);
+        if (il->hw_frames_ctx) {
+            ol->hw_frames_ctx = av_buffer_ref(il->hw_frames_ctx);
+            if (!ol->hw_frames_ctx)
+                return AVERROR(ENOMEM);
+        }
+    }
+#else
+    if (inlink->hw_frames_ctx) {
+        outlink->hw_frames_ctx = av_buffer_ref(inlink->hw_frames_ctx);
+        if (!outlink->hw_frames_ctx)
+            return AVERROR(ENOMEM);
+    }
+#endif
 
     /* Pre-allocate source DMA-BUF surface pool at input resolution.
      * The decoder outputs dup'd fds that are not registered in NvBufSurface.
