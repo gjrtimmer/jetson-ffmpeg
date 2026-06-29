@@ -549,6 +549,19 @@ static int nvmpi_decode(AVCodecContext *avctx, AVFrame *data, int *got_frame, AV
 		frame->pts     = timestamp;
 		frame->pkt_dts = AV_NOPTS_VALUE;
 
+		/* Propagate hw_frames_ctx to each DRM_PRIME output frame.
+		 * FFmpeg 7.x derives filter-graph buffersrc parameters from
+		 * individual frames rather than from AVCodecContext, so each
+		 * DRM_PRIME frame must carry hw_frames_ctx.  Without it the
+		 * buffersrc rejects the HW pixel format on filter graph reinit:
+		 * "Setting BufferSourceContext.pix_fmt to a HW format requires
+		 *  hw_frames_ctx to be non-NULL!" */
+		if (avctx->hw_frames_ctx) {
+			frame->hw_frames_ctx = av_buffer_ref(avctx->hw_frames_ctx);
+			if (!frame->hw_frames_ctx)
+				return AVERROR(ENOMEM);
+		}
+
 		if (width && height) {
 			avctx->width  = width;
 			avctx->height = height;
