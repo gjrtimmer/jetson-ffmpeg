@@ -519,11 +519,23 @@ static int ff_nvmpi_send_frame(AVCodecContext *avctx,const AVFrame *frame)
 
 			ts = av_rescale_q(frame->pts, avctx->time_base, NVENC_TIMEBASE);
 
-			res = nvmpi_encoder_put_frame_fd(nvmpi_context->ctx,
-				desc->objects[0].fd,
-				frame->width, frame->height,
-				desc->layers[0].planes[0].pitch,
-				ts);
+			/* Prefer the original NvBufSurface-registered fd from
+			 * format_modifier when present (vendor 0x4E tag set by
+			 * the decoder and scale_vic filter).  Dup'd fds in
+			 * objects[0].fd are NOT registered in NvBufSurface's
+			 * internal table — V4L2 DMABUF qbuf fails with them. */
+			{
+				int enc_fd = desc->objects[0].fd;
+				uint64_t mod = desc->objects[0].format_modifier;
+				if ((mod >> 56) == 0x4E)
+					enc_fd = (int)(mod & 0xFFFFFFFF);
+
+				res = nvmpi_encoder_put_frame_fd(nvmpi_context->ctx,
+					enc_fd,
+					frame->width, frame->height,
+					desc->layers[0].planes[0].pitch,
+					ts);
+			}
 
 			return res < 0 ? res : 0;
 		}

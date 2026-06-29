@@ -1485,10 +1485,10 @@ index 0000000..f8ddf97
 +
 diff --git a/libavcodec/nvmpi_enc.c b/libavcodec/nvmpi_enc.c
 new file mode 100644
-index 0000000..621bc14
+index 0000000..f9577ab
 --- /dev/null
 +++ b/libavcodec/nvmpi_enc.c
-@@ -0,0 +1,834 @@
+@@ -0,0 +1,846 @@
 +/*
 + * nvmpi_enc.c — FFmpeg encoder wrapper for libnvmpi (layer 2 of
 + * jetson-ffmpeg, the FFmpeg integration layer).
@@ -2010,11 +2010,23 @@ index 0000000..621bc14
 +
 +			ts = av_rescale_q(frame->pts, avctx->time_base, NVENC_TIMEBASE);
 +
-+			res = nvmpi_encoder_put_frame_fd(nvmpi_context->ctx,
-+				desc->objects[0].fd,
-+				frame->width, frame->height,
-+				desc->layers[0].planes[0].pitch,
-+				ts);
++			/* Prefer the original NvBufSurface-registered fd from
++			 * format_modifier when present (vendor 0x4E tag set by
++			 * the decoder and scale_vic filter).  Dup'd fds in
++			 * objects[0].fd are NOT registered in NvBufSurface's
++			 * internal table — V4L2 DMABUF qbuf fails with them. */
++			{
++				int enc_fd = desc->objects[0].fd;
++				uint64_t mod = desc->objects[0].format_modifier;
++				if ((mod >> 56) == 0x4E)
++					enc_fd = (int)(mod & 0xFFFFFFFF);
++
++				res = nvmpi_encoder_put_frame_fd(nvmpi_context->ctx,
++					enc_fd,
++					frame->width, frame->height,
++					desc->layers[0].planes[0].pitch,
++					ts);
++			}
 +
 +			return res < 0 ? res : 0;
 +		}
@@ -2750,10 +2762,10 @@ index 0000000..44c9ffa
 +#endif /* DYNLINK_NVMPI_VIC_H */
 diff --git a/libavfilter/vf_scale_vic.c b/libavfilter/vf_scale_vic.c
 new file mode 100644
-index 0000000..a996da9
+index 0000000..ce4c0c4
 --- /dev/null
 +++ b/libavfilter/vf_scale_vic.c
-@@ -0,0 +1,593 @@
+@@ -0,0 +1,599 @@
 +/*
 + * vf_scale_vic.c — Tegra VIC hardware scale/CSC filter for FFmpeg.
 + *
@@ -3208,10 +3220,16 @@ index 0000000..a996da9
 +     * needs a valid lower bound for downstream consumers). */
 +    dst_pitch = outlink->w;
 +
-+    /* Single DMA-BUF object, one NV12 layer with luma + chroma planes */
++    /* Single DMA-BUF object, one NV12 layer with luma + chroma planes.
++     * format_modifier carries the original NvBufSurface-registered fd
++     * (dst_fd) so the downstream encoder can call NvBufSurfaceFromFd /
++     * V4L2 DMABUF qbuf without hitting the dup'd-fd lookup failure.
++     * Uses the same NVMPI_DRM_MOD_ORIG_FD convention as the decoder. */
 +    out_desc->nb_objects = 1;
-+    out_desc->objects[0].fd   = dup_fd;
-+    out_desc->objects[0].size = (size_t)dst_pitch * outlink->h * 3 / 2;
++    out_desc->objects[0].fd              = dup_fd;
++    out_desc->objects[0].size            = (size_t)dst_pitch * outlink->h * 3 / 2;
++    out_desc->objects[0].format_modifier =
++        ((0x4EULL) << 56) | ((uint64_t)(unsigned int)(dst_fd));
 +
 +    out_desc->nb_layers = 1;
 +    out_desc->layers[0].format    = DRM_FORMAT_NV12;

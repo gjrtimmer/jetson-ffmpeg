@@ -452,10 +452,16 @@ static int scale_vic_filter_frame(AVFilterLink *inlink, AVFrame *in)
      * needs a valid lower bound for downstream consumers). */
     dst_pitch = outlink->w;
 
-    /* Single DMA-BUF object, one NV12 layer with luma + chroma planes */
+    /* Single DMA-BUF object, one NV12 layer with luma + chroma planes.
+     * format_modifier carries the original NvBufSurface-registered fd
+     * (dst_fd) so the downstream encoder can call NvBufSurfaceFromFd /
+     * V4L2 DMABUF qbuf without hitting the dup'd-fd lookup failure.
+     * Uses the same NVMPI_DRM_MOD_ORIG_FD convention as the decoder. */
     out_desc->nb_objects = 1;
-    out_desc->objects[0].fd   = dup_fd;
-    out_desc->objects[0].size = (size_t)dst_pitch * outlink->h * 3 / 2;
+    out_desc->objects[0].fd              = dup_fd;
+    out_desc->objects[0].size            = (size_t)dst_pitch * outlink->h * 3 / 2;
+    out_desc->objects[0].format_modifier =
+        ((0x4EULL) << 56) | ((uint64_t)(unsigned int)(dst_fd));
 
     out_desc->nb_layers = 1;
     out_desc->layers[0].format    = DRM_FORMAT_NV12;
