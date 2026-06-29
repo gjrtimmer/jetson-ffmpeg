@@ -2775,10 +2775,10 @@ index 0000000..44c9ffa
 +#endif /* DYNLINK_NVMPI_VIC_H */
 diff --git a/libavfilter/vf_scale_vic.c b/libavfilter/vf_scale_vic.c
 new file mode 100644
-index 0000000..ce4c0c4
+index 0000000..3de966c
 --- /dev/null
 +++ b/libavfilter/vf_scale_vic.c
-@@ -0,0 +1,599 @@
+@@ -0,0 +1,635 @@
 +/*
 + * vf_scale_vic.c — Tegra VIC hardware scale/CSC filter for FFmpeg.
 + *
@@ -3055,12 +3055,16 @@ index 0000000..ce4c0c4
 +     *
 +     * FFmpeg 7.1+ (libavfilter 10.5+): hw_frames_ctx moved from
 +     * AVFilterLink to FilterLink (accessed via ff_filter_link()).
-+     * Earlier versions (6.0–7.0) have it directly on AVFilterLink. */
++     * Earlier versions (6.0–7.0) have it directly on AVFilterLink.
++     *
++     * Unref any old hw_frames_ctx first (reinit safety — FFmpeg 7.x
++     * can call config_output a second time). */
 +#if (LIBAVFILTER_VERSION_MAJOR > 10) || \
 +    (LIBAVFILTER_VERSION_MAJOR == 10 && LIBAVFILTER_VERSION_MINOR >= 5)
 +    {
 +        FilterLink *il = ff_filter_link(inlink);
 +        FilterLink *ol = ff_filter_link(outlink);
++        av_buffer_unref(&ol->hw_frames_ctx);
 +        if (il->hw_frames_ctx) {
 +            ol->hw_frames_ctx = av_buffer_ref(il->hw_frames_ctx);
 +            if (!ol->hw_frames_ctx)
@@ -3068,6 +3072,7 @@ index 0000000..ce4c0c4
 +        }
 +    }
 +#else
++    av_buffer_unref(&outlink->hw_frames_ctx);
 +    if (inlink->hw_frames_ctx) {
 +        outlink->hw_frames_ctx = av_buffer_ref(inlink->hw_frames_ctx);
 +        if (!outlink->hw_frames_ctx)
@@ -3075,35 +3080,53 @@ index 0000000..ce4c0c4
 +    }
 +#endif
 +
-+    /* Pre-allocate source DMA-BUF surface pool at input resolution.
-+     * The decoder outputs dup'd fds that are not registered in NvBufSurface.
-+     * Frame data is copied into these registered buffers before VIC transform. */
-+    for (i = 0; i < VIC_OUTPUT_POOL_SIZE; i++) {
-+        /* Allocated here; freed in scale_vic_uninit() via nvmpi_surface_destroy */
-+        ret = nvmpi_surface_alloc(inlink->w, inlink->h, &s->in_fds[i]);
-+        if (ret < 0) {
-+            av_log(avctx, AV_LOG_ERROR,
-+                   "scale_vic: failed to allocate input surface %d (%dx%d)\n",
-+                   i, inlink->w, inlink->h);
-+            return AVERROR_EXTERNAL;
++    /* Surface pool allocation.
++     *
++     * FFmpeg 7.x re-derives buffersrc parameters from decoded frames,
++     * which can trigger config_output a second time (filter reinit).
++     * The existing surface pools are still valid — FFmpeg does NOT call
++     * uninit during reinit.  Freeing and reallocating DMA-BUF surfaces
++     * corrupts the Tegra NvBufSurface fd-to-surface cache, causing
++     * NvMapMemCacheMaint errors and VIC transform hangs.
++     *
++     * Skip pool reallocation if pools are already allocated — the reinit
++     * is for format/hw_frames_ctx propagation only. */
++    if (s->in_pool_size > 0) {
++        av_log(avctx, AV_LOG_INFO,
++               "scale_vic: config_output reinit — reusing %d+%d existing "
++               "surface pools\n", s->in_pool_size, s->pool_size);
++    } else {
++        /* First call — allocate source DMA-BUF surface pool at input
++         * resolution.  The decoder outputs dup'd fds that are not
++         * registered in NvBufSurface.  Frame data is copied into these
++         * registered buffers before VIC transform. */
++        for (i = 0; i < VIC_OUTPUT_POOL_SIZE; i++) {
++            /* Allocated here; freed in scale_vic_uninit() */
++            ret = nvmpi_surface_alloc(inlink->w, inlink->h, &s->in_fds[i]);
++            if (ret < 0) {
++                av_log(avctx, AV_LOG_ERROR,
++                       "scale_vic: failed to allocate input surface %d "
++                       "(%dx%d)\n", i, inlink->w, inlink->h);
++                return AVERROR_EXTERNAL;
++            }
 +        }
-+    }
-+    s->in_pool_size = VIC_OUTPUT_POOL_SIZE;
-+    s->in_pool_idx  = 0;
++        s->in_pool_size = VIC_OUTPUT_POOL_SIZE;
++        s->in_pool_idx  = 0;
 +
-+    /* Pre-allocate output DMA-BUF surface pool at target resolution */
-+    for (i = 0; i < VIC_OUTPUT_POOL_SIZE; i++) {
-+        /* Allocated here; freed in scale_vic_uninit() via nvmpi_surface_destroy */
-+        ret = nvmpi_surface_alloc(out_w, out_h, &s->out_fds[i]);
-+        if (ret < 0) {
-+            av_log(avctx, AV_LOG_ERROR,
-+                   "scale_vic: failed to allocate output surface %d (%dx%d)\n",
-+                   i, out_w, out_h);
-+            return AVERROR_EXTERNAL;
++        /* Pre-allocate output DMA-BUF surface pool at target resolution */
++        for (i = 0; i < VIC_OUTPUT_POOL_SIZE; i++) {
++            /* Allocated here; freed in scale_vic_uninit() */
++            ret = nvmpi_surface_alloc(out_w, out_h, &s->out_fds[i]);
++            if (ret < 0) {
++                av_log(avctx, AV_LOG_ERROR,
++                       "scale_vic: failed to allocate output surface %d "
++                       "(%dx%d)\n", i, out_w, out_h);
++                return AVERROR_EXTERNAL;
++            }
 +        }
++        s->pool_size = VIC_OUTPUT_POOL_SIZE;
++        s->pool_idx  = 0;
 +    }
-+    s->pool_size = VIC_OUTPUT_POOL_SIZE;
-+    s->pool_idx  = 0;
 +
 +    av_log(avctx, AV_LOG_INFO,
 +           "scale_vic: %dx%d → %dx%d (hardware, %d source + %d output buffers)\n",
@@ -3127,9 +3150,22 @@ index 0000000..ce4c0c4
 +    int src_fd, dst_fd, dup_fd, ret;
 +    int dst_pitch;
 +
-+    av_log(avctx, AV_LOG_INFO,
++    av_log(avctx, AV_LOG_DEBUG,
 +           "scale_vic: filter_frame entry pts=%" PRId64 " %dx%d fmt=%d\n",
 +           in->pts, in->width, in->height, in->format);
++
++    /* Passthrough: if input dimensions already match the requested
++     * output, forward the frame directly without VIC processing.
++     * An identity NvBufSurfTransform (same src/dst dimensions) hangs
++     * on some Tegra driver versions when combined with FFmpeg 7.x
++     * filter graph reinit.  Passthrough is also faster — zero copy,
++     * zero VIC overhead. */
++    if (in->width == outlink->w && in->height == outlink->h) {
++        av_log(avctx, AV_LOG_DEBUG,
++               "scale_vic: passthrough %dx%d (no transform needed)\n",
++               in->width, in->height);
++        return ff_filter_frame(outlink, in);
++    }
 +
 +    /* Extract source DMA-BUF fd from input DRM_PRIME frame */
 +    if (in->format != AV_PIX_FMT_DRM_PRIME) {
@@ -3148,7 +3184,7 @@ index 0000000..ce4c0c4
 +        return AVERROR(EINVAL);
 +    }
 +
-+    av_log(avctx, AV_LOG_INFO,
++    av_log(avctx, AV_LOG_DEBUG,
 +           "scale_vic: input fd=%d pitch=%d, starting copy to registered surface\n",
 +           in_desc->objects[0].fd,
 +           (int)in_desc->layers[0].planes[0].pitch);
@@ -3172,7 +3208,7 @@ index 0000000..ce4c0c4
 +        return AVERROR_EXTERNAL;
 +    }
 +
-+    av_log(avctx, AV_LOG_INFO,
++    av_log(avctx, AV_LOG_DEBUG,
 +           "scale_vic: copy done, starting transform src_fd=%d → dst_fd=%d "
 +           "(%dx%d → %dx%d)\n",
 +           src_fd, s->out_fds[s->pool_idx],
@@ -3194,7 +3230,7 @@ index 0000000..ce4c0c4
 +        return AVERROR_EXTERNAL;
 +    }
 +
-+    av_log(avctx, AV_LOG_INFO,
++    av_log(avctx, AV_LOG_DEBUG,
 +           "scale_vic: transform done, building output frame\n");
 +
 +    /* Build output frame */
@@ -3287,7 +3323,7 @@ index 0000000..ce4c0c4
 +
 +    av_frame_free(&in);
 +
-+    av_log(avctx, AV_LOG_INFO,
++    av_log(avctx, AV_LOG_DEBUG,
 +           "scale_vic: calling ff_filter_frame (output %dx%d, fd=%d)\n",
 +           out->width, out->height, dup_fd);
 +
