@@ -63,16 +63,16 @@ nvmpi_vic_ctx *nvmpi_vic_create(void)
         return NULL;
     }
 
-    /* Use GPU (CUDA) compute instead of VIC for standalone transforms.
-     * The decoder's capture thread also uses NvBufSurfTransform with VIC
-     * compute mode (nvmpi_dec_capture.cpp); concurrent VIC submissions
-     * from two threads cause the Tegra driver to deadlock.  Using GPU
-     * compute for the filter avoids VIC hardware contention while still
-     * leveraging hardware-accelerated scaling via the iGPU. */
+    /* Use VIC hardware compute — same as the decoder capture thread
+     * (nvmpi_dec_capture.cpp).  The global nvmpi_transform_mutex
+     * serializes all NvBufSurfTransform calls across threads, so
+     * concurrent VIC submissions are impossible and GPU compute is
+     * not needed.  VIC is preferred over GPU because it does not
+     * require CUDA context initialization — on JetPack 6 (Orin NX),
+     * NvBufSurfTransformCompute_GPU causes SIGABRT when CUDA is not
+     * explicitly initialized in the FFmpeg filter process context. */
 #ifdef WITH_NVUTILS
-    ctx->session.compute_mode = NvBufSurfTransformCompute_GPU;
-    ctx->session.gpu_id = 0;
-    ctx->session.cuda_stream = 0;
+    ctx->session.compute_mode = NvBufSurfTransformCompute_VIC;
     int ret = NvBufSurfTransformSetSessionParams(&ctx->session);
     if (ret != 0) {
         NVMPI_LOG(NVMPI_LOG_ERROR,
