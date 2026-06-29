@@ -53,9 +53,14 @@ nvmpi_vic_ctx *nvmpi_vic_create(void)
         return NULL;
     }
 
-    /* Bind the VIC engine for this thread's transform operations */
+    /* Use GPU (CUDA) compute instead of VIC for standalone transforms.
+     * The decoder's capture thread also uses NvBufSurfTransform with VIC
+     * compute mode (nvmpi_dec_capture.cpp); concurrent VIC submissions
+     * from two threads cause the Tegra driver to deadlock.  Using GPU
+     * compute for the filter avoids VIC hardware contention while still
+     * leveraging hardware-accelerated scaling via the iGPU. */
 #ifdef WITH_NVUTILS
-    ctx->session.compute_mode = NvBufSurfTransformCompute_VIC;
+    ctx->session.compute_mode = NvBufSurfTransformCompute_GPU;
     ctx->session.gpu_id = 0;
     ctx->session.cuda_stream = 0;
     int ret = NvBufSurfTransformSetSessionParams(&ctx->session);
@@ -146,9 +151,15 @@ int nvmpi_vic_transform(nvmpi_vic_ctx *ctx,
     ctx->transform_params.session   = ctx->session;
 #endif
 
-    /* Execute the VIC transform */
+    /* Execute the hardware transform */
     int ret;
 #ifdef WITH_NVUTILS
+    /* Re-set session params before each transform — ensures this thread's
+     * session binding is current even if NvBufSurfTransformSetSessionParams
+     * was called on a different thread (e.g. decoder capture thread)
+     * between nvmpi_vic_create and this call. */
+    NvBufSurfTransformSetSessionParams(&ctx->session);
+
     /* Resolve NvBufSurface pointers from the fd pair — NvBufSurfTransform
      * requires NvBufSurface*, not raw fds.  The surface structs are
      * transient (stack-local); the underlying DMA buffers are not copied. */
