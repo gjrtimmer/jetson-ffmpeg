@@ -146,11 +146,25 @@ int nvmpi_vic_transform(nvmpi_vic_ctx *ctx,
 
     /* Configure transform: bilinear filtering (Algo3 = high quality),
      * no flip/rotation.  Same settings as the decoder capture loop
-     * (nvmpi_dec_api.cpp:updateBufferTransformParams). */
+     * (nvmpi_dec_api.cpp:updateBufferTransformParams).
+     *
+     * Identity dimensions (src == dst): NvBufSurfTransform deadlocks on
+     * JP6 (Orin) when both surfaces have identical dimensions and only
+     * FILTER is set.  Adding CROP_SRC and CROP_DST with full-frame rects
+     * forces the VIC through the scale pipeline instead of a no-op
+     * shortcut that hangs. */
     memset(&ctx->transform_params, 0, sizeof(ctx->transform_params));
-    ctx->transform_params.transform_flag   = NVBUFFER_TRANSFORM_FILTER;
     ctx->transform_params.transform_flip   = NvBufferTransform_None;
     ctx->transform_params.transform_filter = NvBufferTransform_Filter_Smart;
+
+    if (src_w == dst_w && src_h == dst_h) {
+        ctx->transform_params.transform_flag =
+            NVBUFFER_TRANSFORM_FILTER |
+            NVBUFSURF_TRANSFORM_CROP_SRC |
+            NVBUFSURF_TRANSFORM_CROP_DST;
+    } else {
+        ctx->transform_params.transform_flag = NVBUFFER_TRANSFORM_FILTER;
+    }
 
 #ifdef WITH_NVUTILS
     ctx->transform_params.src_rect = &ctx->src_rect;

@@ -332,10 +332,14 @@ static int scale_vic_config_output(AVFilterLink *outlink)
         s->in_pool_size = VIC_OUTPUT_POOL_SIZE;
         s->in_pool_idx  = 0;
 
-        /* Pre-allocate output DMA-BUF surface pool at target resolution */
+        /* Pre-allocate output DMA-BUF surface pool at target resolution.
+         * Uses VIDEO_ENC memtag — these surfaces are VIC transform
+         * destinations AND encoder DMABUF inputs; the encoder's NvMMLite
+         * layer requires VIDEO_ENC to resolve NvMap handles during its
+         * internal format conversion. */
         for (i = 0; i < VIC_OUTPUT_POOL_SIZE; i++) {
             /* Allocated here; freed in scale_vic_uninit() */
-            ret = nvmpi_surface_alloc(out_w, out_h, &s->out_fds[i]);
+            ret = nvmpi_surface_alloc_for_enc(out_w, out_h, &s->out_fds[i]);
             if (ret < 0) {
                 av_log(avctx, AV_LOG_ERROR,
                        "scale_vic: failed to allocate output surface %d "
@@ -373,19 +377,6 @@ static int scale_vic_filter_frame(AVFilterLink *inlink, AVFrame *in)
            "scale_vic: filter_frame entry pts=%" PRId64 " %dx%d fmt=%d\n",
            in->pts, in->width, in->height, in->format);
 
-    /* Passthrough: if input dimensions already match the requested
-     * output, forward the frame directly without VIC processing.
-     * An identity NvBufSurfTransform (same src/dst dimensions) hangs
-     * on some Tegra driver versions when combined with FFmpeg 7.x
-     * filter graph reinit.  Passthrough is also faster — zero copy,
-     * zero VIC overhead. */
-    if (in->width == outlink->w && in->height == outlink->h) {
-        av_log(avctx, AV_LOG_DEBUG,
-               "scale_vic: passthrough %dx%d (no transform needed)\n",
-               in->width, in->height);
-        return ff_filter_frame(outlink, in);
-    }
-
     /* Extract source DMA-BUF fd from input DRM_PRIME frame */
     if (in->format != AV_PIX_FMT_DRM_PRIME) {
         av_log(avctx, AV_LOG_ERROR,
@@ -404,9 +395,14 @@ static int scale_vic_filter_frame(AVFilterLink *inlink, AVFrame *in)
     }
 
     av_log(avctx, AV_LOG_DEBUG,
-           "scale_vic: input fd=%d pitch=%d, starting copy to registered surface\n",
+           "scale_vic: input fd=%d pitch=%d, %dx%d → %dx%d\n",
            in_desc->objects[0].fd,
-           (int)in_desc->layers[0].planes[0].pitch);
+           (int)in_desc->layers[0].planes[0].pitch,
+           in->width, in->height, outlink->w, outlink->h);
+
+    /* Get next output buffer from the ring pool */
+    dst_fd = s->out_fds[s->pool_idx];
+    s->pool_idx = (s->pool_idx + 1) % s->pool_size;
 
     /* Copy the dup'd DMA-BUF frame data into a registered source buffer.
      * The decoder dup()s its fds for AVFrame lifetime safety, but dup'd
@@ -417,27 +413,27 @@ static int scale_vic_filter_frame(AVFilterLink *inlink, AVFrame *in)
     src_fd = s->in_fds[s->in_pool_idx];
     s->in_pool_idx = (s->in_pool_idx + 1) % s->in_pool_size;
 
-    ret = nvmpi_surface_copy_from_dmabuf(src_fd, in_desc->objects[0].fd,
+    ret = nvmpi_surface_copy_from_dmabuf(src_fd,
+                                         in_desc->objects[0].fd,
                                          in->width, in->height,
                                          in_desc->layers[0].planes[0].pitch);
     if (ret < 0) {
         av_log(avctx, AV_LOG_ERROR,
-               "scale_vic: failed to copy input frame to registered surface\n");
+               "scale_vic: failed to copy input frame to registered "
+               "surface\n");
         av_frame_free(&in);
         return AVERROR_EXTERNAL;
     }
 
     av_log(avctx, AV_LOG_DEBUG,
-           "scale_vic: copy done, starting transform src_fd=%d → dst_fd=%d "
+           "scale_vic: transform src_fd=%d → dst_fd=%d "
            "(%dx%d → %dx%d)\n",
-           src_fd, s->out_fds[s->pool_idx],
+           src_fd, dst_fd,
            in->width, in->height, outlink->w, outlink->h);
 
-    /* Get next output buffer from the ring pool */
-    dst_fd = s->out_fds[s->pool_idx];
-    s->pool_idx = (s->pool_idx + 1) % s->pool_size;
-
-    /* Execute hardware transform: scale src → dst */
+    /* Execute hardware transform: scale src → dst.
+     * nvmpi_vic_transform handles identity dimensions (src == dst)
+     * internally by adding crop flags to avoid a JP6 VIC deadlock. */
     ret = nvmpi_vic_transform(s->vic_ctx, src_fd, dst_fd,
                               in->width, in->height,
                               outlink->w, outlink->h);

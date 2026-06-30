@@ -4,9 +4,16 @@
  *
  * Wraps NvBufSurf::NvAllocate / NvBufferCreateEx behind a simple C API
  * so FFmpeg wrappers (or any caller) can allocate pitch-linear NV12
- * DMA-BUF surfaces compatible with the encoder's V4L2_MEMORY_DMABUF
- * OUTPUT plane. The critical detail is NvBufSurfaceTag_VIDEO_CONVERT —
- * without this memtag the VIC hardware and encoder reject the buffer.
+ * DMA-BUF surfaces for the zero-copy pipeline.
+ *
+ * Two allocation functions for different NvMap domains:
+ *   nvmpi_surface_alloc         — VIDEO_CONVERT memtag for VIC-only buffers
+ *   nvmpi_surface_alloc_for_enc — VIDEO_ENC memtag for encoder-bound buffers
+ *
+ * The memtag determines which NvMap domain the buffer is registered in.
+ * The encoder's NvMMLite layer requires VIDEO_ENC to resolve the NvMap
+ * handle during its internal VIC format conversion; VIDEO_CONVERT
+ * buffers cause NVMAP_IOC_PARAMETERS failures at the encoder.
  *
  * Supports both buffer API generations:
  *   - NvUtils/NvBufSurface (WITH_NVUTILS, JetPack 5+)
@@ -20,9 +27,11 @@
 #include <linux/dma-buf.h>
 #include <sys/ioctl.h>
 
-/* Allocated here; freed in nvmpi_surface_destroy() via NvBufferDestroy */
-int nvmpi_surface_alloc(unsigned int width, unsigned int height,
-	int *dmabuf_fd)
+/* Internal: allocate a pitch-linear NV12 DMA-BUF surface with a
+ * specific NvBufSurfaceTag.  Both public alloc functions delegate here.
+ * Allocated here; freed in nvmpi_surface_destroy() via NvBufferDestroy. */
+static int nvmpi_surface_alloc_internal(unsigned int width, unsigned int height,
+	int *dmabuf_fd, int use_enc_tag)
 {
 	if (!dmabuf_fd) return -1;
 	*dmabuf_fd = -1;
@@ -45,13 +54,19 @@ int nvmpi_surface_alloc(unsigned int width, unsigned int height,
 	params.colorFormat = NvBufferColorFormat_NV12;
 #ifdef WITH_NVUTILS
 	params.memType = NVBUF_MEM_SURFACE_ARRAY;
-	/* VIDEO_CONVERT memtag: marks the surface as VIC-compatible so the
-	 * encoder's V4L2 DMABUF path accepts it. Without this tag the
-	 * driver rejects the fd at qBuffer time with -EINVAL. */
-	params.memtag = NvBufSurfaceTag_VIDEO_CONVERT;
+	/* VIDEO_CONVERT: VIC-only buffers (not passed to encoder).
+	 * VIDEO_ENC: encoder-bound buffers — registers in the encoder's
+	 * NvMap domain so NvMMLite's internal VIC format conversion can
+	 * resolve the NvMap handle. Without VIDEO_ENC, the encoder fails
+	 * with NVMAP_IOC_PARAMETERS at larger resolutions. */
+	params.memtag = use_enc_tag
+		? NvBufSurfaceTag_VIDEO_ENC
+		: NvBufSurfaceTag_VIDEO_CONVERT;
 #else
 	params.payloadType = NvBufferPayload_SurfArray;
-	params.nvbuf_tag = NvBufferTag_VIDEO_CONVERT;
+	params.nvbuf_tag = use_enc_tag
+		? NvBufferTag_VIDEO_ENC
+		: NvBufferTag_VIDEO_CONVERT;
 #endif
 
 	int fd = -1;
@@ -62,13 +77,28 @@ int nvmpi_surface_alloc(unsigned int width, unsigned int height,
 #endif
 	if (ret < 0 || fd < 0) {
 		NVMPI_LOG(NVMPI_LOG_ERROR,
-			  "nvmpi_surface_alloc: NvAllocate failed (%dx%d)",
-			  width, height);
+			  "nvmpi_surface_alloc: NvAllocate failed (%dx%d, enc_tag=%d)",
+			  width, height, use_enc_tag);
 		return -1;
 	}
 
 	*dmabuf_fd = fd;
 	return 0;
+}
+
+/* Public: allocate with VIDEO_CONVERT tag (VIC-only buffers) */
+int nvmpi_surface_alloc(unsigned int width, unsigned int height,
+	int *dmabuf_fd)
+{
+	return nvmpi_surface_alloc_internal(width, height, dmabuf_fd, 0);
+}
+
+/* Public: allocate with VIDEO_ENC tag (encoder-bound buffers).
+ * VIC transform also works on VIDEO_ENC tagged surfaces. */
+int nvmpi_surface_alloc_for_enc(unsigned int width, unsigned int height,
+	int *dmabuf_fd)
+{
+	return nvmpi_surface_alloc_internal(width, height, dmabuf_fd, 1);
 }
 
 /* Freed here; allocated in nvmpi_surface_alloc() above */

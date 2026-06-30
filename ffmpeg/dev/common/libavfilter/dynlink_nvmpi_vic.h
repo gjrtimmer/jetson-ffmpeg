@@ -41,6 +41,8 @@ typedef void           (*fn_nvmpi_vic_close)(nvmpi_vic_ctx *ctx);
 /* Surface alloc/free/copy (shared with encoder path, same libnvmpi.so) */
 typedef int            (*fn_nvmpi_surface_alloc)(unsigned int width,
                            unsigned int height, int *dmabuf_fd);
+typedef int            (*fn_nvmpi_surface_alloc_for_enc)(unsigned int width,
+                           unsigned int height, int *dmabuf_fd);
 typedef int            (*fn_nvmpi_surface_destroy)(int dmabuf_fd);
 typedef int            (*fn_nvmpi_surface_copy_from_dmabuf)(int dst_fd,
                            int src_fd, unsigned int width,
@@ -54,6 +56,7 @@ static fn_nvmpi_vic_create       nvmpi_vic_create_dl;
 static fn_nvmpi_vic_transform    nvmpi_vic_transform_dl;
 static fn_nvmpi_vic_close        nvmpi_vic_close_dl;
 static fn_nvmpi_surface_alloc              nvmpi_surface_alloc_dl;
+static fn_nvmpi_surface_alloc_for_enc      nvmpi_surface_alloc_for_enc_dl;
 static fn_nvmpi_surface_destroy            nvmpi_surface_destroy_dl;
 static fn_nvmpi_surface_copy_from_dmabuf   nvmpi_surface_copy_from_dmabuf_dl;
 
@@ -87,8 +90,9 @@ static int nvmpi_vic_dynlink_load(void)
     NVMPI_VIC_LOAD_SYM(nvmpi_vic_close_dl,       nvmpi_vic_close);
 
     /* Surface allocation symbols (same .so, shared with encoder path) */
-    NVMPI_VIC_LOAD_SYM(nvmpi_surface_alloc_dl,   nvmpi_surface_alloc);
-    NVMPI_VIC_LOAD_SYM(nvmpi_surface_destroy_dl, nvmpi_surface_destroy);
+    NVMPI_VIC_LOAD_SYM(nvmpi_surface_alloc_dl,           nvmpi_surface_alloc);
+    NVMPI_VIC_LOAD_SYM(nvmpi_surface_alloc_for_enc_dl,   nvmpi_surface_alloc_for_enc);
+    NVMPI_VIC_LOAD_SYM(nvmpi_surface_destroy_dl,         nvmpi_surface_destroy);
     NVMPI_VIC_LOAD_SYM(nvmpi_surface_copy_from_dmabuf_dl,
                         nvmpi_surface_copy_from_dmabuf);
 
@@ -108,6 +112,7 @@ fail:
 #define nvmpi_vic_transform    nvmpi_vic_transform_dl
 #define nvmpi_vic_close        nvmpi_vic_close_dl
 #define nvmpi_surface_alloc              nvmpi_surface_alloc_dl
+#define nvmpi_surface_alloc_for_enc      nvmpi_surface_alloc_for_enc_dl
 #define nvmpi_surface_destroy            nvmpi_surface_destroy_dl
 #define nvmpi_surface_copy_from_dmabuf   nvmpi_surface_copy_from_dmabuf_dl
 

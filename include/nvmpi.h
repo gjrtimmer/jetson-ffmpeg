@@ -314,17 +314,29 @@ extern "C" {
 		int dmabuf_fd, int width, int height, int pitch,
 		int64_t timestamp);
 
-	//Allocate a pitch-linear NV12 DMA-BUF surface suitable for passing
-	//to nvmpi_encoder_put_frame_fd. The surface is allocated with
-	//NvBufSurfaceTag_VIDEO_CONVERT so the encoder's VIC hardware can
-	//access it. Returns 0 on success and writes the dmabuf fd to
-	//*dmabuf_fd. On failure returns -1 and *dmabuf_fd is set to -1.
+	//Allocate a pitch-linear NV12 DMA-BUF surface tagged for VIC
+	//transform (NvBufSurfaceTag_VIDEO_CONVERT). Use this for surfaces
+	//that are VIC source/destination but NOT passed directly to the
+	//encoder's V4L2 DMABUF output plane.
+	//Returns 0 on success and writes the dmabuf fd to *dmabuf_fd.
+	//On failure returns -1 and *dmabuf_fd is set to -1.
 	int nvmpi_surface_alloc(unsigned int width, unsigned int height,
 		int *dmabuf_fd);
 
-	//Destroy a surface previously allocated with nvmpi_surface_alloc.
-	//Safe to call with dmabuf_fd == -1 (no-op). Returns 0 on success,
-	//-1 on NvBufferDestroy failure.
+	//Allocate a pitch-linear NV12 DMA-BUF surface tagged for the
+	//encoder (NvBufSurfaceTag_VIDEO_ENC). Use this for surfaces that
+	//will be passed to the encoder's V4L2 DMABUF output plane via
+	//nvmpi_encoder_put_frame_fd. The VIDEO_ENC memtag registers the
+	//buffer in the encoder's NvMap domain so NvMMLite can access it
+	//for internal format conversion.
+	//VIC hardware transform also works with VIDEO_ENC tagged surfaces.
+	//Returns 0 on success, -1 on failure.
+	int nvmpi_surface_alloc_for_enc(unsigned int width, unsigned int height,
+		int *dmabuf_fd);
+
+	//Destroy a surface previously allocated with nvmpi_surface_alloc
+	//or nvmpi_surface_alloc_for_enc. Safe to call with dmabuf_fd == -1
+	//(no-op). Returns 0 on success, -1 on NvBufferDestroy failure.
 	int nvmpi_surface_destroy(int dmabuf_fd);
 
 	//Copy NV12 frame data from an unregistered DMA-BUF fd (e.g. dup'd
