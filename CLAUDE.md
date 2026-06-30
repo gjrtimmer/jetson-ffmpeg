@@ -58,6 +58,37 @@ HW_SUITES="decoder-chunk encoder-gop" ./test/hw-all.sh   # subset of suites
 
 There is no unit-test suite. Verification is layered: per-feature hardware suites (`test/hw-*.sh`, run by `test/hw-all.sh`; documented in `test/README.md`), the full cross-version harness (`test/smoke-all.sh`), and CI. New features/fixes ship together with the suite that guards them.
 
+### Fast iteration dev process
+
+For iterative development/debugging, use a tight local loop instead of
+waiting for the full CI pipeline (~2h10m). The devcontainer runs on JP6
+(R36.4.7, Orin Nano) — local tests validate JP6 behavior directly.
+
+```bash
+# 1. Build + install libnvmpi (~30s)
+./scripts/build.sh --install
+
+# 2. Build ONE FFmpeg version (~2 min)
+./scripts/build.sh --ffmpeg 7.1
+
+# 3. Test ONE suite (~1 min)
+export PATH="/home/vscode/ffmpeg-build/ffmpeg7.1:$PATH"
+HW_SUITES="filter-scale-vic" JETSON_VARIANT=orin-nano ./test/hw-all.sh
+
+# 4. Fix → repeat steps 1-3 until green (~5 min per cycle)
+# 5. Push to CI pipeline for full version matrix validation
+```
+
+**Version gate awareness:** When fixing version-specific issues, always
+check if the fix needs `#if LIBAVCODEC_VERSION_MAJOR` or
+`#ifdef WITH_NVUTILS` guards. Build at least one old (6.0) and one new
+(8.0+) version locally before pushing to confirm no regressions.
+
+**CI is for final validation only.** Use the local loop for development.
+Push to pipeline when the local test passes. The pipeline validates all
+8 FFmpeg versions × 2 JetPack versions — don't iterate on pipeline
+failures when you can reproduce locally.
+
 **Never push code changes without a passing `./test/smoke-all.sh` run** (7/7
 matrix green). Docs-only changes are exempt and may push with `-o ci.skip`.
 **Release commits are exempt from the smoke-all gate.** When creating a
