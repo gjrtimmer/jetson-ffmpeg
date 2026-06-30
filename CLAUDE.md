@@ -588,6 +588,20 @@ default for all sessions in this repo — do not wait for the user to request it
   progress — each call wastes tokens and context. One check to confirm the
   monitor is armed, then stop. If you need interim visibility, set up the
   Monitor with the right grep filter upfront, not by polling manually.
+- **Capture all workflow steps in todo upfront.** When the user gives
+  multi-step instructions (comments, patches, issue updates, commits), add
+  ALL steps to the todo list immediately — not one at a time as reminders
+  arrive. The user should never need to say "do not forget X" for a step
+  they already mentioned.
+- **Verify process cleanup after kills.** After killing processes (`kill`,
+  `pkill`), always run `ps aux | grep` to confirm they're gone, check for
+  orphaned child processes (tee, subshells), and clean up lock files. One
+  kill is not proof of death — verify.
+- **Prefer CI pipeline over local smoke-all for final validation.** When
+  changes have been locally validated on the affected version(s) and an MR
+  exists, let the CI pipeline handle full matrix validation. Don't start a
+  local `smoke-all.sh` run when the pipeline will do the same work — it
+  wastes time and competes for Jetson hardware.
 - **Validate release scope before tagging.** Before creating a release tag,
   list all planned items (issues, MRs, fixes) and verify each has landed on
   main via `git log`. A premature release requires retraction — deleting tags,
