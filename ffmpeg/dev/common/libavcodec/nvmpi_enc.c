@@ -47,11 +47,11 @@
 
 #include "version.h"
 
-//compatibility with ffmpeg 8.0+. FF_PROFILE renamed with AV_PROFILE
-//(libavcodec 62.11 deprecated the FF_PROFILE_* names; mapping the old
-//spellings here lets the rest of the file use FF_PROFILE_* everywhere.
-//The ">= 100" clause is future-proofing in case the minor resets.)
-#if (LIBAVCODEC_VERSION_MAJOR >= 62 && LIBAVCODEC_VERSION_MINOR>= 11) || (LIBAVCODEC_VERSION_MAJOR >= 100)
+/* Compatibility with FFmpeg 8.0+ (libavcodec >= 62.11): FF_PROFILE_*
+ * names were deprecated in favour of AV_PROFILE_*.  Detect this by
+ * checking whether FF_PROFILE_UNKNOWN is already defined — this avoids
+ * version-arithmetic bugs when MAJOR bumps and MINOR resets to 0. */
+#ifndef FF_PROFILE_UNKNOWN
 #define FF_PROFILE_H264_INTRA AV_PROFILE_H264_INTRA
 #define FF_PROFILE_UNKNOWN AV_PROFILE_UNKNOWN
 #define FF_PROFILE_H264_HIGH AV_PROFILE_H264_HIGH
