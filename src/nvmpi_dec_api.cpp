@@ -379,6 +379,10 @@ nvmpictx* nvmpi_create_decoder(nvDecParam* param)
 	ctx->hint_width = param->width;
 	ctx->hint_height = param->height;
 	ctx->framePool = new NVMPI_bufPool<nvmpi_frame_buffer*>();
+	/* Shared flag for DRM_PRIME frame release callbacks — stays valid
+	 * after decoder close because frame refs hold shared_ptr copies.
+	 * Allocated here; set to false in nvmpi_decoder_close(). */
+	ctx->pool_alive = std::make_shared<std::atomic<bool>>(true);
 	ctx->eos.store(false);
 	ctx->index=0;
 	for(int index=0;index<MAX_BUFFERS;index++)
@@ -564,6 +568,11 @@ int nvmpi_decoder_get_frame(nvmpictx* ctx, nvFrame* frame, bool wait)
 struct nvmpi_frame_ref {
 	nvmpi_frame_buffer *fb;
 	NVMPI_bufPool<nvmpi_frame_buffer*> *pool;
+	/* Shared flag from nvmpictx::pool_alive — stays valid after decoder
+	 * close because the shared_ptr ref-count keeps it alive. Checked
+	 * before accessing pool to avoid use-after-free when FFmpeg's
+	 * scheduler drops frame refs after codec close (FFmpeg 8.1+). */
+	std::shared_ptr<std::atomic<bool>> pool_alive;
 };
 
 //Release callback for nvmpi_decoder_get_frame_fd.
@@ -578,8 +587,15 @@ static void frame_fd_release_impl(void *opaque)
 	if (!ref) return;
 
 	/* Return the frame buffer to the pool's empty queue so the
-	 * capture thread can reuse it for future decoded frames. */
-	if (ref->pool && ref->fb)
+	 * capture thread can reuse it for future decoded frames.
+	 *
+	 * Guard: check pool_alive before accessing pool. When FFmpeg's
+	 * scheduler closes the codec before all frame refs are released
+	 * (FFmpeg 8.1+ changed shutdown order), the pool is already deleted.
+	 * The shared_ptr keeps the atomic<bool> alive past decoder close,
+	 * so this check is safe even after nvmpi_decoder_close returns. */
+	if (ref->pool && ref->fb &&
+	    ref->pool_alive && ref->pool_alive->load())
 		ref->pool->qEmptyBuf(ref->fb);
 
 	delete ref;
@@ -631,6 +647,7 @@ int nvmpi_decoder_get_frame_fd(nvmpictx* ctx,
 	nvmpi_frame_ref *ref = new nvmpi_frame_ref();
 	ref->fb = fb;
 	ref->pool = ctx->framePool;
+	ref->pool_alive = ctx->pool_alive;
 
 	*release = frame_fd_release_impl;
 	*opaque = ref;
@@ -720,6 +737,11 @@ int nvmpi_decoder_close(nvmpictx* ctx)
 	ctx->deinitDecoderCapturePlane();
 
 	ctx->deinitFramePool();
+	/* Signal DRM_PRIME release callbacks that the pool is gone —
+	 * must happen BEFORE delete so late-arriving callbacks (from
+	 * FFmpeg 8.1+ scheduler cleanup order) skip the qEmptyBuf call. */
+	if (ctx->pool_alive)
+		ctx->pool_alive->store(false);
 	delete ctx->framePool;
 	ctx->framePool = nullptr;
 

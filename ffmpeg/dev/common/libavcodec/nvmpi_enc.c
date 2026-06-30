@@ -37,8 +37,13 @@
 #include "libavutil/opt.h"
 #include "libavutil/mem.h"
 /* AVDRMFrameDescriptor: extracts DMA-BUF fd + pitch from DRM_PRIME input
- * frames for zero-copy encode via nvmpi_encoder_put_frame_fd(). */
+ * frames. DRM_PRIME frames are mmap'd for CPU read and fed through the
+ * regular MMAP encoder path (put_frame) — this avoids DMABUF-mode driver
+ * bugs (bBlitMode throughput deadlock, YUV420M segfault). */
 #include "libavutil/hwcontext_drm.h"
+#include <sys/mman.h>
+#include <sys/ioctl.h>
+#include <linux/dma-buf.h>
 
 #include "version.h"
 
@@ -105,7 +110,7 @@ typedef struct {
 	int lossless;               //enable lossless encoding (H.264 only, QP 0 + High 4:4:4)
 	int wait_timeout;           //blocking-wait ceiling in ms (0 = default 500ms)
 	int encoder_flushing;       //set after EOS was sent to libnvmpi
-	int dmabuf_input;           //set when pix_fmt is DRM_PRIME (zero-copy fd path)
+	int dmabuf_input;           //set when pix_fmt is DRM_PRIME (mmap+CPU-read path)
 	int64_t last_bitrate;       //track last-set bitrate for dynamic change detection
 	AVFrame *frame; //tmp frame
 	                //(holds the pulled-but-not-yet-sent input frame in the
@@ -276,13 +281,22 @@ static av_cold int nvmpi_encode_init(AVCodecContext *avctx)
 	//flag would not (the latent bug in the bradcagle/xsacha forks).
 	param.pixFormat = (avctx->pix_fmt == AV_PIX_FMT_NV12) ? NV_PIX_NV12 : NV_PIX_YUV420;
 
-	/* DRM_PRIME input: the DMA-BUF fd arrives via AVDRMFrameDescriptor;
-	 * the underlying pixel format is NV12 (Jetson's native hw layout).
-	 * Set use_dmabuf so libnvmpi creates the encoder with V4L2_MEMORY_DMABUF
-	 * on the OUTPUT plane, enabling zero-copy frame input. */
+	/* DRM_PRIME input: the DMA-BUF fd arrives via AVDRMFrameDescriptor.
+	 * The underlying pixel format is NV12 (Jetson's native hw layout).
+	 *
+	 * The encoder stays in MMAP mode (default) — NOT DMABUF mode.
+	 * DRM_PRIME frames are mmap'd for CPU read and copied into the
+	 * encoder's MMAP buffers via the regular put_frame path.  This
+	 * avoids two Tegra V4L2 driver bugs:
+	 *   1. bBlitMode throughput deadlock at 720p (NvBufSurface format
+	 *      vs V4L2 format mismatch triggers per-frame VIC conversion
+	 *      that can't keep up at passthrough speed)
+	 *   2. YUV420M + V4L2_MEMORY_DMABUF segfault at >1024x576
+	 *
+	 * pixFormat = NV_PIX_NV12 so MMAP buffers are NV12M (2 planes),
+	 * matching the NV12 data from the decoder/VIC filter. */
 	if (avctx->pix_fmt == AV_PIX_FMT_DRM_PRIME) {
 		param.pixFormat = NV_PIX_NV12;
-		param.use_dmabuf = 1;
 		nvmpi_context->dmabuf_input = 1;
 	}
 
@@ -329,15 +343,12 @@ static av_cold int nvmpi_encode_init(AVCodecContext *avctx)
 		int ret;
 		int64_t shiftPts = 1000000/param.fps_n;
 
-		/* GLOBAL_HEADER temp encoder must NOT use DMA-BUF mode — it feeds
-		 * CPU-allocated blank frames for SPS/PPS extraction. When the real
-		 * encoder uses DRM_PRIME, temporarily disable use_dmabuf and
-		 * allocate the blank frame as NV12 (DRM_PRIME has no pixel
-		 * description, so av_image_alloc would fail). */
-		int saved_use_dmabuf = param.use_dmabuf;
+		/* GLOBAL_HEADER temp encoder: allocate the blank frame as NV12
+		 * when the real encoder uses DRM_PRIME (DRM_PRIME has no pixel
+		 * description, so av_image_alloc would fail).  pixFormat is
+		 * already NV_PIX_NV12 for DRM_PRIME input (set above). */
 		enum AVPixelFormat alloc_fmt = (avctx->pix_fmt == AV_PIX_FMT_DRM_PRIME)
 			? AV_PIX_FMT_NV12 : avctx->pix_fmt;
-		param.use_dmabuf = 0;
 
 		if(avctx->codec->id == AV_CODEC_ID_H264) param.codingType = NV_VIDEO_CodingH264;
 		else param.codingType = NV_VIDEO_CodingHEVC;
@@ -439,8 +450,6 @@ static av_cold int nvmpi_encode_init(AVCodecContext *avctx)
 		nvmpi_encoder_close(nvmpi_context->ctx);
 		nvmpi_context->ctx = NULL;
 
-		/* Restore use_dmabuf for the real encoder creation below. */
-		param.use_dmabuf = saved_use_dmabuf;
 	}
 
 	//create the real encoder used for the rest of the session
@@ -503,13 +512,23 @@ static int ff_nvmpi_send_frame(AVCodecContext *avctx,const AVFrame *frame)
 			nvmpi_context->last_bitrate = avctx->bit_rate;
 		}
 
-		/* DRM_PRIME path: extract DMA-BUF fd from AVDRMFrameDescriptor
-		 * and pass directly to the V4L2 encoder via put_frame_fd
-		 * (zero CPU copy). The fd is borrowed from the upstream frame
-		 * — libnvmpi does not take ownership. */
+		/* DRM_PRIME path: mmap the DMA-BUF fd for CPU read, build an
+		 * nvFrame from the NV12 plane data, and feed it through the
+		 * regular MMAP encoder path (put_frame).
+		 *
+		 * This avoids DMABUF-mode driver bugs entirely — the encoder
+		 * uses its own MMAP buffers, so there is no NvBufSurface vs
+		 * V4L2 format mismatch and bBlitMode never triggers.
+		 *
+		 * The dup'd fd from objects[0] works for mmap — it points to
+		 * the same kernel DMA-BUF as the original. */
 		if (nvmpi_context->dmabuf_input) {
 			AVDRMFrameDescriptor *desc = (AVDRMFrameDescriptor *)frame->data[0];
-			int64_t ts;
+			int drm_fd;
+			int pitch;
+			size_t y_size, uv_size, total_size;
+			void *map;
+			struct dma_buf_sync sync;
 
 			if (!desc || desc->nb_objects < 1) {
 				av_log(avctx, AV_LOG_ERROR,
@@ -517,13 +536,47 @@ static int ff_nvmpi_send_frame(AVCodecContext *avctx,const AVFrame *frame)
 				return AVERROR(EINVAL);
 			}
 
-			ts = av_rescale_q(frame->pts, avctx->time_base, NVENC_TIMEBASE);
+			drm_fd = desc->objects[0].fd;
+			pitch  = desc->layers[0].planes[0].pitch;
 
-			res = nvmpi_encoder_put_frame_fd(nvmpi_context->ctx,
-				desc->objects[0].fd,
-				frame->width, frame->height,
-				desc->layers[0].planes[0].pitch,
-				ts);
+			/* NV12 layout: Y plane (pitch * height) + UV plane (pitch * height/2) */
+			y_size  = (size_t)pitch * frame->height;
+			uv_size = (size_t)pitch * frame->height / 2;
+			total_size = y_size + uv_size;
+
+			/* DMA-BUF sync: ensure VIC/decoder writes are visible to CPU */
+			memset(&sync, 0, sizeof(sync));
+			sync.flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ;
+			ioctl(drm_fd, DMA_BUF_IOCTL_SYNC, &sync);
+
+			map = mmap(NULL, total_size, PROT_READ, MAP_SHARED, drm_fd, 0);
+			if (map == MAP_FAILED) {
+				av_log(avctx, AV_LOG_ERROR,
+				       "nvmpi: mmap DRM_PRIME fd=%d failed\n", drm_fd);
+				sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ;
+				ioctl(drm_fd, DMA_BUF_IOCTL_SYNC, &sync);
+				return AVERROR_EXTERNAL;
+			}
+
+			/* Build nvFrame pointing into the mapped NV12 data.
+			 * payload[0] = Y, payload[1] = interleaved UV.
+			 * linesize = pitch (may differ from width due to alignment). */
+			_nvframe.payload[0] = map;
+			_nvframe.payload[1] = (uint8_t *)map + y_size;
+			_nvframe.payload[2] = NULL;
+			_nvframe.payload_size[0] = y_size;
+			_nvframe.payload_size[1] = uv_size;
+			_nvframe.payload_size[2] = 0;
+			_nvframe.linesize[0] = pitch;
+			_nvframe.linesize[1] = pitch;
+			_nvframe.linesize[2] = 0;
+			_nvframe.timestamp = av_rescale_q(frame->pts, avctx->time_base, NVENC_TIMEBASE);
+
+			res = nvmpi_encoder_put_frame(nvmpi_context->ctx, &_nvframe);
+
+			munmap(map, total_size);
+			sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ;
+			ioctl(drm_fd, DMA_BUF_IOCTL_SYNC, &sync);
 
 			return res < 0 ? res : 0;
 		}
@@ -551,13 +604,10 @@ static int ff_nvmpi_send_frame(AVCodecContext *avctx,const AVFrame *frame)
 	}
 	else
 	{
-		/* EOS: signal end-of-stream to libnvmpi. DMA-BUF mode uses
-		 * put_frame_fd with fd=-1; software mode uses put_frame(NULL). */
+		/* EOS: signal end-of-stream to libnvmpi.  Both DRM_PRIME and
+		 * software paths use MMAP mode — put_frame(NULL) works for both. */
 		nvmpi_context->encoder_flushing = 1;
-		if (nvmpi_context->dmabuf_input)
-			nvmpi_encoder_put_frame_fd(nvmpi_context->ctx, -1, 0, 0, 0, 0);
-		else
-			nvmpi_encoder_put_frame(nvmpi_context->ctx, NULL);
+		nvmpi_encoder_put_frame(nvmpi_context->ctx, NULL);
 	}
 
 	return 0;
@@ -681,11 +731,8 @@ static av_cold int nvmpi_encode_close(AVCodecContext *avctx)
 		if(!nvmpi_context->encoder_flushing)
 		{
 			nvmpi_context->encoder_flushing = 1;
-			/* DMA-BUF mode: fd=-1 signals EOS; SW mode: NULL frame. */
-			if (nvmpi_context->dmabuf_input)
-				nvmpi_encoder_put_frame_fd(nvmpi_context->ctx, -1, 0, 0, 0, 0);
-			else
-				nvmpi_encoder_put_frame(nvmpi_context->ctx, NULL);
+			/* MMAP mode for both DRM_PRIME and software paths. */
+			nvmpi_encoder_put_frame(nvmpi_context->ctx, NULL);
 		}
 		
 		while(1)

@@ -49,6 +49,16 @@
      ((uint32_t)('1') << 16) | ((uint32_t)('2') << 24))
 #endif
 
+/* Private DRM format modifier: carries the original NvBufSurface-registered
+ * DMA-BUF fd through dup'd-fd frames.  The decoder dup()s fds for FFmpeg
+ * frame lifetime safety, but the dup'd fd is not registered in
+ * NvBufSurface's internal table.  Downstream consumers that need a
+ * registered fd (e.g. scale_vic filter calling NvBufSurfTransform) extract
+ * the original fd from this modifier.
+ *
+ * Vendor byte 0x4E ("N" for nvmpi) avoids collision with standard
+ * DRM_FORMAT_MOD vendors (0x00–0x0F) and NVIDIA's own (0x03). */
+
 /*
  * libavcodec 63 (FFmpeg 9.0+): pix_fmts moved from the public AVCodec (.p)
  * to a direct field on FFCodec in codec_internal.h. Pre-63 uses .p.pix_fmts;
@@ -494,8 +504,9 @@ static int nvmpi_decode(AVCodecContext *avctx, AVFrame *data, int *got_frame, AV
 
 		/* Single DMA-BUF object, one NV12 layer with luma + chroma planes */
 		desc->nb_objects = 1;
-		desc->objects[0].fd   = dup_fd;
-		desc->objects[0].size = (size_t)pitch * height * 3 / 2;
+		desc->objects[0].fd              = dup_fd;
+		desc->objects[0].size            = (size_t)pitch * height * 3 / 2;
+		desc->objects[0].format_modifier = 0;
 
 		desc->nb_layers = 1;
 		desc->layers[0].format    = DRM_FORMAT_NV12;
@@ -537,6 +548,19 @@ static int nvmpi_decode(AVCodecContext *avctx, AVFrame *data, int *got_frame, AV
 		frame->height  = height;
 		frame->pts     = timestamp;
 		frame->pkt_dts = AV_NOPTS_VALUE;
+
+		/* Propagate hw_frames_ctx to each DRM_PRIME output frame.
+		 * FFmpeg 7.x derives filter-graph buffersrc parameters from
+		 * individual frames rather than from AVCodecContext, so each
+		 * DRM_PRIME frame must carry hw_frames_ctx.  Without it the
+		 * buffersrc rejects the HW pixel format on filter graph reinit:
+		 * "Setting BufferSourceContext.pix_fmt to a HW format requires
+		 *  hw_frames_ctx to be non-NULL!" */
+		if (avctx->hw_frames_ctx) {
+			frame->hw_frames_ctx = av_buffer_ref(avctx->hw_frames_ctx);
+			if (!frame->hw_frames_ctx)
+				return AVERROR(ENOMEM);
+		}
 
 		if (width && height) {
 			avctx->width  = width;

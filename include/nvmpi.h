@@ -314,18 +314,68 @@ extern "C" {
 		int dmabuf_fd, int width, int height, int pitch,
 		int64_t timestamp);
 
-	//Allocate a pitch-linear NV12 DMA-BUF surface suitable for passing
-	//to nvmpi_encoder_put_frame_fd. The surface is allocated with
-	//NvBufSurfaceTag_VIDEO_CONVERT so the encoder's VIC hardware can
-	//access it. Returns 0 on success and writes the dmabuf fd to
-	//*dmabuf_fd. On failure returns -1 and *dmabuf_fd is set to -1.
+	//Allocate a pitch-linear NV12 DMA-BUF surface tagged for VIC
+	//transform (NvBufSurfaceTag_VIDEO_CONVERT). Use this for surfaces
+	//that are VIC source/destination but NOT passed directly to the
+	//encoder's V4L2 DMABUF output plane.
+	//Returns 0 on success and writes the dmabuf fd to *dmabuf_fd.
+	//On failure returns -1 and *dmabuf_fd is set to -1.
 	int nvmpi_surface_alloc(unsigned int width, unsigned int height,
 		int *dmabuf_fd);
 
-	//Destroy a surface previously allocated with nvmpi_surface_alloc.
-	//Safe to call with dmabuf_fd == -1 (no-op). Returns 0 on success,
-	//-1 on NvBufferDestroy failure.
+	//Allocate a pitch-linear NV12 DMA-BUF surface tagged for the
+	//encoder (NvBufSurfaceTag_VIDEO_ENC). Use this for surfaces that
+	//will be passed to the encoder's V4L2 DMABUF output plane via
+	//nvmpi_encoder_put_frame_fd. The VIDEO_ENC memtag registers the
+	//buffer in the encoder's NvMap domain so NvMMLite can access it
+	//for internal format conversion.
+	//VIC hardware transform also works with VIDEO_ENC tagged surfaces.
+	//Returns 0 on success, -1 on failure.
+	int nvmpi_surface_alloc_for_enc(unsigned int width, unsigned int height,
+		int *dmabuf_fd);
+
+	//Destroy a surface previously allocated with nvmpi_surface_alloc
+	//or nvmpi_surface_alloc_for_enc. Safe to call with dmabuf_fd == -1
+	//(no-op). Returns 0 on success, -1 on NvBufferDestroy failure.
 	int nvmpi_surface_destroy(int dmabuf_fd);
+
+	//Copy NV12 frame data from an unregistered DMA-BUF fd (e.g. dup'd
+	//from decoder DRM_PRIME output) into a registered NvBufSurface fd.
+	//Uses mmap + CPU copy + DMA-BUF sync. dst_fd must have been
+	//allocated via nvmpi_surface_alloc at matching dimensions.
+	//src_pitch = source row stride in bytes (from DRM descriptor).
+	int nvmpi_surface_copy_from_dmabuf(int dst_fd, int src_fd,
+		unsigned int width, unsigned int height,
+		unsigned int src_pitch);
+
+	//--- VIC hardware transform (standalone scale/CSC) ---
+
+	//Opaque VIC context handle. Created by nvmpi_vic_create(), destroyed
+	//by nvmpi_vic_close(). Holds the VIC session binding and cached
+	//transform parameters. Must not be shared across threads — each
+	//thread needs its own context (VIC session is thread-local).
+	typedef struct nvmpi_vic_ctx nvmpi_vic_ctx;
+
+	//Create a VIC transform context: binds the VIC engine for the
+	//calling thread via NvBufSurfTransformSetSessionParams (NvUtils) or
+	//NvBufferSessionCreate (legacy). Returns NULL on failure.
+	//Allocated here; freed in nvmpi_vic_close().
+	nvmpi_vic_ctx *nvmpi_vic_create(void);
+
+	//Perform a VIC hardware scale/CSC transform between two DMA-BUF
+	//surfaces. Both fds must reference valid NV12 DMA-BUF buffers
+	//(e.g. from nvmpi_surface_alloc or decoder output). The VIC engine
+	//handles scaling, block-linear ↔ pitch-linear conversion, and
+	//color-space conversion in hardware with zero CPU copies.
+	//Returns 0 on success, -1 on error.
+	int nvmpi_vic_transform(nvmpi_vic_ctx *ctx,
+		int src_fd, int dst_fd,
+		unsigned int src_w, unsigned int src_h,
+		unsigned int dst_w, unsigned int dst_h);
+
+	//Destroy a VIC context and release the VIC session. Safe to call
+	//with NULL (no-op). Freed here; allocated in nvmpi_vic_create().
+	void nvmpi_vic_close(nvmpi_vic_ctx *ctx);
 
 #ifdef __cplusplus
 }

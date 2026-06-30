@@ -16,6 +16,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <atomic>
+#include <memory>
 
 //default max size (bytes) of one compressed input chunk on the OUTPUT
 //plane; 4 MB proved too small for 4K high-bitrate I-frames. Overridable
@@ -85,6 +86,14 @@ struct nvmpictx
 	int wait_timeout_ms{500};           //blocking dequeue ceiling (ms); set via AVOption
 	//producer/consumer pool: capture thread fills, user thread consumes
 	NVMPI_bufPool<nvmpi_frame_buffer*>* framePool;
+	/* Shared flag: true while framePool is valid. Ref-counted via
+	 * shared_ptr so DRM_PRIME frame release callbacks can safely check
+	 * it after nvmpi_decoder_close deletes the pool. Without this,
+	 * FFmpeg schedulers that close the codec before all frame refs drop
+	 * (FFmpeg 8.1+) trigger a use-after-free in frame_fd_release_impl.
+	 * Allocated in nvmpi_create_decoder; set to false in decoder_close
+	 * before deleting framePool. */
+	std::shared_ptr<std::atomic<bool>> pool_alive;
 	//all frame bufs ever allocated by initFramePool — ensures deinitFramePool
 	//can destroy every buffer even if one is temporarily outside both queues
 	std::vector<nvmpi_frame_buffer*> allocatedFrameBufs;

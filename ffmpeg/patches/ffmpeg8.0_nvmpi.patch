@@ -1,5 +1,5 @@
 diff --git a/configure b/configure
-index c931b86..0d738b3 100755
+index c931b86..684c023 100755
 --- a/configure
 +++ b/configure
 @@ -364,6 +364,7 @@ External library support:
@@ -79,7 +79,15 @@ index c931b86..0d738b3 100755
  vp9_mediacodec_decoder_deps="mediacodec"
  vp9_mediacodec_encoder_deps="mediacodec"
  vp9_qsv_decoder_select="qsvdec"
-@@ -7199,6 +7213,7 @@ enabled libvvenc          && require_pkg_config libvvenc "libvvenc >= 1.6.1" "vv
+@@ -4066,6 +4080,7 @@ libvmaf_cuda_filter_deps="libvmaf libvmaf_cuda ffnvcodec"
+ zmq_filter_deps="libzmq"
+ zoompan_filter_deps="swscale"
+ zscale_filter_deps="libzimg const_nan"
++scale_vic_filter_deps="nvmpi"
+ scale_vaapi_filter_deps="vaapi"
+ scale_vt_filter_deps="videotoolbox VTPixelTransferSessionCreate"
+ scale_vulkan_filter_deps="vulkan spirv_compiler"
+@@ -7199,6 +7214,7 @@ enabled libvvenc          && require_pkg_config libvvenc "libvvenc >= 1.6.1" "vv
  enabled libwebp           && {
      enabled libwebp_encoder      && require_pkg_config libwebp "libwebp >= 0.2.0" webp/encode.h WebPGetEncoderVersion
      enabled libwebp_anim_encoder && check_pkg_config libwebp_anim_encoder "libwebpmux >= 0.4.0" webp/mux.h WebPAnimEncoderOptionsInit; }
@@ -580,10 +588,10 @@ index 0000000..7f18a44
 +#endif /* DYNLINK_NVMPI_H */
 diff --git a/libavcodec/nvmpi_dec.c b/libavcodec/nvmpi_dec.c
 new file mode 100644
-index 0000000..6db6b1c
+index 0000000..c384f96
 --- /dev/null
 +++ b/libavcodec/nvmpi_dec.c
-@@ -0,0 +1,879 @@
+@@ -0,0 +1,903 @@
 +/*
 + * nvmpi_dec.c — FFmpeg decoder wrapper for libnvmpi (layer 2 of
 + * jetson-ffmpeg, the FFmpeg integration layer).
@@ -634,6 +642,16 @@ index 0000000..6db6b1c
 +    (((uint32_t)('N')) | ((uint32_t)('V') << 8) | \
 +     ((uint32_t)('1') << 16) | ((uint32_t)('2') << 24))
 +#endif
++
++/* Private DRM format modifier: carries the original NvBufSurface-registered
++ * DMA-BUF fd through dup'd-fd frames.  The decoder dup()s fds for FFmpeg
++ * frame lifetime safety, but the dup'd fd is not registered in
++ * NvBufSurface's internal table.  Downstream consumers that need a
++ * registered fd (e.g. scale_vic filter calling NvBufSurfTransform) extract
++ * the original fd from this modifier.
++ *
++ * Vendor byte 0x4E ("N" for nvmpi) avoids collision with standard
++ * DRM_FORMAT_MOD vendors (0x00–0x0F) and NVIDIA's own (0x03). */
 +
 +/*
 + * libavcodec 63 (FFmpeg 9.0+): pix_fmts moved from the public AVCodec (.p)
@@ -1080,8 +1098,9 @@ index 0000000..6db6b1c
 +
 +		/* Single DMA-BUF object, one NV12 layer with luma + chroma planes */
 +		desc->nb_objects = 1;
-+		desc->objects[0].fd   = dup_fd;
-+		desc->objects[0].size = (size_t)pitch * height * 3 / 2;
++		desc->objects[0].fd              = dup_fd;
++		desc->objects[0].size            = (size_t)pitch * height * 3 / 2;
++		desc->objects[0].format_modifier = 0;
 +
 +		desc->nb_layers = 1;
 +		desc->layers[0].format    = DRM_FORMAT_NV12;
@@ -1123,6 +1142,19 @@ index 0000000..6db6b1c
 +		frame->height  = height;
 +		frame->pts     = timestamp;
 +		frame->pkt_dts = AV_NOPTS_VALUE;
++
++		/* Propagate hw_frames_ctx to each DRM_PRIME output frame.
++		 * FFmpeg 7.x derives filter-graph buffersrc parameters from
++		 * individual frames rather than from AVCodecContext, so each
++		 * DRM_PRIME frame must carry hw_frames_ctx.  Without it the
++		 * buffersrc rejects the HW pixel format on filter graph reinit:
++		 * "Setting BufferSourceContext.pix_fmt to a HW format requires
++		 *  hw_frames_ctx to be non-NULL!" */
++		if (avctx->hw_frames_ctx) {
++			frame->hw_frames_ctx = av_buffer_ref(avctx->hw_frames_ctx);
++			if (!frame->hw_frames_ctx)
++				return AVERROR(ENOMEM);
++		}
 +
 +		if (width && height) {
 +			avctx->width  = width;
@@ -1465,10 +1497,10 @@ index 0000000..6db6b1c
 +
 diff --git a/libavcodec/nvmpi_enc.c b/libavcodec/nvmpi_enc.c
 new file mode 100644
-index 0000000..621bc14
+index 0000000..2285fe9
 --- /dev/null
 +++ b/libavcodec/nvmpi_enc.c
-@@ -0,0 +1,834 @@
+@@ -0,0 +1,881 @@
 +/*
 + * nvmpi_enc.c — FFmpeg encoder wrapper for libnvmpi (layer 2 of
 + * jetson-ffmpeg, the FFmpeg integration layer).
@@ -1508,8 +1540,13 @@ index 0000000..621bc14
 +#include "libavutil/opt.h"
 +#include "libavutil/mem.h"
 +/* AVDRMFrameDescriptor: extracts DMA-BUF fd + pitch from DRM_PRIME input
-+ * frames for zero-copy encode via nvmpi_encoder_put_frame_fd(). */
++ * frames. DRM_PRIME frames are mmap'd for CPU read and fed through the
++ * regular MMAP encoder path (put_frame) — this avoids DMABUF-mode driver
++ * bugs (bBlitMode throughput deadlock, YUV420M segfault). */
 +#include "libavutil/hwcontext_drm.h"
++#include <sys/mman.h>
++#include <sys/ioctl.h>
++#include <linux/dma-buf.h>
 +
 +#include "version.h"
 +
@@ -1576,7 +1613,7 @@ index 0000000..621bc14
 +	int lossless;               //enable lossless encoding (H.264 only, QP 0 + High 4:4:4)
 +	int wait_timeout;           //blocking-wait ceiling in ms (0 = default 500ms)
 +	int encoder_flushing;       //set after EOS was sent to libnvmpi
-+	int dmabuf_input;           //set when pix_fmt is DRM_PRIME (zero-copy fd path)
++	int dmabuf_input;           //set when pix_fmt is DRM_PRIME (mmap+CPU-read path)
 +	int64_t last_bitrate;       //track last-set bitrate for dynamic change detection
 +	AVFrame *frame; //tmp frame
 +	                //(holds the pulled-but-not-yet-sent input frame in the
@@ -1747,13 +1784,22 @@ index 0000000..621bc14
 +	//flag would not (the latent bug in the bradcagle/xsacha forks).
 +	param.pixFormat = (avctx->pix_fmt == AV_PIX_FMT_NV12) ? NV_PIX_NV12 : NV_PIX_YUV420;
 +
-+	/* DRM_PRIME input: the DMA-BUF fd arrives via AVDRMFrameDescriptor;
-+	 * the underlying pixel format is NV12 (Jetson's native hw layout).
-+	 * Set use_dmabuf so libnvmpi creates the encoder with V4L2_MEMORY_DMABUF
-+	 * on the OUTPUT plane, enabling zero-copy frame input. */
++	/* DRM_PRIME input: the DMA-BUF fd arrives via AVDRMFrameDescriptor.
++	 * The underlying pixel format is NV12 (Jetson's native hw layout).
++	 *
++	 * The encoder stays in MMAP mode (default) — NOT DMABUF mode.
++	 * DRM_PRIME frames are mmap'd for CPU read and copied into the
++	 * encoder's MMAP buffers via the regular put_frame path.  This
++	 * avoids two Tegra V4L2 driver bugs:
++	 *   1. bBlitMode throughput deadlock at 720p (NvBufSurface format
++	 *      vs V4L2 format mismatch triggers per-frame VIC conversion
++	 *      that can't keep up at passthrough speed)
++	 *   2. YUV420M + V4L2_MEMORY_DMABUF segfault at >1024x576
++	 *
++	 * pixFormat = NV_PIX_NV12 so MMAP buffers are NV12M (2 planes),
++	 * matching the NV12 data from the decoder/VIC filter. */
 +	if (avctx->pix_fmt == AV_PIX_FMT_DRM_PRIME) {
 +		param.pixFormat = NV_PIX_NV12;
-+		param.use_dmabuf = 1;
 +		nvmpi_context->dmabuf_input = 1;
 +	}
 +
@@ -1800,15 +1846,12 @@ index 0000000..621bc14
 +		int ret;
 +		int64_t shiftPts = 1000000/param.fps_n;
 +
-+		/* GLOBAL_HEADER temp encoder must NOT use DMA-BUF mode — it feeds
-+		 * CPU-allocated blank frames for SPS/PPS extraction. When the real
-+		 * encoder uses DRM_PRIME, temporarily disable use_dmabuf and
-+		 * allocate the blank frame as NV12 (DRM_PRIME has no pixel
-+		 * description, so av_image_alloc would fail). */
-+		int saved_use_dmabuf = param.use_dmabuf;
++		/* GLOBAL_HEADER temp encoder: allocate the blank frame as NV12
++		 * when the real encoder uses DRM_PRIME (DRM_PRIME has no pixel
++		 * description, so av_image_alloc would fail).  pixFormat is
++		 * already NV_PIX_NV12 for DRM_PRIME input (set above). */
 +		enum AVPixelFormat alloc_fmt = (avctx->pix_fmt == AV_PIX_FMT_DRM_PRIME)
 +			? AV_PIX_FMT_NV12 : avctx->pix_fmt;
-+		param.use_dmabuf = 0;
 +
 +		if(avctx->codec->id == AV_CODEC_ID_H264) param.codingType = NV_VIDEO_CodingH264;
 +		else param.codingType = NV_VIDEO_CodingHEVC;
@@ -1910,8 +1953,6 @@ index 0000000..621bc14
 +		nvmpi_encoder_close(nvmpi_context->ctx);
 +		nvmpi_context->ctx = NULL;
 +
-+		/* Restore use_dmabuf for the real encoder creation below. */
-+		param.use_dmabuf = saved_use_dmabuf;
 +	}
 +
 +	//create the real encoder used for the rest of the session
@@ -1974,13 +2015,23 @@ index 0000000..621bc14
 +			nvmpi_context->last_bitrate = avctx->bit_rate;
 +		}
 +
-+		/* DRM_PRIME path: extract DMA-BUF fd from AVDRMFrameDescriptor
-+		 * and pass directly to the V4L2 encoder via put_frame_fd
-+		 * (zero CPU copy). The fd is borrowed from the upstream frame
-+		 * — libnvmpi does not take ownership. */
++		/* DRM_PRIME path: mmap the DMA-BUF fd for CPU read, build an
++		 * nvFrame from the NV12 plane data, and feed it through the
++		 * regular MMAP encoder path (put_frame).
++		 *
++		 * This avoids DMABUF-mode driver bugs entirely — the encoder
++		 * uses its own MMAP buffers, so there is no NvBufSurface vs
++		 * V4L2 format mismatch and bBlitMode never triggers.
++		 *
++		 * The dup'd fd from objects[0] works for mmap — it points to
++		 * the same kernel DMA-BUF as the original. */
 +		if (nvmpi_context->dmabuf_input) {
 +			AVDRMFrameDescriptor *desc = (AVDRMFrameDescriptor *)frame->data[0];
-+			int64_t ts;
++			int drm_fd;
++			int pitch;
++			size_t y_size, uv_size, total_size;
++			void *map;
++			struct dma_buf_sync sync;
 +
 +			if (!desc || desc->nb_objects < 1) {
 +				av_log(avctx, AV_LOG_ERROR,
@@ -1988,13 +2039,47 @@ index 0000000..621bc14
 +				return AVERROR(EINVAL);
 +			}
 +
-+			ts = av_rescale_q(frame->pts, avctx->time_base, NVENC_TIMEBASE);
++			drm_fd = desc->objects[0].fd;
++			pitch  = desc->layers[0].planes[0].pitch;
 +
-+			res = nvmpi_encoder_put_frame_fd(nvmpi_context->ctx,
-+				desc->objects[0].fd,
-+				frame->width, frame->height,
-+				desc->layers[0].planes[0].pitch,
-+				ts);
++			/* NV12 layout: Y plane (pitch * height) + UV plane (pitch * height/2) */
++			y_size  = (size_t)pitch * frame->height;
++			uv_size = (size_t)pitch * frame->height / 2;
++			total_size = y_size + uv_size;
++
++			/* DMA-BUF sync: ensure VIC/decoder writes are visible to CPU */
++			memset(&sync, 0, sizeof(sync));
++			sync.flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ;
++			ioctl(drm_fd, DMA_BUF_IOCTL_SYNC, &sync);
++
++			map = mmap(NULL, total_size, PROT_READ, MAP_SHARED, drm_fd, 0);
++			if (map == MAP_FAILED) {
++				av_log(avctx, AV_LOG_ERROR,
++				       "nvmpi: mmap DRM_PRIME fd=%d failed\n", drm_fd);
++				sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ;
++				ioctl(drm_fd, DMA_BUF_IOCTL_SYNC, &sync);
++				return AVERROR_EXTERNAL;
++			}
++
++			/* Build nvFrame pointing into the mapped NV12 data.
++			 * payload[0] = Y, payload[1] = interleaved UV.
++			 * linesize = pitch (may differ from width due to alignment). */
++			_nvframe.payload[0] = map;
++			_nvframe.payload[1] = (uint8_t *)map + y_size;
++			_nvframe.payload[2] = NULL;
++			_nvframe.payload_size[0] = y_size;
++			_nvframe.payload_size[1] = uv_size;
++			_nvframe.payload_size[2] = 0;
++			_nvframe.linesize[0] = pitch;
++			_nvframe.linesize[1] = pitch;
++			_nvframe.linesize[2] = 0;
++			_nvframe.timestamp = av_rescale_q(frame->pts, avctx->time_base, NVENC_TIMEBASE);
++
++			res = nvmpi_encoder_put_frame(nvmpi_context->ctx, &_nvframe);
++
++			munmap(map, total_size);
++			sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ;
++			ioctl(drm_fd, DMA_BUF_IOCTL_SYNC, &sync);
 +
 +			return res < 0 ? res : 0;
 +		}
@@ -2022,13 +2107,10 @@ index 0000000..621bc14
 +	}
 +	else
 +	{
-+		/* EOS: signal end-of-stream to libnvmpi. DMA-BUF mode uses
-+		 * put_frame_fd with fd=-1; software mode uses put_frame(NULL). */
++		/* EOS: signal end-of-stream to libnvmpi.  Both DRM_PRIME and
++		 * software paths use MMAP mode — put_frame(NULL) works for both. */
 +		nvmpi_context->encoder_flushing = 1;
-+		if (nvmpi_context->dmabuf_input)
-+			nvmpi_encoder_put_frame_fd(nvmpi_context->ctx, -1, 0, 0, 0, 0);
-+		else
-+			nvmpi_encoder_put_frame(nvmpi_context->ctx, NULL);
++		nvmpi_encoder_put_frame(nvmpi_context->ctx, NULL);
 +	}
 +
 +	return 0;
@@ -2152,11 +2234,8 @@ index 0000000..621bc14
 +		if(!nvmpi_context->encoder_flushing)
 +		{
 +			nvmpi_context->encoder_flushing = 1;
-+			/* DMA-BUF mode: fd=-1 signals EOS; SW mode: NULL frame. */
-+			if (nvmpi_context->dmabuf_input)
-+				nvmpi_encoder_put_frame_fd(nvmpi_context->ctx, -1, 0, 0, 0, 0);
-+			else
-+				nvmpi_encoder_put_frame(nvmpi_context->ctx, NULL);
++			/* MMAP mode for both DRM_PRIME and software paths. */
++			nvmpi_encoder_put_frame(nvmpi_context->ctx, NULL);
 +		}
 +		
 +		while(1)
@@ -2584,6 +2663,803 @@ index 0000000..7814ed2
 +    .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
 +    .p.wrapper_name   = "nvmpi",
 +};
+diff --git a/libavfilter/Makefile b/libavfilter/Makefile
+index 07fb4c3..e786fed 100644
+--- a/libavfilter/Makefile
++++ b/libavfilter/Makefile
+@@ -472,6 +472,7 @@ OBJS-$(CONFIG_SCALE_CUDA_FILTER)             += vf_scale_cuda.o scale_eval.o \
+ OBJS-$(CONFIG_SCALE_NPP_FILTER)              += vf_scale_npp.o scale_eval.o
+ OBJS-$(CONFIG_SCALE_QSV_FILTER)              += vf_vpp_qsv.o
+ OBJS-$(CONFIG_SCALE_VAAPI_FILTER)            += vf_scale_vaapi.o scale_eval.o vaapi_vpp.o
++OBJS-$(CONFIG_SCALE_VIC_FILTER)              += vf_scale_vic.o
+ OBJS-$(CONFIG_SCALE_VT_FILTER)               += vf_scale_vt.o scale_eval.o
+ OBJS-$(CONFIG_SCALE_VULKAN_FILTER)           += vf_scale_vulkan.o vulkan.o vulkan_filter.o
+ OBJS-$(CONFIG_SCALE2REF_FILTER)              += vf_scale.o scale_eval.o framesync.o
+diff --git a/libavfilter/allfilters.c b/libavfilter/allfilters.c
+index cca4ce0..a6eee5f 100644
+--- a/libavfilter/allfilters.c
++++ b/libavfilter/allfilters.c
+@@ -443,6 +443,7 @@ extern const FFFilter ff_vf_scale_d3d11;
+ extern const FFFilter ff_vf_scale_npp;
+ extern const FFFilter ff_vf_scale_qsv;
+ extern const FFFilter ff_vf_scale_vaapi;
++extern const FFFilter ff_vf_scale_vic;
+ extern const FFFilter ff_vf_scale_vt;
+ extern const FFFilter ff_vf_scale_vulkan;
+ extern const FFFilter ff_vf_scale2ref;
+diff --git a/libavfilter/dynlink_nvmpi_vic.h b/libavfilter/dynlink_nvmpi_vic.h
+new file mode 100644
+index 0000000..ac0d0a1
+--- /dev/null
++++ b/libavfilter/dynlink_nvmpi_vic.h
+@@ -0,0 +1,119 @@
++/*
++ * dynlink_nvmpi_vic.h -- Runtime lazy-loading of libnvmpi VIC API.
++ *
++ * Separate from dynlink_nvmpi.h (libavcodec) because:
++ *   1. This header is for libavfilter (vf_scale_vic.c), a different
++ *      FFmpeg library with its own translation unit.
++ *   2. Only VIC + surface functions are needed — no decoder/encoder.
++ *   3. If VIC symbols are absent (older libnvmpi), the filter gracefully
++ *      reports unavailable without breaking decoder/encoder codecs.
++ *
++ * Load sequence: same as dynlink_nvmpi.h — idempotent, no dlclose,
++ * per-TU static pointers, thread-safe via dlopen guarantees.
++ *
++ * Type definitions are duplicated from nvmpi.h so this header is
++ * self-contained (no build-time dependency on libnvmpi headers).
++ */
++#ifndef DYNLINK_NVMPI_VIC_H
++#define DYNLINK_NVMPI_VIC_H
++
++#include <dlfcn.h>
++
++/* ------------------------------------------------------------------ */
++/* Type definitions (duplicated from nvmpi.h -- keep in sync)          */
++/* ------------------------------------------------------------------ */
++
++/* Opaque VIC context handle */
++typedef struct nvmpi_vic_ctx nvmpi_vic_ctx;
++
++/* ------------------------------------------------------------------ */
++/* Function pointer typedefs                                           */
++/* ------------------------------------------------------------------ */
++
++/* VIC transform */
++typedef nvmpi_vic_ctx* (*fn_nvmpi_vic_create)(void);
++typedef int            (*fn_nvmpi_vic_transform)(nvmpi_vic_ctx *ctx,
++                           int src_fd, int dst_fd,
++                           unsigned int src_w, unsigned int src_h,
++                           unsigned int dst_w, unsigned int dst_h);
++typedef void           (*fn_nvmpi_vic_close)(nvmpi_vic_ctx *ctx);
++
++/* Surface alloc/free/copy (shared with encoder path, same libnvmpi.so) */
++typedef int            (*fn_nvmpi_surface_alloc)(unsigned int width,
++                           unsigned int height, int *dmabuf_fd);
++typedef int            (*fn_nvmpi_surface_alloc_for_enc)(unsigned int width,
++                           unsigned int height, int *dmabuf_fd);
++typedef int            (*fn_nvmpi_surface_destroy)(int dmabuf_fd);
++typedef int            (*fn_nvmpi_surface_copy_from_dmabuf)(int dst_fd,
++                           int src_fd, unsigned int width,
++                           unsigned int height, unsigned int src_pitch);
++
++/* ------------------------------------------------------------------ */
++/* Static function pointers (one set per translation unit)             */
++/* ------------------------------------------------------------------ */
++
++static fn_nvmpi_vic_create       nvmpi_vic_create_dl;
++static fn_nvmpi_vic_transform    nvmpi_vic_transform_dl;
++static fn_nvmpi_vic_close        nvmpi_vic_close_dl;
++static fn_nvmpi_surface_alloc              nvmpi_surface_alloc_dl;
++static fn_nvmpi_surface_alloc_for_enc      nvmpi_surface_alloc_for_enc_dl;
++static fn_nvmpi_surface_destroy            nvmpi_surface_destroy_dl;
++static fn_nvmpi_surface_copy_from_dmabuf   nvmpi_surface_copy_from_dmabuf_dl;
++
++static void *nvmpi_vic_lib_handle;
++
++/* ------------------------------------------------------------------ */
++/* Loader                                                              */
++/* ------------------------------------------------------------------ */
++
++#define NVMPI_VIC_LOAD_SYM(ptr, name) do {                          \
++    *(void **)&(ptr) = dlsym(nvmpi_vic_lib_handle, #name);          \
++    if (!(ptr)) goto fail;                                           \
++} while (0)
++
++/*
++ * Load libnvmpi.so and resolve VIC + surface symbols.
++ * Returns 0 on success, -1 on failure.  Idempotent.
++ */
++static int nvmpi_vic_dynlink_load(void)
++{
++    if (nvmpi_vic_lib_handle)
++        return 0;
++
++    nvmpi_vic_lib_handle = dlopen("libnvmpi.so", RTLD_LAZY);
++    if (!nvmpi_vic_lib_handle)
++        return -1;
++
++    /* VIC transform symbols */
++    NVMPI_VIC_LOAD_SYM(nvmpi_vic_create_dl,      nvmpi_vic_create);
++    NVMPI_VIC_LOAD_SYM(nvmpi_vic_transform_dl,   nvmpi_vic_transform);
++    NVMPI_VIC_LOAD_SYM(nvmpi_vic_close_dl,       nvmpi_vic_close);
++
++    /* Surface allocation symbols (same .so, shared with encoder path) */
++    NVMPI_VIC_LOAD_SYM(nvmpi_surface_alloc_dl,           nvmpi_surface_alloc);
++    NVMPI_VIC_LOAD_SYM(nvmpi_surface_alloc_for_enc_dl,   nvmpi_surface_alloc_for_enc);
++    NVMPI_VIC_LOAD_SYM(nvmpi_surface_destroy_dl,         nvmpi_surface_destroy);
++    NVMPI_VIC_LOAD_SYM(nvmpi_surface_copy_from_dmabuf_dl,
++                        nvmpi_surface_copy_from_dmabuf);
++
++    return 0;
++
++fail:
++    dlclose(nvmpi_vic_lib_handle);
++    nvmpi_vic_lib_handle = NULL;
++    return -1;
++}
++
++/* ------------------------------------------------------------------ */
++/* Macro redirects                                                     */
++/* ------------------------------------------------------------------ */
++
++#define nvmpi_vic_create       nvmpi_vic_create_dl
++#define nvmpi_vic_transform    nvmpi_vic_transform_dl
++#define nvmpi_vic_close        nvmpi_vic_close_dl
++#define nvmpi_surface_alloc              nvmpi_surface_alloc_dl
++#define nvmpi_surface_alloc_for_enc      nvmpi_surface_alloc_for_enc_dl
++#define nvmpi_surface_destroy            nvmpi_surface_destroy_dl
++#define nvmpi_surface_copy_from_dmabuf   nvmpi_surface_copy_from_dmabuf_dl
++
++#endif /* DYNLINK_NVMPI_VIC_H */
+diff --git a/libavfilter/vf_scale_vic.c b/libavfilter/vf_scale_vic.c
+new file mode 100644
+index 0000000..a759d88
+--- /dev/null
++++ b/libavfilter/vf_scale_vic.c
+@@ -0,0 +1,642 @@
++/*
++ * vf_scale_vic.c — Tegra VIC hardware scale/CSC filter for FFmpeg.
++ *
++ * Uses the NVIDIA Tegra VIC (Video Image Compositor) engine for
++ * hardware-accelerated scaling and color-space conversion on DMA-BUF
++ * surfaces. Operates entirely in DRM_PRIME pixel format with zero CPU
++ * copies — frames stay in GPU-accessible memory throughout.
++ *
++ * Pipeline: decoder (DRM_PRIME) → scale_vic → encoder (DRM_PRIME)
++ *
++ * libnvmpi C API (loaded at runtime via dynlink_nvmpi_vic.h / dlopen).
++ * No link-time dependency — if libnvmpi.so is absent the filter is
++ * unavailable and FFmpeg continues without it.
++ *
++ * Usage:
++ *   ffmpeg -hwaccel nvmpi -i input.mp4 -vf scale_vic=1280:720 \
++ *          -c:v h264_nvmpi output.mp4
++ *
++ * Copyright (c) 2024-2026 G.J.R. Timmer <gjr.timmer@gmail.com>
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU Lesser General Public License as published
++ * by the Free Software Foundation; either version 2.1 of the License,
++ * or (at your option) any later version.
++ */
++
++#include <inttypes.h>
++#include <string.h>
++#include <unistd.h>
++
++#include "libavutil/mem.h"
++#include "libavutil/opt.h"
++#include "libavutil/pixdesc.h"
++#include "libavutil/hwcontext.h"
++#include "libavutil/hwcontext_drm.h"
++
++#include "avfilter.h"
++#include "video.h"
++#include "formats.h"
++
++/* avfilter.h only includes version_major.h during internal FFmpeg builds
++ * (HAVE_AV_CONFIG_H is defined) — version.h is intentionally skipped to
++ * reduce rebuild scope.  We need LIBAVFILTER_VERSION_MINOR for the
++ * hw_frames_ctx location guard (AVFilterLink vs FilterLink at 10.5+),
++ * so pull it in explicitly.  Present in all supported versions (6.0–8.1);
++ * __has_include guard for safety against future restructuring. */
++#if defined(__has_include)
++#if __has_include("libavfilter/version.h")
++#include "libavfilter/version.h"
++#endif
++#else
++#include "libavfilter/version.h"
++#endif
++
++/* Version-gated includes:
++ *   - filters.h: present in FFmpeg 6.0+ (libavfilter >= 9); contains
++ *     FILTER_INPUTS/OUTPUTS macros, FilterLink, and ff_filter_link().
++ *   - internal.h: present up to FFmpeg 7.0; removed in FFmpeg 7.1
++ *     (content merged into filters.h).  Both 7.0 and 7.1 share
++ *     LIBAVFILTER_VERSION_MAJOR=10 and VERSION_MINOR distinguishes them,
++ *     but internal.h detection uses __has_include as the reliable check.
++ *     GCC 5+ / Clang 3+ support __has_include (all Jetson toolchains). */
++#if LIBAVFILTER_VERSION_MAJOR >= 9
++#include "filters.h"
++#endif
++#if defined(__has_include)
++#if __has_include("internal.h")
++#include "internal.h"
++#endif
++#else
++#include "internal.h"
++#endif
++
++/* DRM_FORMAT_NV12 from drm_fourcc.h — defined here to avoid a build
++ * dependency on libdrm-dev headers.  Same value as the decoder uses
++ * in nvmpi_dec.c. */
++#ifndef DRM_FORMAT_NV12
++#define DRM_FORMAT_NV12 0x3231564E
++#endif
++
++/* Runtime-loaded via dlopen — no link-time dependency on libnvmpi.so.
++ * Only VIC + surface symbols are resolved (not decoder/encoder). */
++#include "dynlink_nvmpi_vic.h"
++
++/* Maximum number of pre-allocated output DMA-BUF surfaces.  Matches
++ * the typical decoded-frame pipeline depth — enough for the encoder
++ * input queue without over-allocating scarce DMA memory. */
++#define VIC_OUTPUT_POOL_SIZE 8
++
++/* ------------------------------------------------------------------ */
++/* Filter context                                                      */
++/* ------------------------------------------------------------------ */
++
++typedef struct ScaleVICContext {
++    const AVClass *class;
++
++    /* User-specified output dimensions (AVOption) */
++    int width;
++    int height;
++
++    /* VIC engine context — allocated in init, freed in uninit.
++     * Allocated in scale_vic_init(); freed in scale_vic_uninit(). */
++    nvmpi_vic_ctx *vic_ctx;
++
++    /* Output buffer pool: pre-allocated pitch-linear NV12 DMA-BUF
++     * surfaces at the target resolution.  Ring-buffered — pool_idx
++     * cycles through the array.
++     * Allocated in scale_vic_config_output(); freed in scale_vic_uninit(). */
++    int out_fds[VIC_OUTPUT_POOL_SIZE];
++    int pool_size;
++    int pool_idx;
++
++    /* Source buffer pool: registered NV12 surfaces at input dimensions.
++     * The decoder outputs dup'd DMA-BUF fds that are NOT registered in
++     * NvBufSurface — NvBufSurfTransform rejects them.  Frame data is
++     * copied from the dup'd fd into a source pool buffer before VIC
++     * transform.  Ring-buffered like the output pool.
++     * Allocated in scale_vic_config_output(); freed in scale_vic_uninit(). */
++    int in_fds[VIC_OUTPUT_POOL_SIZE];
++    int in_pool_size;
++    int in_pool_idx;
++
++    /* Track whether dynlink was loaded */
++    int dynlink_loaded;
++} ScaleVICContext;
++
++/* ------------------------------------------------------------------ */
++/* Release callback for output DRM_PRIME frames                        */
++/* ------------------------------------------------------------------ */
++
++/* The output DMA-BUF fd is borrowed from the pool, not dup'd — but
++ * FFmpeg filters may hold frame refs across multiple filter_frame calls.
++ * We dup() the fd so each output frame owns its copy. This callback
++ * closes the dup'd fd when the frame ref is released. */
++static void scale_vic_drm_release(void *opaque, uint8_t *data)
++{
++    AVDRMFrameDescriptor *desc = (AVDRMFrameDescriptor *)data;
++    if (desc && desc->nb_objects > 0 && desc->objects[0].fd >= 0)
++        close(desc->objects[0].fd);
++    av_free(desc);
++}
++
++/* ------------------------------------------------------------------ */
++/* Init / uninit                                                       */
++/* ------------------------------------------------------------------ */
++
++static av_cold int scale_vic_init(AVFilterContext *avctx)
++{
++    ScaleVICContext *s = avctx->priv;
++    int i;
++
++    /* Zero-initialize pool fds — marks all slots as unallocated */
++    for (i = 0; i < VIC_OUTPUT_POOL_SIZE; i++) {
++        s->out_fds[i] = -1;
++        s->in_fds[i]  = -1;
++    }
++    s->pool_size    = 0;
++    s->pool_idx     = 0;
++    s->in_pool_size = 0;
++    s->in_pool_idx  = 0;
++
++    /* Load libnvmpi.so via dlopen on first use */
++    if (nvmpi_vic_dynlink_load() < 0) {
++        av_log(avctx, AV_LOG_ERROR,
++               "scale_vic: failed to load libnvmpi.so: %s\n", dlerror());
++        return AVERROR_EXTERNAL;
++    }
++    s->dynlink_loaded = 1;
++
++    av_log(avctx, AV_LOG_INFO,
++           "scale_vic: init — dynlink loaded, creating VIC context\n");
++
++    /* Create VIC engine context — binds VIC compute for this thread */
++    s->vic_ctx = nvmpi_vic_create();
++    if (!s->vic_ctx) {
++        av_log(avctx, AV_LOG_ERROR,
++               "scale_vic: failed to create VIC context\n");
++        return AVERROR_EXTERNAL;
++    }
++
++    return 0;
++}
++
++static av_cold void scale_vic_uninit(AVFilterContext *avctx)
++{
++    ScaleVICContext *s = avctx->priv;
++    int i;
++
++    if (s->dynlink_loaded) {
++        /* Destroy output pool surfaces */
++        for (i = 0; i < s->pool_size; i++) {
++            if (s->out_fds[i] >= 0) {
++                nvmpi_surface_destroy(s->out_fds[i]);
++                s->out_fds[i] = -1;
++            }
++        }
++
++        /* Destroy source pool surfaces */
++        for (i = 0; i < s->in_pool_size; i++) {
++            if (s->in_fds[i] >= 0) {
++                nvmpi_surface_destroy(s->in_fds[i]);
++                s->in_fds[i] = -1;
++            }
++        }
++
++        /* Destroy VIC context — frees VIC session.
++         * Freed here; allocated in scale_vic_init(). */
++        if (s->vic_ctx) {
++            nvmpi_vic_close(s->vic_ctx);
++            s->vic_ctx = NULL;
++        }
++    }
++}
++
++/* ------------------------------------------------------------------ */
++/* Format negotiation                                                  */
++/* ------------------------------------------------------------------ */
++
++/* DRM_PRIME is the only supported format — the VIC operates on DMA-BUF
++ * surfaces and cannot accept or produce software pixel data. */
++static const enum AVPixelFormat vic_pix_fmts[] = {
++    AV_PIX_FMT_DRM_PRIME,
++    AV_PIX_FMT_NONE,
++};
++
++#if LIBAVFILTER_VERSION_MAJOR < 9
++/* FFmpeg 4.x/5.x: query_formats callback on AVFilter.
++ * ff_set_common_formats_from_list does not exist before libavfilter 9;
++ * use ff_make_format_list + ff_set_common_formats instead. */
++static int scale_vic_query_formats(AVFilterContext *avctx)
++{
++    AVFilterFormats *fmts = ff_make_format_list((const int *)vic_pix_fmts);
++    if (!fmts)
++        return AVERROR(ENOMEM);
++    return ff_set_common_formats(avctx, fmts);
++}
++#endif
++
++/* ------------------------------------------------------------------ */
++/* Output configuration                                                */
++/* ------------------------------------------------------------------ */
++
++static int scale_vic_config_output(AVFilterLink *outlink)
++{
++    AVFilterContext *avctx = outlink->src;
++    AVFilterLink *inlink   = avctx->inputs[0];
++    ScaleVICContext *s     = avctx->priv;
++    int i, ret;
++
++    /* Use explicit dimensions, or pass through input dimensions */
++    int out_w = s->width  > 0 ? s->width  : inlink->w;
++    int out_h = s->height > 0 ? s->height : inlink->h;
++
++    /* Validate dimensions against Tegra hardware limits */
++    if (out_w <= 0 || out_h <= 0 || out_w > 8192 || out_h > 8192) {
++        av_log(avctx, AV_LOG_ERROR,
++               "scale_vic: invalid output dimensions %dx%d\n", out_w, out_h);
++        return AVERROR(EINVAL);
++    }
++
++    outlink->w = out_w;
++    outlink->h = out_h;
++
++    /* Propagate the hardware frames context from the decoder's output
++     * to this filter's output.  Without this, FFmpeg's filter graph
++     * does not know the output is DRM_PRIME hardware frames and may
++     * insert an automatic format converter that tries to read the
++     * DRM_PRIME AVDRMFrameDescriptor as raw pixel data — hanging the
++     * pipeline in a kernel DMA-BUF read.  All FFmpeg hardware filters
++     * (scale_vaapi, scale_cuda, scale_npp) propagate hw_frames_ctx;
++     * omitting it is the root cause of the filter pipeline hang.
++     *
++     * FFmpeg 7.1+ (libavfilter 10.5+): hw_frames_ctx moved from
++     * AVFilterLink to FilterLink (accessed via ff_filter_link()).
++     * Earlier versions (6.0–7.0) have it directly on AVFilterLink.
++     *
++     * Unref any old hw_frames_ctx first (reinit safety — FFmpeg 7.x
++     * can call config_output a second time). */
++#if (LIBAVFILTER_VERSION_MAJOR > 10) || \
++    (LIBAVFILTER_VERSION_MAJOR == 10 && LIBAVFILTER_VERSION_MINOR >= 5)
++    {
++        FilterLink *il = ff_filter_link(inlink);
++        FilterLink *ol = ff_filter_link(outlink);
++        av_buffer_unref(&ol->hw_frames_ctx);
++        if (il->hw_frames_ctx) {
++            ol->hw_frames_ctx = av_buffer_ref(il->hw_frames_ctx);
++            if (!ol->hw_frames_ctx)
++                return AVERROR(ENOMEM);
++        }
++    }
++#else
++    av_buffer_unref(&outlink->hw_frames_ctx);
++    if (inlink->hw_frames_ctx) {
++        outlink->hw_frames_ctx = av_buffer_ref(inlink->hw_frames_ctx);
++        if (!outlink->hw_frames_ctx)
++            return AVERROR(ENOMEM);
++    }
++#endif
++
++    /* Surface pool allocation.
++     *
++     * FFmpeg 7.x re-derives buffersrc parameters from decoded frames,
++     * which can trigger config_output a second time (filter reinit).
++     * The existing surface pools are still valid — FFmpeg does NOT call
++     * uninit during reinit.  Freeing and reallocating DMA-BUF surfaces
++     * corrupts the Tegra NvBufSurface fd-to-surface cache, causing
++     * NvMapMemCacheMaint errors and VIC transform hangs.
++     *
++     * Skip pool reallocation if pools are already allocated — the reinit
++     * is for format/hw_frames_ctx propagation only. */
++    if (s->in_pool_size > 0) {
++        av_log(avctx, AV_LOG_INFO,
++               "scale_vic: config_output reinit — reusing %d+%d existing "
++               "surface pools\n", s->in_pool_size, s->pool_size);
++    } else {
++        /* First call — allocate source DMA-BUF surface pool at input
++         * resolution.  The decoder outputs dup'd fds that are not
++         * registered in NvBufSurface.  Frame data is copied into these
++         * registered buffers before VIC transform. */
++        for (i = 0; i < VIC_OUTPUT_POOL_SIZE; i++) {
++            /* Allocated here; freed in scale_vic_uninit() */
++            ret = nvmpi_surface_alloc(inlink->w, inlink->h, &s->in_fds[i]);
++            if (ret < 0) {
++                av_log(avctx, AV_LOG_ERROR,
++                       "scale_vic: failed to allocate input surface %d "
++                       "(%dx%d)\n", i, inlink->w, inlink->h);
++                return AVERROR_EXTERNAL;
++            }
++        }
++        s->in_pool_size = VIC_OUTPUT_POOL_SIZE;
++        s->in_pool_idx  = 0;
++
++        /* Pre-allocate output DMA-BUF surface pool at target resolution.
++         * Uses VIDEO_ENC memtag — these surfaces are VIC transform
++         * destinations AND encoder DMABUF inputs; the encoder's NvMMLite
++         * layer requires VIDEO_ENC to resolve NvMap handles during its
++         * internal format conversion. */
++        for (i = 0; i < VIC_OUTPUT_POOL_SIZE; i++) {
++            /* Allocated here; freed in scale_vic_uninit() */
++            ret = nvmpi_surface_alloc_for_enc(out_w, out_h, &s->out_fds[i]);
++            if (ret < 0) {
++                av_log(avctx, AV_LOG_ERROR,
++                       "scale_vic: failed to allocate output surface %d "
++                       "(%dx%d)\n", i, out_w, out_h);
++                return AVERROR_EXTERNAL;
++            }
++        }
++        s->pool_size = VIC_OUTPUT_POOL_SIZE;
++        s->pool_idx  = 0;
++    }
++
++    av_log(avctx, AV_LOG_INFO,
++           "scale_vic: %dx%d → %dx%d (hardware, %d source + %d output buffers)\n",
++           inlink->w, inlink->h, out_w, out_h,
++           s->in_pool_size, s->pool_size);
++
++    return 0;
++}
++
++/* ------------------------------------------------------------------ */
++/* Per-frame transform                                                 */
++/* ------------------------------------------------------------------ */
++
++static int scale_vic_filter_frame(AVFilterLink *inlink, AVFrame *in)
++{
++    AVFilterContext *avctx = inlink->dst;
++    AVFilterLink *outlink  = avctx->outputs[0];
++    ScaleVICContext *s     = avctx->priv;
++    AVFrame *out = NULL;
++    AVDRMFrameDescriptor *in_desc, *out_desc;
++    int src_fd, dst_fd, dup_fd, ret;
++    int dst_pitch;
++
++    av_log(avctx, AV_LOG_DEBUG,
++           "scale_vic: filter_frame entry pts=%" PRId64 " %dx%d fmt=%d\n",
++           in->pts, in->width, in->height, in->format);
++
++    /* Extract source DMA-BUF fd from input DRM_PRIME frame */
++    if (in->format != AV_PIX_FMT_DRM_PRIME) {
++        av_log(avctx, AV_LOG_ERROR,
++               "scale_vic: input frame is not DRM_PRIME (format=%d)\n",
++               in->format);
++        av_frame_free(&in);
++        return AVERROR(EINVAL);
++    }
++
++    in_desc = (AVDRMFrameDescriptor *)in->data[0];
++    if (!in_desc || in_desc->nb_objects < 1) {
++        av_log(avctx, AV_LOG_ERROR,
++               "scale_vic: input frame has no DRM objects\n");
++        av_frame_free(&in);
++        return AVERROR(EINVAL);
++    }
++
++    av_log(avctx, AV_LOG_DEBUG,
++           "scale_vic: input fd=%d pitch=%d, %dx%d → %dx%d\n",
++           in_desc->objects[0].fd,
++           (int)in_desc->layers[0].planes[0].pitch,
++           in->width, in->height, outlink->w, outlink->h);
++
++    /* Copy the dup'd DMA-BUF frame data into a registered source buffer.
++     * The decoder dup()s its fds for AVFrame lifetime safety, but dup'd
++     * fds are not registered in NvBufSurface's internal table — the VIC
++     * hardware transform API (NvBufSurfTransform) requires registered
++     * surfaces.  This copy bridges that gap at the cost of one CPU memcpy
++     * per frame (~1.4 MB for 720p NV12). */
++    src_fd = s->in_fds[s->in_pool_idx];
++    s->in_pool_idx = (s->in_pool_idx + 1) % s->in_pool_size;
++
++    ret = nvmpi_surface_copy_from_dmabuf(src_fd,
++                                         in_desc->objects[0].fd,
++                                         in->width, in->height,
++                                         in_desc->layers[0].planes[0].pitch);
++    if (ret < 0) {
++        av_log(avctx, AV_LOG_ERROR,
++               "scale_vic: failed to copy input frame to registered "
++               "surface\n");
++        av_frame_free(&in);
++        return AVERROR_EXTERNAL;
++    }
++
++    if (in->width == outlink->w && in->height == outlink->h) {
++        /* Passthrough: same dimensions — skip VIC transform entirely.
++         * The registered source buffer already contains the NV12 data;
++         * use it directly as the output.  This avoids the NvBufSurfTransform
++         * identity deadlock (JP6 VIC hangs on same-format same-dimensions)
++         * and eliminates bBlitMode in the downstream MMAP encoder. */
++        dst_fd = src_fd;
++        dst_pitch = in_desc->layers[0].planes[0].pitch;
++        av_log(avctx, AV_LOG_DEBUG,
++               "scale_vic: passthrough %dx%d (CPU copy, no VIC)\n",
++               in->width, in->height);
++    } else {
++        /* Scaling: use VIC hardware transform NV12 → NV12 at different
++         * dimensions.  No identity deadlock because dims differ. */
++        dst_fd = s->out_fds[s->pool_idx];
++        s->pool_idx = (s->pool_idx + 1) % s->pool_size;
++
++        av_log(avctx, AV_LOG_DEBUG,
++               "scale_vic: transform src_fd=%d dst_fd=%d "
++               "(%dx%d -> %dx%d)\n",
++               src_fd, dst_fd,
++               in->width, in->height, outlink->w, outlink->h);
++
++        ret = nvmpi_vic_transform(s->vic_ctx, src_fd, dst_fd,
++                                  in->width, in->height,
++                                  outlink->w, outlink->h);
++        if (ret < 0) {
++            av_log(avctx, AV_LOG_ERROR,
++                   "scale_vic: VIC transform failed (%dx%d -> %dx%d)\n",
++                   in->width, in->height, outlink->w, outlink->h);
++            av_frame_free(&in);
++            return AVERROR_EXTERNAL;
++        }
++
++        dst_pitch = outlink->w;
++    }
++
++    av_log(avctx, AV_LOG_DEBUG,
++           "scale_vic: transform done, building output frame\n");
++
++    /* Build output frame */
++    out = av_frame_alloc();
++    if (!out) {
++        av_frame_free(&in);
++        return AVERROR(ENOMEM);
++    }
++
++    /* dup() the pool fd — the output frame may outlive the next filter_frame
++     * call (encoder queues, filter chains), so it needs its own fd copy.
++     * The dup'd fd is closed in scale_vic_drm_release when the last buf[0]
++     * ref drops. */
++    dup_fd = dup(dst_fd);
++    if (dup_fd < 0) {
++        av_log(avctx, AV_LOG_ERROR,
++               "scale_vic: dup(fd=%d) failed\n", dst_fd);
++        av_frame_free(&out);
++        av_frame_free(&in);
++        return AVERROR_EXTERNAL;
++    }
++
++    /* Allocated here; freed in scale_vic_drm_release via av_free(data) */
++    out_desc = av_mallocz(sizeof(*out_desc));
++    if (!out_desc) {
++        close(dup_fd);
++        av_frame_free(&out);
++        av_frame_free(&in);
++        return AVERROR(ENOMEM);
++    }
++
++    /* NV12 pitch: for scaling cases, the output surface uses outlink->w.
++     * For passthrough, dst_pitch was set from the input descriptor's pitch
++     * (matching the registered source surface).  Both branches above have
++     * already set dst_pitch — do not overwrite here. */
++
++    /* Single DMA-BUF object, one NV12 layer with luma + chroma planes.
++     * format_modifier carries the original NvBufSurface-registered fd
++     * (dst_fd) so the downstream encoder can call NvBufSurfaceFromFd /
++     * V4L2 DMABUF qbuf without hitting the dup'd-fd lookup failure.
++     * Uses the same NVMPI_DRM_MOD_ORIG_FD convention as the decoder. */
++    out_desc->nb_objects = 1;
++    out_desc->objects[0].fd              = dup_fd;
++    out_desc->objects[0].size            = (size_t)dst_pitch * outlink->h * 3 / 2;
++    out_desc->objects[0].format_modifier =
++        ((0x4EULL) << 56) | ((uint64_t)(unsigned int)(dst_fd));
++
++    out_desc->nb_layers = 1;
++    out_desc->layers[0].format    = DRM_FORMAT_NV12;
++    out_desc->layers[0].nb_planes = 2;
++    /* Luma plane: offset 0, full stride */
++    out_desc->layers[0].planes[0].object_index = 0;
++    out_desc->layers[0].planes[0].offset       = 0;
++    out_desc->layers[0].planes[0].pitch        = dst_pitch;
++    /* Chroma plane: after luma, same stride (NV12 interleaved UV) */
++    out_desc->layers[0].planes[1].object_index = 0;
++    out_desc->layers[0].planes[1].offset       = (ptrdiff_t)dst_pitch * outlink->h;
++    out_desc->layers[0].planes[1].pitch        = dst_pitch;
++
++    out->data[0] = (uint8_t *)out_desc;
++    out->buf[0]  = av_buffer_create((uint8_t *)out_desc, sizeof(*out_desc),
++                                     scale_vic_drm_release, NULL,
++                                     AV_BUFFER_FLAG_READONLY);
++    if (!out->buf[0]) {
++        close(dup_fd);
++        av_free(out_desc);
++        av_frame_free(&out);
++        av_frame_free(&in);
++        return AVERROR(ENOMEM);
++    }
++
++    out->format = AV_PIX_FMT_DRM_PRIME;
++    out->width  = outlink->w;
++    out->height = outlink->h;
++
++    /* Copy timing metadata from input frame */
++    out->pts     = in->pts;
++    out->pkt_dts = in->pkt_dts;
++    /* AVFrame.duration exists in all supported FFmpeg versions (6.0+).
++     * pkt_duration was deprecated in 6.0 and removed in 7.0+. */
++    out->duration = in->duration;
++    out->time_base      = in->time_base;
++    out->sample_aspect_ratio = in->sample_aspect_ratio;
++    out->colorspace      = in->colorspace;
++    out->color_range     = in->color_range;
++    out->color_primaries = in->color_primaries;
++    out->color_trc       = in->color_trc;
++
++    av_frame_free(&in);
++
++    av_log(avctx, AV_LOG_DEBUG,
++           "scale_vic: calling ff_filter_frame (output %dx%d, fd=%d)\n",
++           out->width, out->height, dup_fd);
++
++    return ff_filter_frame(outlink, out);
++}
++
++/* ------------------------------------------------------------------ */
++/* AVFilter definition                                                 */
++/* ------------------------------------------------------------------ */
++
++#define OFFSET(x) offsetof(ScaleVICContext, x)
++#define FLAGS AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_FILTERING_PARAM
++
++static const AVOption scale_vic_options[] = {
++    { "w",      "Output width",  OFFSET(width),  AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 8192, FLAGS },
++    { "width",  "Output width",  OFFSET(width),  AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 8192, FLAGS },
++    { "h",      "Output height", OFFSET(height), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 8192, FLAGS },
++    { "height", "Output height", OFFSET(height), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 8192, FLAGS },
++    { NULL }
++};
++
++AVFILTER_DEFINE_CLASS(scale_vic);
++
++static const AVFilterPad scale_vic_inputs[] = {
++    {
++        .name         = "default",
++        .type         = AVMEDIA_TYPE_VIDEO,
++        .filter_frame = scale_vic_filter_frame,
++    },
++#if LIBAVFILTER_VERSION_MAJOR < 9
++    { NULL }
++#endif
++};
++
++static const AVFilterPad scale_vic_outputs[] = {
++    {
++        .name         = "default",
++        .type         = AVMEDIA_TYPE_VIDEO,
++        .config_props = scale_vic_config_output,
++    },
++#if LIBAVFILTER_VERSION_MAJOR < 9
++    { NULL }
++#endif
++};
++
++#if LIBAVFILTER_VERSION_MAJOR >= 11
++/* FFmpeg 8.0+: FFFilter wraps AVFilter in .p sub-struct.
++ * name/description/priv_class live under .p; init/uninit/priv_size
++ * are direct FFFilter fields. */
++const FFFilter ff_vf_scale_vic = {
++    .p.name        = "scale_vic",
++    .p.description = NULL_IF_CONFIG_SMALL("Tegra VIC hardware scaler (DRM_PRIME)"),
++    .p.priv_class  = &scale_vic_class,
++
++    .init      = scale_vic_init,
++    .uninit    = scale_vic_uninit,
++    .priv_size = sizeof(ScaleVICContext),
++
++    FILTER_INPUTS(scale_vic_inputs),
++    FILTER_OUTPUTS(scale_vic_outputs),
++    FILTER_SINGLE_PIXFMT(AV_PIX_FMT_DRM_PRIME),
++
++    .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
++};
++#else
++const AVFilter ff_vf_scale_vic = {
++    .name        = "scale_vic",
++    .description = NULL_IF_CONFIG_SMALL("Tegra VIC hardware scaler (DRM_PRIME)"),
++
++    .init   = scale_vic_init,
++    .uninit = scale_vic_uninit,
++
++    .priv_size  = sizeof(ScaleVICContext),
++    .priv_class = &scale_vic_class,
++
++#if LIBAVFILTER_VERSION_MAJOR >= 9
++    /* FFmpeg 6.0+: use FILTER_INPUTS/OUTPUTS macros */
++    FILTER_INPUTS(scale_vic_inputs),
++    FILTER_OUTPUTS(scale_vic_outputs),
++    FILTER_SINGLE_PIXFMT(AV_PIX_FMT_DRM_PRIME),
++#else
++    /* FFmpeg 4.x/5.x: direct field assignment */
++    .inputs  = scale_vic_inputs,
++    .outputs = scale_vic_outputs,
++    .query_formats = scale_vic_query_formats,
++#endif
++
++    .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
++};
++#endif
 diff --git a/libavutil/Makefile b/libavutil/Makefile
 index ee77e51..d3dfc42 100644
 --- a/libavutil/Makefile
