@@ -6,13 +6,17 @@ body:
   - type: markdown
     attributes:
       value: |
-        Report issues with building the nvmpi library or patching/compiling ffmpeg.
+        Report issues with building the nvmpi library or patching/compiling FFmpeg.
+        Please provide exact version strings — "latest" or "last git" is not enough to diagnose build failures.
 
   - type: textarea
     id: description
     attributes:
       label: Description
       description: What are you trying to build and what fails?
+      placeholder: |
+        e.g. "Building libnvmpi with build.sh --install fails with undeclared V4L2 symbol"
+        or "FFmpeg 7.1 configure passes but compilation fails in nvmpi_enc.c"
     validations:
       required: true
 
@@ -51,18 +55,45 @@ body:
       required: true
 
   - type: input
+    id: kernel-version
+    attributes:
+      label: Kernel version
+      description: Output of `uname -r` (V4L2 header defines depend on the kernel version)
+      placeholder: "e.g. 5.15.136-tegra"
+    validations:
+      required: true
+
+  - type: input
+    id: compiler-version
+    attributes:
+      label: Compiler version
+      description: Output of `gcc --version | head -1` (or your cross-compiler)
+      placeholder: "e.g. aarch64-linux-gnu-gcc (Ubuntu 11.4.0-1ubuntu1~22.04) 11.4.0"
+    validations:
+      required: true
+
+  - type: input
     id: ffmpeg-version
     attributes:
       label: FFmpeg version / branch
-      placeholder: "e.g. release/7.1, release/6.0, n7.1"
+      description: "Exact version: tag (n7.1), branch (release/7.1), or commit hash. Do not write 'latest' or 'last git'."
+      placeholder: "e.g. n7.1, release/6.0, commit abc1234"
     validations:
       required: true
+
+  - type: input
+    id: libavcodec-version
+    attributes:
+      label: libavcodec version (if FFmpeg build)
+      description: "Run: grep '#define LIBAVCODEC_VERSION_MAJOR' libavcodec/version_major.h (in your FFmpeg tree)"
+      placeholder: "e.g. MAJOR=61, MINOR=19 (from FFmpeg 7.1)"
 
   - type: input
     id: nvmpi-version
     attributes:
       label: jetson-ffmpeg commit or version
-      placeholder: "e.g. 64df5aa or v1.0.0"
+      description: "Exact commit hash (`git rev-parse --short HEAD`) or release tag. Do not write 'latest'."
+      placeholder: "e.g. 64df5aa or v3.6.0"
     validations:
       required: true
 
@@ -71,7 +102,7 @@ body:
     attributes:
       label: Build target
       options:
-        - nvmpi library (CMake)
+        - nvmpi library (CMake / build.sh)
         - ffpatch.sh (patching)
         - ffmpeg configure
         - ffmpeg compilation
@@ -90,6 +121,13 @@ body:
         - Cross-compilation
     validations:
       required: true
+
+  - type: textarea
+    id: configure-flags
+    attributes:
+      label: FFmpeg configure flags (if applicable)
+      description: Output of `./configure --help` flags you used, or paste the full `./configure` command
+      render: bash
 
   - type: textarea
     id: additional

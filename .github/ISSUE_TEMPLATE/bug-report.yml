@@ -60,11 +60,20 @@ body:
       required: true
 
   - type: input
+    id: kernel-version
+    attributes:
+      label: Kernel version
+      description: Output of `uname -r`
+      placeholder: "e.g. 5.15.136-tegra"
+    validations:
+      required: true
+
+  - type: input
     id: ffmpeg-version
     attributes:
       label: FFmpeg version
-      description: Output of `ffmpeg -version` (first line)
-      placeholder: "e.g. ffmpeg version 7.1"
+      description: "First two lines of `ffmpeg -version` (includes FFmpeg version AND libavcodec version)"
+      placeholder: "e.g. ffmpeg version 7.1 / libavcodec 61.19.100"
     validations:
       required: true
 
