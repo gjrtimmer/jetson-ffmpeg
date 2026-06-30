@@ -1,10 +1,11 @@
 /*
  * nvmpi_surface.cpp — DMA-BUF surface allocation/destruction utilities
- * for the zero-copy encoder path (issue #60).
+ * for the hardware video pipeline (issue #60, #64).
  *
  * Wraps NvBufSurf::NvAllocate / NvBufferCreateEx behind a simple C API
  * so FFmpeg wrappers (or any caller) can allocate pitch-linear NV12
- * DMA-BUF surfaces for the zero-copy pipeline.
+ * DMA-BUF surfaces.  Used by the VIC scale filter (input + output
+ * surface pools) and the encoder DMABUF path.
  *
  * Two allocation functions for different NvMap domains:
  *   nvmpi_surface_alloc         — VIDEO_CONVERT memtag for VIC-only buffers

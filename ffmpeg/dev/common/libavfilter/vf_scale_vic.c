@@ -400,10 +400,6 @@ static int scale_vic_filter_frame(AVFilterLink *inlink, AVFrame *in)
            (int)in_desc->layers[0].planes[0].pitch,
            in->width, in->height, outlink->w, outlink->h);
 
-    /* Get next output buffer from the ring pool */
-    dst_fd = s->out_fds[s->pool_idx];
-    s->pool_idx = (s->pool_idx + 1) % s->pool_size;
-
     /* Copy the dup'd DMA-BUF frame data into a registered source buffer.
      * The decoder dup()s its fds for AVFrame lifetime safety, but dup'd
      * fds are not registered in NvBufSurface's internal table — the VIC
@@ -425,24 +421,41 @@ static int scale_vic_filter_frame(AVFilterLink *inlink, AVFrame *in)
         return AVERROR_EXTERNAL;
     }
 
-    av_log(avctx, AV_LOG_DEBUG,
-           "scale_vic: transform src_fd=%d → dst_fd=%d "
-           "(%dx%d → %dx%d)\n",
-           src_fd, dst_fd,
-           in->width, in->height, outlink->w, outlink->h);
+    if (in->width == outlink->w && in->height == outlink->h) {
+        /* Passthrough: same dimensions — skip VIC transform entirely.
+         * The registered source buffer already contains the NV12 data;
+         * use it directly as the output.  This avoids the NvBufSurfTransform
+         * identity deadlock (JP6 VIC hangs on same-format same-dimensions)
+         * and eliminates bBlitMode in the downstream MMAP encoder. */
+        dst_fd = src_fd;
+        dst_pitch = in_desc->layers[0].planes[0].pitch;
+        av_log(avctx, AV_LOG_DEBUG,
+               "scale_vic: passthrough %dx%d (CPU copy, no VIC)\n",
+               in->width, in->height);
+    } else {
+        /* Scaling: use VIC hardware transform NV12 → NV12 at different
+         * dimensions.  No identity deadlock because dims differ. */
+        dst_fd = s->out_fds[s->pool_idx];
+        s->pool_idx = (s->pool_idx + 1) % s->pool_size;
 
-    /* Execute hardware transform: scale src → dst.
-     * nvmpi_vic_transform handles identity dimensions (src == dst)
-     * internally by adding crop flags to avoid a JP6 VIC deadlock. */
-    ret = nvmpi_vic_transform(s->vic_ctx, src_fd, dst_fd,
-                              in->width, in->height,
-                              outlink->w, outlink->h);
-    if (ret < 0) {
-        av_log(avctx, AV_LOG_ERROR,
-               "scale_vic: VIC transform failed (%dx%d → %dx%d)\n",
+        av_log(avctx, AV_LOG_DEBUG,
+               "scale_vic: transform src_fd=%d dst_fd=%d "
+               "(%dx%d -> %dx%d)\n",
+               src_fd, dst_fd,
                in->width, in->height, outlink->w, outlink->h);
-        av_frame_free(&in);
-        return AVERROR_EXTERNAL;
+
+        ret = nvmpi_vic_transform(s->vic_ctx, src_fd, dst_fd,
+                                  in->width, in->height,
+                                  outlink->w, outlink->h);
+        if (ret < 0) {
+            av_log(avctx, AV_LOG_ERROR,
+                   "scale_vic: VIC transform failed (%dx%d -> %dx%d)\n",
+                   in->width, in->height, outlink->w, outlink->h);
+            av_frame_free(&in);
+            return AVERROR_EXTERNAL;
+        }
+
+        dst_pitch = outlink->w;
     }
 
     av_log(avctx, AV_LOG_DEBUG,
@@ -477,12 +490,10 @@ static int scale_vic_filter_frame(AVFilterLink *inlink, AVFrame *in)
         return AVERROR(ENOMEM);
     }
 
-    /* NV12 pitch = width aligned to hardware stride. For surfaces allocated
-     * by nvmpi_surface_alloc, the driver aligns pitch internally. We compute
-     * a conservative estimate matching the decoder's pattern: pitch = width
-     * (the actual hardware pitch may be larger, but the DRM descriptor only
-     * needs a valid lower bound for downstream consumers). */
-    dst_pitch = outlink->w;
+    /* NV12 pitch: for scaling cases, the output surface uses outlink->w.
+     * For passthrough, dst_pitch was set from the input descriptor's pitch
+     * (matching the registered source surface).  Both branches above have
+     * already set dst_pitch — do not overwrite here. */
 
     /* Single DMA-BUF object, one NV12 layer with luma + chroma planes.
      * format_modifier carries the original NvBufSurface-registered fd
