@@ -348,6 +348,10 @@ static int nvmpi_init_decoder(AVCodecContext *avctx)
 		 * nvmpi_decode() can copy decoded planes straight into it. A fresh
 		 * bufFrame is re-acquired after each frame is handed to the user. */
 		nvmpi_context->bufFrame = av_frame_alloc();
+		/* Guard against av_frame_alloc OOM — dereferencing NULL here
+		 * would crash immediately. Freed in nvmpi_decode_close(). */
+		if (!nvmpi_context->bufFrame)
+			return AVERROR(ENOMEM);
 		nvmpi_context->bufFrame->width = avctx->width;
 		nvmpi_context->bufFrame->height = avctx->height;
 		if (ff_get_buffer(avctx, nvmpi_context->bufFrame, 0) < 0)
@@ -558,8 +562,15 @@ static int nvmpi_decode(AVCodecContext *avctx, AVFrame *data, int *got_frame, AV
 		 *  hw_frames_ctx to be non-NULL!" */
 		if (avctx->hw_frames_ctx) {
 			frame->hw_frames_ctx = av_buffer_ref(avctx->hw_frames_ctx);
-			if (!frame->hw_frames_ctx)
+			if (!frame->hw_frames_ctx) {
+				/* Unref buf[0] to trigger nvmpi_drm_release_frame —
+				 * returns the dup'd fd and the frame pool slot.
+				 * Without this, OOM here leaks the DMA-BUF fd and
+				 * starves the libnvmpi frame pool. */
+				av_buffer_unref(&frame->buf[0]);
+				frame->data[0] = NULL;
 				return AVERROR(ENOMEM);
+			}
 		}
 
 		if (width && height) {
@@ -572,6 +583,17 @@ static int nvmpi_decode(AVCodecContext *avctx, AVFrame *data, int *got_frame, AV
 	}
 
 	/* ---- Software-frame path: copy decoded pixels into bufFrame ---- */
+
+	/* Re-acquire bufFrame if a prior ff_get_buffer failure left it without
+	 * backing store.  Without this guard, the payload[] assignments below
+	 * copy NULL pointers into nvframe and libnvmpi writes to address 0. */
+	if (bufFrame && !bufFrame->data[0]) {
+		bufFrame->width  = avctx->width;
+		bufFrame->height = avctx->height;
+		bufFrame->format = avctx->pix_fmt;
+		if (ff_get_buffer(avctx, bufFrame, 0) < 0)
+			return AVERROR(ENOMEM);
+	}
 
 	//Point the nvFrame at bufFrame's pre-allocated planes; on success
 	//libnvmpi copies the decoded frame directly into FFmpeg-owned memory.
@@ -721,8 +743,11 @@ static int nvmpi_decode_mjpeg(AVCodecContext *avctx, AVFrame *data, int *got_fra
 		return AVERROR_EXTERNAL;
 	}
 
-	//Allocate or refresh bufFrame at the decoded resolution.
-	//JPEG dimensions come from the bitstream; we must update avctx once known.
+	/* Allocate or refresh bufFrame at the decoded resolution.
+	 * JPEG dimensions come from the bitstream; we must update avctx once known.
+	 * Also serves as re-acquisition guard: if a prior ff_get_buffer failure
+	 * (during re-prime after av_frame_move_ref, or during resolution change)
+	 * left bufFrame without backing store, this re-acquires it. */
 	AVFrame *bufFrame = nvmpi_context->bufFrame;
 	if (!bufFrame->data[0] || bufFrame->width != avctx->width || bufFrame->height != avctx->height)
 	{

@@ -60,6 +60,25 @@ void respondToResolutionEvent(v4l2_format &format, v4l2_crop &crop,nvmpictx* ctx
 	}
 	else
 	{
+		/* Wait for all checked-out frame buffers to be returned before
+		 * destroying the pool.  Without this, deinitFramePool destroys
+		 * DMA buffers that the user thread still holds (via get_frame_fd),
+		 * causing use-after-free.  Bounded wait with 1s timeout to avoid
+		 * hanging the capture thread if a frame is never released. */
+		if (ctx->frames_checked_out) {
+			int wait_us = 0;
+			while (ctx->frames_checked_out->load(std::memory_order_acquire) > 0
+			       && wait_us < 1000000) {
+				usleep(1000);
+				wait_us += 1000;
+			}
+			if (ctx->frames_checked_out->load(std::memory_order_acquire) > 0) {
+				NVMPI_LOG(NVMPI_LOG_WARN,
+				          "resolution change: %d frames still checked out "
+				          "after 1s timeout, proceeding with pool teardown",
+				          ctx->frames_checked_out->load(std::memory_order_relaxed));
+			}
+		}
 		ctx->deinitFramePool();
 		ctx->initFramePool();
 		ctx->updateFrameSizeParams();
@@ -299,7 +318,15 @@ void dec_capture_loop_fcn(void *arg)
 			v4l2_buf.m.planes[0].m.fd = ctx->dmaBufferFileDescriptor[v4l2_buf.index];
 			if (dec->capture_plane.qBuffer(v4l2_buf, NULL) < 0)
 			{
-				ERROR_MSG("Error while queueing buffer at decoder capture plane");
+				/* qBuffer failure permanently removes this V4L2 buffer
+				 * from the driver's circulation queue.  After enough
+				 * failures the capture loop starves (no buffers to dequeue).
+				 * Treat as fatal — set EOS to unblock the close path. */
+				NVMPI_LOG(NVMPI_LOG_ERROR,
+				          "capture loop: qBuffer failed for buffer %d, aborting",
+				          v4l2_buf.index);
+				ctx->eos.store(true);
+				break;
 			}
 		}
 	}

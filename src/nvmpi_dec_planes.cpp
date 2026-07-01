@@ -154,7 +154,16 @@ void nvmpictx::initDecoderCapturePlane(v4l2_format &format)
 		v4l2_buf.m.planes[0].m.fd = dmaBufferFileDescriptor[i];
 
 		ret = dec->capture_plane.qBuffer(v4l2_buf, NULL);
-		TEST_ERROR(ret < 0, "Error Qing buffer at output plane", ret);
+		if (ret < 0) {
+			/* Partial init is worse than no init — remaining buffers
+			 * never reach the driver queue, leading to silent capture
+			 * starvation.  Return early so the caller can handle the
+			 * error (or fail-fast on the next decode call). */
+			NVMPI_LOG(NVMPI_LOG_ERROR,
+			          "initCapturePlane: qBuffer failed at buffer %d/%d",
+			          i, dec->capture_plane.getNumBuffers());
+			return;
+		}
 	}
 
 	return;

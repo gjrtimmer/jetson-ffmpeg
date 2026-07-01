@@ -383,6 +383,7 @@ nvmpictx* nvmpi_create_decoder(nvDecParam* param)
 	 * after decoder close because frame refs hold shared_ptr copies.
 	 * Allocated here; set to false in nvmpi_decoder_close(). */
 	ctx->pool_alive = std::make_shared<std::atomic<bool>>(true);
+	ctx->frames_checked_out = std::make_shared<std::atomic<int>>(0);
 	ctx->eos.store(false);
 	ctx->index=0;
 	for(int index=0;index<MAX_BUFFERS;index++)
@@ -555,9 +556,14 @@ int nvmpi_decoder_get_frame(nvmpictx* ctx, nvFrame* frame, bool wait)
 
 	if (!fb) return -1;
 
+	/* Mark buffer as checked out so respondToResolutionEvent knows
+	 * to wait before destroying the pool (prevents use-after-free
+	 * if a resolution change fires while we're copying). */
+	ctx->frames_checked_out->fetch_add(1, std::memory_order_relaxed);
 	ret = copyNvBufToFrame(ctx, fb, frame);
 	frame->timestamp = fb->timestamp;
 	ctx->framePool->qEmptyBuf(fb);
+	ctx->frames_checked_out->fetch_sub(1, std::memory_order_relaxed);
 
 	return ret;
 }
@@ -573,6 +579,10 @@ struct nvmpi_frame_ref {
 	 * before accessing pool to avoid use-after-free when FFmpeg's
 	 * scheduler drops frame refs after codec close (FFmpeg 8.1+). */
 	std::shared_ptr<std::atomic<bool>> pool_alive;
+	/* Shared counter from nvmpictx::frames_checked_out — decremented
+	 * on release so respondToResolutionEvent knows when all frames
+	 * have been returned before destroying the pool. */
+	std::shared_ptr<std::atomic<int>> checked_out_count;
 };
 
 //Release callback for nvmpi_decoder_get_frame_fd.
@@ -597,6 +607,11 @@ static void frame_fd_release_impl(void *opaque)
 	if (ref->pool && ref->fb &&
 	    ref->pool_alive && ref->pool_alive->load())
 		ref->pool->qEmptyBuf(ref->fb);
+
+	/* Decrement checked-out count — allows respondToResolutionEvent
+	 * to proceed with pool teardown once all frames are returned. */
+	if (ref->checked_out_count)
+		ref->checked_out_count->fetch_sub(1, std::memory_order_release);
 
 	delete ref;
 }
@@ -640,14 +655,26 @@ int nvmpi_decoder_get_frame_fd(nvmpictx* ctx,
 	*pitch = (int)ctx->frame_linesize[0];
 	*timestamp = (int64_t)fb->timestamp;
 
+	/* Mark buffer as checked out — respondToResolutionEvent waits for
+	 * this counter to reach 0 before destroying the pool. Increment
+	 * BEFORE allocating the ref so the counter is accurate even if
+	 * the ref allocation below fails (cleaned up in error path). */
+	ctx->frames_checked_out->fetch_add(1, std::memory_order_acquire);
+
 	/* Allocate a ref wrapper so the release callback can return this
 	 * specific buffer to this specific pool. The wrapper is freed
 	 * inside frame_fd_release_impl. */
 	/* Allocated here; freed in frame_fd_release_impl() */
-	nvmpi_frame_ref *ref = new nvmpi_frame_ref();
+	nvmpi_frame_ref *ref = new (std::nothrow) nvmpi_frame_ref();
+	if (!ref) {
+		ctx->frames_checked_out->fetch_sub(1, std::memory_order_release);
+		ctx->framePool->qEmptyBuf(fb);
+		return -1;
+	}
 	ref->fb = fb;
 	ref->pool = ctx->framePool;
 	ref->pool_alive = ctx->pool_alive;
+	ref->checked_out_count = ctx->frames_checked_out;
 
 	*release = frame_fd_release_impl;
 	*opaque = ref;
@@ -736,12 +763,15 @@ int nvmpi_decoder_close(nvmpictx* ctx)
 
 	ctx->deinitDecoderCapturePlane();
 
-	ctx->deinitFramePool();
-	/* Signal DRM_PRIME release callbacks that the pool is gone —
-	 * must happen BEFORE delete so late-arriving callbacks (from
-	 * FFmpeg 8.1+ scheduler cleanup order) skip the qEmptyBuf call. */
+	/* Signal DRM_PRIME release callbacks that the pool is gone BEFORE
+	 * destroying buffers — a callback firing between deinitFramePool()
+	 * and the store(false) would pass the pool_alive guard and call
+	 * qEmptyBuf on a destroyed buffer.  Must be BEFORE deinitFramePool
+	 * AND before delete so late-arriving callbacks (from FFmpeg 8.1+
+	 * scheduler cleanup order) skip the qEmptyBuf call entirely. */
 	if (ctx->pool_alive)
 		ctx->pool_alive->store(false);
+	ctx->deinitFramePool();
 	delete ctx->framePool;
 	ctx->framePool = nullptr;
 

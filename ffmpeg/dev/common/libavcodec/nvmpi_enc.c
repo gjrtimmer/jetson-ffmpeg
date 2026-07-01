@@ -413,9 +413,21 @@ static av_cold int nvmpi_encode_init(AVCodecContext *avctx)
 
 			avctx->extradata_size=i;
 			avctx->extradata	= av_mallocz( avctx->extradata_size + AV_INPUT_BUFFER_PADDING_SIZE );
+			/* Guard against av_mallocz OOM — memcpy to NULL is
+			 * undefined behavior (likely crash). */
+			if (!avctx->extradata) {
+				avctx->extradata_size = 0;
+				nvmpienc_nvPacket_free(nPkt);
+				av_freep(&dst[0]);
+				nvmpienc_deinitPktPool(avctx);
+				nvmpi_encoder_close(nvmpi_context->ctx);
+				nvmpi_context->ctx = NULL;
+				av_frame_free(&nvmpi_context->frame);
+				return AVERROR(ENOMEM);
+			}
 			memcpy( avctx->extradata, nPkt->payload,avctx->extradata_size);
 			memset( avctx->extradata + avctx->extradata_size, 0, AV_INPUT_BUFFER_PADDING_SIZE );
-			
+
 			nvmpienc_nvPacket_free(nPkt);
 			nPkt = nvmpienc_nvPacket_alloc(avctx, NVMPI_ENC_CHUNK_SIZE);
 			
@@ -468,6 +480,11 @@ static av_cold int nvmpi_encode_init(AVCodecContext *avctx)
 	if(!nvmpi_context->ctx)
 	{
 		av_log(avctx, AV_LOG_ERROR, "nvmpi: encoder creation failed\n");
+		/* Free extradata allocated by the GLOBAL_HEADER block above —
+		 * FFmpeg does not call .close() after a failed .init() (unless
+		 * FF_CODEC_CAP_INIT_CLEANUP is set), so this is the only path. */
+		av_freep(&avctx->extradata);
+		avctx->extradata_size = 0;
 		av_frame_free(&nvmpi_context->frame);
 		/* AVERROR_EXTERNAL: device-level failure (EBUSY, ENODEV, etc.),
 		 * not a memory allocation error. See #37. */
