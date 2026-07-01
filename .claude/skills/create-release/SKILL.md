@@ -121,12 +121,12 @@ queries: ["auth status", "open merge requests", "pipeline status", "existing tag
 
 ### Open MRs check
 
-If open MRs exist:
+If open MRs exist targeting main:
 1. List them with title + pipeline status.
-2. **Ask user**: "These MRs are still open. Are they intended for this
-   release, or can I proceed without them?"
-3. If intended for release → proceed to **Phase 2: Wait for MRs**.
-4. If not → skip to Phase 3.
+2. **Assume all are release-blocking.** Do NOT ask the user — open MRs
+   targeting main are always intended for the release. Proceed directly
+   to **Phase 2: Wait for MRs**.
+3. Only skip Phase 2 if there are zero open MRs.
 
 ### Pipeline check
 
