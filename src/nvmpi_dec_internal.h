@@ -94,6 +94,12 @@ struct nvmpictx
 	 * Allocated in nvmpi_create_decoder; set to false in decoder_close
 	 * before deleting framePool. */
 	std::shared_ptr<std::atomic<bool>> pool_alive;
+	/* Number of frame buffers currently checked out by user code —
+	 * incremented in get_frame/get_frame_fd, decremented on return/release.
+	 * Shared via shared_ptr so release callbacks can decrement after close.
+	 * respondToResolutionEvent waits for this to reach 0 before destroying
+	 * the pool to prevent use-after-free on resolution change. */
+	std::shared_ptr<std::atomic<int>> frames_checked_out;
 	//all frame bufs ever allocated by initFramePool — ensures deinitFramePool
 	//can destroy every buffer even if one is temporarily outside both queues
 	std::vector<nvmpi_frame_buffer*> allocatedFrameBufs;
