@@ -89,8 +89,11 @@ Push to pipeline when the local test passes. The pipeline validates all
 8 FFmpeg versions × 2 JetPack versions — don't iterate on pipeline
 failures when you can reproduce locally.
 
-**Never push code changes without a passing `./test/smoke-all.sh` run** (7/7
-matrix green). Docs-only changes are exempt and may push with `-o ci.skip`.
+**Validate code changes before considering them done.** Two valid paths:
+(a) local `./test/smoke-all.sh` run (7/7 green) before pushing, or
+(b) push to an MR branch and let the CI pipeline run the full matrix — then
+move to other work while monitoring. Path (b) is preferred when parallelizing
+across sessions. Docs-only changes are exempt and may push with `-o ci.skip`.
 **Release commits are exempt from the smoke-all gate.** When creating a
 release (CHANGELOG.md update + tag), the code has already been validated by the
 MR pipeline. Push the release commit and tag directly to main without a local
@@ -154,7 +157,7 @@ Two patching mechanisms exist and must stay in sync:
 
 The codebase supports a wide matrix without per-call `#ifdef` sprawl by concentrating version logic in a few places:
 
-- **FFmpeg API drift** (4.2 → 8.0+): handled with `LIBAVCODEC_VERSION_MAJOR/MINOR` preprocessor guards inside `ffmpeg/dev/common/libavcodec/nvmpi_{enc,dec}.c`. Key breakpoints: `AVCodec`→`FFCodec` (v60), new encode API `receive_packet` (`NVMPI_FF_NEW_API`), `FF_PROFILE_*`→`AV_PROFILE_*` (v62.11). The `allcodecs.c` overlay differs between <60 (`extern AVCodec`) and ≥60 (`extern const FFCodec`) — this is why version overlays exist.
+- **FFmpeg API drift** (4.2 → 8.0+): handled with `LIBAVCODEC_VERSION_MAJOR/MINOR` preprocessor guards inside `ffmpeg/dev/common/libavcodec/nvmpi_{enc,dec}.c`. Key breakpoints: `AVCodec`→`FFCodec` (v60), new encode API `receive_packet` (`NVMPI_FF_NEW_API`), `FF_PROFILE_*`→`AV_PROFILE_*` (v62.11). The `allcodecs.c` overlay differs between <60 (`extern AVCodec`) and ≥60 (`extern const FFCodec`) — this is why version overlays exist. **Prefer `#ifndef SYMBOL` feature detection over `MAJOR >= X && MINOR >= Y` version arithmetic** — MINOR resets to 0 on MAJOR bumps, breaking compound guards (e.g. `>=62 && >=11` fails at MAJOR=63, MINOR=0). Direct symbol presence checks (`#ifndef FF_PROFILE_UNKNOWN`) are immune to this.
 - **JetPack buffer API drift**: legacy `nvbuf_utils` vs newer `NvBufSurface`/NvUtils (JetPack 5+). `CMakeLists.txt` auto-detects by probing for `nvbufsurface.h`; if present it defines `-DWITH_NVUTILS` and links the surface libs. `include/nvUtils2NvBuf.h` is a compile-time shim that maps legacy `NvBuffer*` names to `NvBufSurf*` so the rest of `src/` stays API-agnostic.
 
 When adding a new FFmpeg version or handling a new API change, see the step-by-step guide in the [Development Guide](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Development-Guide#adding-support-for-a-new-ffmpeg-version) ("Adding Support for a New FFmpeg Version") — it must touch overlays, the common codec files, `scripts/ffpatch.sh` anchors, `update_patch.sh`, and `try_build.sh` together.
@@ -184,6 +187,18 @@ The CMake build also pulls NVIDIA sample classes (`NvVideoDecoder`, `NvVideoEnco
 - **`NvV4l2Element::fd` is protected.** The V4L2 file descriptor cannot be
   accessed from outside the class hierarchy, so standard `poll()` syscall is
   not usable on the decoder/encoder fd.
+- **`NvBufSurfTransform` deadlocks on concurrent calls.** Despite NVIDIA docs
+  claiming thread-local session params, concurrent `NvBufSurfTransform` calls
+  from two threads (e.g. decoder capture thread + filter main thread) deadlock
+  the Tegra driver. Fix: global `pthread_mutex_t nvmpi_transform_mutex` in
+  `nvmpi_vic.cpp`, wrapping ALL `NvBufSurfTransform` call sites (4 across 3
+  files). Any new code calling `NvBufSurfTransform` must lock this mutex.
+- **`NvBufSurfaceFromFd` fails on dup'd fds.** `NvBufSurface` maintains an
+  internal hash table mapping fd→metadata. `dup()` creates a new fd NOT
+  registered in the table, so `NvBufSurfaceFromFd(dup_fd)` fails. The decoder's
+  DRM_PRIME output uses `dup()` to hand fds to FFmpeg — downstream filters must
+  copy frame data into a fresh `NvBufSurface`-allocated buffer (which IS
+  registered) before calling `NvBufSurfTransform`.
 
 ## Secure codec engineering agent (always active)
 
@@ -381,8 +396,11 @@ with a redirect comment.
 
 **Always label issues on creation.** Every `gh issue create` must include
 `--label` flags for: type (`bug`, `enhancement`, `task`, `refactor`, …),
-area (`area:decoder`, `area:encoder`, `area:libnvmpi`, `area:ffmpeg`), and
-priority (`P0`–`P3`). If unsure about priority, default to `P3`. Check
+area (`area:decoder`, `area:encoder`, `area:libnvmpi`, `area:ffmpeg`),
+priority (`P0`–`P3`), and `stability` when the issue involves flaky tests,
+driver timing, race conditions, or intermittent failures. If unsure about
+priority, default to `P3`. **Stability issues get P2 minimum** — flaky
+behavior erodes trust in the test suite and masks real regressions. Check
 `gh label list -R gjrtimmer/jetson-ffmpeg` for available labels. When
 editing issues that lack labels, add them.
 
@@ -612,7 +630,9 @@ default for all sessions in this repo — do not wait for the user to request it
   `/retro` → push.
 - **Verify current branch before file edits.** Run `git branch --show-current`
   before any Write/Edit to a tracked file. Wrong-branch edits are expensive to
-  undo and may corrupt an in-progress release or MR.
+  undo and may corrupt an in-progress release or MR. **Multi-session risk:**
+  another Claude Code session may have switched branches on this worktree —
+  always check, especially after encountering unexpected state.
 - **Never poll background tasks.** When a Monitor or `run_in_background` task
   is armed for a long-running process (build, pipeline, smoke-all), wait
   silently for the notification. Do NOT make repeated Bash calls to check
