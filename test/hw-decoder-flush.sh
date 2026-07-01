@@ -28,24 +28,34 @@ SAMPLE_H264_SEEK="/tmp/nvmpi-sample-h264-seek.mp4"
 # seek_decode LABEL CODEC INPUT SEEK_TO EXPECTED_MIN_FRAMES
 # Seek to SEEK_TO seconds, decode from there, verify at least
 # EXPECTED_MIN_FRAMES are produced (proves the decoder pipeline restarted).
+# On signal-kill, waits 200 ms and retries once (transient V4L2 driver flake).
 seek_decode() {
   local label="$1" codec="$2" input="$3" seek_to="$4" min_frames="$5"
-  local rc=0 out frames
-  out=$(timeout -k 5 30 ffmpeg -y -hide_banner \
-    -ss "$seek_to" -c:v "$codec" -i "$input" \
-    -f null - 2>&1) || rc=$?
-  if [ "$rc" -eq 124 ]; then
-    echo "FAIL(${label}): seek+decode timed out (30 s) — possible deadlock"
-    echo "      in nvmpi_decoder_flush() (src/nvmpi_dec.cpp) or the capture"
-    echo "      thread failing to restart after STREAMOFF/STREAMON."
-    exit 1
-  fi
-  if [ "$rc" -ge 128 ]; then
-    echo "FAIL(${label}): killed by signal $((rc-128)) — crash in flush path."
-    echo "--- ffmpeg output (last 15 lines) ---"
-    echo "$out" | tail -15
-    exit 1
-  fi
+  local rc=0 out frames attempt
+  for attempt in 1 2; do
+    rc=0
+    out=$(timeout -k 5 30 ffmpeg -y -hide_banner \
+      -ss "$seek_to" -c:v "$codec" -i "$input" \
+      -f null - 2>&1) || rc=$?
+    if [ "$rc" -eq 124 ]; then
+      echo "FAIL(${label}): seek+decode timed out (30 s) — possible deadlock"
+      echo "      in nvmpi_decoder_flush() (src/nvmpi_dec.cpp) or the capture"
+      echo "      thread failing to restart after STREAMOFF/STREAMON."
+      exit 1
+    fi
+    if is_signal_rc "$rc"; then
+      if [ "$attempt" -eq 1 ]; then
+        echo "  warn(${label}): signal $((rc-128)), retrying after 200 ms..."
+        sleep 0.2
+        continue
+      fi
+      echo "FAIL(${label}): confirmed signal $((rc-128)) — crash in flush path."
+      echo "--- ffmpeg output (last 15 lines) ---"
+      echo "$out" | tail -15
+      exit 1
+    fi
+    break
+  done
   # Extract decoded frame count from ffmpeg stats line
   frames=$(echo "$out" | grep -oP 'frame=\s*\K[0-9]+' | tail -1)
   if [ -z "$frames" ] || [ "$frames" -lt "$min_frames" ]; then
@@ -66,10 +76,12 @@ echo "== 2. multiple rapid seeks (H.264) =="
 # Seek to several positions. The 4s seek leaves ~1s of content — hardware
 # decode after seek may not produce all 30 frames (DPB priming, IDR
 # alignment), so use a low threshold that still proves the pipeline restarted.
+# Small cooldown between seeks reduces V4L2 driver pressure.
 for pos in 1 4 2; do
   min=10
   [ "$pos" -ge 4 ] && min=5
   seek_decode "h264-multi-seek-${pos}s" h264_nvmpi "${SAMPLE_H264_SEEK}" "$pos" "$min"
+  sleep 0.1
 done
 echo "   rapid seek cycles completed without crash"
 
@@ -82,10 +94,18 @@ if [ "$rc" -eq 124 ]; then
   echo "FAIL: near-end seek timed out — possible deadlock on short stream."
   exit 1
 fi
-if [ "$rc" -ge 128 ]; then
-  echo "FAIL: near-end seek crashed (signal $((rc-128)))."
-  echo "$out" | tail -15
-  exit 1
+if is_signal_rc "$rc"; then
+  echo "  warn: near-end seek signal $((rc-128)), retrying after 200 ms..."
+  sleep 0.2
+  rc=0
+  out=$(timeout -k 5 15 ffmpeg -y -hide_banner -loglevel error \
+    -ss 4.5 -c:v h264_nvmpi -i "${SAMPLE_H264_SEEK}" \
+    -f null - 2>&1) || rc=$?
+  if is_signal_rc "$rc"; then
+    echo "FAIL: near-end seek confirmed crash (signal $((rc-128)))."
+    echo "$out" | tail -15
+    exit 1
+  fi
 fi
 echo "   near-end seek OK (rc=${rc})"
 

@@ -30,21 +30,8 @@ ITERATIONS=200
 
 [ -s "${SAMPLE_H264_720P}" ] || gen-sample-h264 "${SAMPLE_H264_720P}" 3
 
-# run_iteration CMD...
-# Run a command; on signal-kill, wait 200 ms and retry once.
-# Returns 0 on success, 1 on non-signal error, 2 on confirmed signal-kill.
-run_iteration() {
-  local rc=0
-  "$@" 2>/dev/null || rc=$?
-  if [ "$rc" -eq 0 ]; then return 0; fi
-  if [ "$rc" -lt 128 ]; then return 1; fi
-  sleep 0.2
-  rc=0
-  "$@" 2>/dev/null || rc=$?
-  if [ "$rc" -eq 0 ]; then return 0; fi
-  if [ "$rc" -ge 128 ]; then return 2; fi
-  return 1
-}
+# run_iteration is now run_with_signal_retry from gen-samples.sh
+run_iteration() { run_with_signal_retry "$@"; }
 
 # === 1. Rapid full-decode open/close (H.264) ===
 echo "== 1. rapid full-decode open/close x${ITERATIONS} (h264_nvmpi) =="
@@ -87,27 +74,22 @@ TRUNCATED="/tmp/nvmpi-sample-truncated.mp4"
 # but the stream will end abruptly mid-frame.
 dd if="$SAMPLE_H264_720P" of="$TRUNCATED" bs=1024 count=8 2>/dev/null
 
-CRASH_SIGNALS="134 135 136 137 139"
-
 for i in $(seq 1 50); do
   rc=0
   ffmpeg -y -hide_banner -c:v h264_nvmpi \
        -i "$TRUNCATED" -f null /dev/null 2>/dev/null || rc=$?
-  for sig in $CRASH_SIGNALS; do
-    if [ "$rc" -eq "$sig" ]; then
-      sleep 0.2
-      rc=0
-      ffmpeg -y -hide_banner -c:v h264_nvmpi \
-           -i "$TRUNCATED" -f null /dev/null 2>/dev/null || rc=$?
-      if [ "$rc" -eq "$sig" ]; then
-        echo "FAIL: error-path close iteration ${i}/50 crashed (exit $rc)."
-        echo "  Truncated-stream decode should error cleanly, not crash."
-        echo "  Check isInError() exit path in dec_capture_loop_fcn."
-        exit 1
-      fi
-      break
+  if is_signal_rc "$rc"; then
+    sleep 0.2
+    rc=0
+    ffmpeg -y -hide_banner -c:v h264_nvmpi \
+         -i "$TRUNCATED" -f null /dev/null 2>/dev/null || rc=$?
+    if is_signal_rc "$rc"; then
+      echo "FAIL: error-path close iteration ${i}/50 crashed (signal $((rc-128)))."
+      echo "  Truncated-stream decode should error cleanly, not crash."
+      echo "  Check isInError() exit path in dec_capture_loop_fcn."
+      exit 1
     fi
-  done
+  fi
   sleep 0.02
 done
 echo "  50 iterations clean."

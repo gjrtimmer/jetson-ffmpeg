@@ -27,20 +27,19 @@ echo "=== hw-pthread-guard on variant: ${variant} ==="
 
 ITERATIONS=100
 
-# run_iteration CMD...
-# Run a command; on signal-kill, wait 200 ms and retry once.
-# Returns 0 on success, 1 on non-signal error, 2 on confirmed signal-kill.
+# run_iteration wraps run_with_signal_retry from gen-samples.sh with
+# output capture and diagnostic printing for this suite's verbose style.
 run_iteration() {
   local rc=0 out
   out=$("$@" 2>&1) || rc=$?
 
-  if [ "$rc" -ge 128 ]; then
+  if is_signal_rc "$rc"; then
     local sig=$((rc - 128))
     echo "  warn: signal ${sig}, retrying after 200 ms..."
     sleep 0.2
     rc=0
     out=$("$@" 2>&1) || rc=$?
-    if [ "$rc" -ge 128 ]; then
+    if is_signal_rc "$rc"; then
       sig=$((rc - 128))
       echo "--- retry also killed by signal ${sig} ---"
       echo "$out" | tail -15

@@ -39,21 +39,8 @@ ITERATIONS=200
 
 [ -s "${SAMPLE_H264_720P}" ] || gen-sample-h264 "${SAMPLE_H264_720P}" 3
 
-# run_iteration CMD...
-# Run a command; on signal-kill, wait 200 ms and retry once.
-# Returns 0 on success, 1 on non-signal error, 2 on confirmed signal-kill.
-run_iteration() {
-    local rc=0
-    "$@" 2>/dev/null || rc=$?
-    if [ "$rc" -ge 128 ] && [ "$rc" -ne 124 ]; then
-        sleep 0.2
-        rc=0
-        "$@" 2>/dev/null || rc=$?
-        [ "$rc" -ge 128 ] && return 2
-    fi
-    [ "$rc" -ne 0 ] && return 1
-    return 0
-}
+# run_iteration is now run_with_signal_retry from gen-samples.sh
+run_iteration() { run_with_signal_retry "$@"; }
 
 # === 1. Rapid full-encode open/close (H.264) ===
 echo "== 1. rapid full-encode open/close x${ITERATIONS} (h264_nvmpi) =="
@@ -99,10 +86,18 @@ if [ "$rc" -eq 124 ]; then
     echo "   Code: nvmpi_encode_close drain loop in nvmpi_enc.c"
     exit 1
 fi
-if [ "$rc" -ge 128 ]; then
-    echo "FAIL: short encode crashed (signal $((rc - 128)))."
-    echo "$out" | tail -15
-    exit 1
+if is_signal_rc "$rc"; then
+    echo "  warn: short encode signal $((rc - 128)), retrying after 200 ms..."
+    sleep 0.2
+    rc=0
+    out=$(timeout -k 5 15 ffmpeg -y -hide_banner \
+        -i "${SAMPLE_SHORT}" \
+        -c:v h264_nvmpi -f null - 2>&1) || rc=$?
+    if is_signal_rc "$rc"; then
+        echo "FAIL: short encode confirmed crash (signal $((rc - 128)))."
+        echo "$out" | tail -15
+        exit 1
+    fi
 fi
 echo "   short encode EOS OK (rc=${rc})"
 

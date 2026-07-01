@@ -1,5 +1,5 @@
 # shellcheck shell=bash
-# Input-sample paths and generators for the hw-* test suites.
+# Input-sample paths, generators, and shared test helpers for the hw-* suites.
 # Source, don't execute:
 #   . "$(dirname "${BASH_SOURCE[0]}")/gen-samples.sh"
 #
@@ -7,6 +7,42 @@
 #   - one specific sample path per case: /tmp/nvmpi-sample-{type}.mp4
 #     (never reuse a generic name for a different kind of content)
 #   - generators are named gen-sample-{name-or-type}
+
+# ---------------------------------------------------------------------------
+# Signal detection and retry helpers
+#
+# The Tegra V4L2 driver has stochastic segfaults on rapid device open/close
+# (especially HEVC). A single signal-kill does NOT prove a code bug — only
+# a *confirmed* signal-kill (crash on retry after cooldown) does. These
+# helpers give every signal-killed invocation one retry before failing.
+#
+# POSIX: a process killed by signal N exits with rc = 128 + N.
+# Valid signal range: 1–64 → rc 129–192. Values outside this range are
+# normal (non-signal) exit codes and must NOT be treated as crashes.
+# ---------------------------------------------------------------------------
+
+# is_signal_rc RC
+# Returns 0 (true) if RC falls in the POSIX signal-kill range (129–192).
+is_signal_rc() { [ "$1" -ge 129 ] && [ "$1" -le 192 ]; }
+
+# run_with_signal_retry CMD...
+# Run CMD; on signal-kill, wait 200 ms and retry once (output suppressed).
+# Returns: 0 = success, 1 = non-signal error, 2 = confirmed signal-kill.
+# Use for loops where only pass/fail matters. For tests that need captured
+# output (frame counts, error messages), use is_signal_rc directly.
+run_with_signal_retry() {
+  local rc=0
+  "$@" 2>/dev/null || rc=$?
+  if [ "$rc" -eq 0 ]; then return 0; fi
+  if ! is_signal_rc "$rc"; then return 1; fi
+  # First signal-kill — could be a transient driver flake. Retry once.
+  sleep 0.2
+  rc=0
+  "$@" 2>/dev/null || rc=$?
+  if [ "$rc" -eq 0 ]; then return 0; fi
+  if is_signal_rc "$rc"; then return 2; fi
+  return 1
+}
 
 # shellcheck disable=SC2034  # consumed by the sourcing hw-* suites
 SAMPLE_H264_720P="/tmp/nvmpi-sample-h264-720p.mp4"

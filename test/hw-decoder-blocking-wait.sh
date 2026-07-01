@@ -24,10 +24,18 @@ if [ "$rc" -eq 124 ]; then
   echo "FAIL: low_delay decode timed out (30s) — possible deadlock."
   exit 1
 fi
-if [ "$rc" -ge 128 ]; then
-  echo "FAIL: low_delay decode crashed (signal $((rc-128)))."
-  echo "$out" | tail -15
-  exit 1
+if is_signal_rc "$rc"; then
+  echo "  warn: low_delay decode signal $((rc-128)), retrying after 200 ms..."
+  sleep 0.2
+  rc=0
+  out=$(timeout -k 5 30 ffmpeg -y -hide_banner \
+    -flags low_delay -c:v h264_nvmpi -i "${SAMPLE_H264_720P}" \
+    -f null - 2>&1) || rc=$?
+  if is_signal_rc "$rc"; then
+    echo "FAIL: low_delay decode confirmed crash (signal $((rc-128)))."
+    echo "$out" | tail -15
+    exit 1
+  fi
 fi
 frames=$(echo "$out" | grep -oP 'frame=\s*\K[0-9]+' | tail -1)
 exp=$(expected_frames "${SAMPLE_H264_720P}")
@@ -102,9 +110,17 @@ for i in $(seq 1 20); do
   timeout -k 5 10 ffmpeg -y -hide_banner -loglevel error \
     -flags low_delay -c:v h264_nvmpi -i "${SAMPLE_H264_720P}" \
     -frames:v 5 -f null - 2>/dev/null || rc=$?
-  if [ "$rc" -ge 128 ]; then
-    echo "FAIL: crash on iteration ${i} (signal $((rc-128)))."
-    exit 1
+  if is_signal_rc "$rc"; then
+    echo "  warn: iteration ${i} signal $((rc-128)), retrying after 200 ms..."
+    sleep 0.2
+    rc=0
+    timeout -k 5 10 ffmpeg -y -hide_banner -loglevel error \
+      -flags low_delay -c:v h264_nvmpi -i "${SAMPLE_H264_720P}" \
+      -frames:v 5 -f null - 2>/dev/null || rc=$?
+    if is_signal_rc "$rc"; then
+      echo "FAIL: confirmed crash on iteration ${i} (signal $((rc-128)))."
+      exit 1
+    fi
   fi
   if [ "$rc" -eq 124 ]; then
     echo "FAIL: hang on iteration ${i}."

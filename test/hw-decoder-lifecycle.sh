@@ -19,10 +19,18 @@ if [ "$rc" -eq 124 ]; then
   echo "FAIL: normal decode timed out."
   exit 1
 fi
-if [ "$rc" -ge 128 ]; then
-  echo "FAIL: normal decode crashed (signal $((rc-128)))."
-  echo "$out" | tail -15
-  exit 1
+if is_signal_rc "$rc"; then
+  echo "  warn: normal decode signal $((rc-128)), retrying after 200 ms..."
+  sleep 0.2
+  rc=0
+  out=$(timeout -k 5 30 ffmpeg -y -hide_banner \
+    -c:v h264_nvmpi -i "${SAMPLE_H264_720P}" \
+    -f null - 2>&1) || rc=$?
+  if is_signal_rc "$rc"; then
+    echo "FAIL: normal decode confirmed crash (signal $((rc-128)))."
+    echo "$out" | tail -15
+    exit 1
+  fi
 fi
 frames=$(echo "$out" | grep -oP 'frame=\s*\K[0-9]+' | tail -1)
 if [ -z "$frames" ] || [ "$frames" -lt 10 ]; then

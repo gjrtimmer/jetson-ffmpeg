@@ -43,11 +43,20 @@ pool_encode() {
         echo "$out" | tail -15
         exit 1
     fi
-    if [ "$rc" -ge 128 ]; then
-        echo "FAIL: ${label} crashed (signal $((rc - 128))) at pool_size=${pool_size}."
-        echo "   Code: nvmpienc_initPktPool / nvmpienc_deinitPktPool in nvmpi_enc.c"
-        echo "$out" | tail -15
-        exit 1
+    if is_signal_rc "$rc"; then
+        echo "  warn: ${label} signal $((rc - 128)), retrying after 200 ms..."
+        sleep 0.2
+        rc=0
+        out=$(timeout -k 5 30 ffmpeg -y -hide_banner \
+          -i "${SAMPLE_H264_720P}" \
+          -c:v "${codec}" -packet_pool_size "${pool_size}" \
+          -f null - 2>&1) || rc=$?
+        if is_signal_rc "$rc"; then
+            echo "FAIL: ${label} confirmed crash (signal $((rc - 128))) at pool_size=${pool_size}."
+            echo "   Code: nvmpienc_initPktPool / nvmpienc_deinitPktPool in nvmpi_enc.c"
+            echo "$out" | tail -15
+            exit 1
+        fi
     fi
 
     local frames

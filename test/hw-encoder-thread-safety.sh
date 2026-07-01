@@ -69,7 +69,7 @@ parallel_encode() {
             echo "   Code: nvmpi_encoder_get_packet atomic loads in nvmpi_enc_api.cpp"
             return 1
         fi
-        if [ "$rc" -ge 128 ]; then
+        if is_signal_rc "$rc"; then
             echo "FAIL: ${label} — process ${pid} crashed (signal $((rc - 128)))."
             echo "   Code: capPlaneGotEOS/flushing atomics in nvmpi_enc_internal.h"
             return 1
@@ -114,7 +114,7 @@ for r in $(seq 1 "$ROUNDS"); do
     rc=0
     for pid in "${pids[@]}"; do
         wait "$pid" 2>/dev/null || rc=$?
-        if [ "$rc" -ge 128 ] && [ "$rc" -ne 124 ]; then
+        if is_signal_rc "$rc"; then
             echo "FAIL: mixed-codec round ${r} — process crashed (signal $((rc - 128)))."
             echo "   Code: concurrent H.264+HEVC teardown in nvmpi_encoder_close"
             exit 1

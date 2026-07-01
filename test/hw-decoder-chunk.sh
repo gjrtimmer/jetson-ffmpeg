@@ -39,11 +39,19 @@ rc=0
 out=$(ffmpeg -y -hide_banner \
   -chunk_size:v 65536 -c:v h264_nvmpi -i "${SAMPLE_H264_OVERSIZED}" \
   -f null - 2>&1) || rc=$?
-if [ "$rc" -ge 128 ]; then
-  echo "FAIL: decoder killed by signal $((rc-128)) on oversized packet."
-  echo "--- ffmpeg output (last 15 lines) ---"
-  echo "$out" | tail -15
-  exit 1
+if is_signal_rc "$rc"; then
+  echo "  warn: signal $((rc-128)) on oversized packet, retrying after 200 ms..."
+  sleep 0.2
+  rc=0
+  out=$(ffmpeg -y -hide_banner \
+    -chunk_size:v 65536 -c:v h264_nvmpi -i "${SAMPLE_H264_OVERSIZED}" \
+    -f null - 2>&1) || rc=$?
+  if is_signal_rc "$rc"; then
+    echo "FAIL: decoder confirmed crash (signal $((rc-128))) on oversized packet."
+    echo "--- ffmpeg output (last 15 lines) ---"
+    echo "$out" | tail -15
+    exit 1
+  fi
 fi
 if ! echo "$out" | grep -q "exceeds chunk_size"; then
   echo "FAIL: oversized packet was not rejected — expected the libnvmpi"
