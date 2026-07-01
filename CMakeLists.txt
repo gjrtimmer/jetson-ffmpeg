@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.10)
-project(nvmpi VERSION 3.0.0 DESCRIPTION "nvidia multimedia api")
+project(nvmpi VERSION 3.8.0 DESCRIPTION "nvidia multimedia api")
 
 # ---------------------------------------------------------------------------
 # Cross-compile sysroot
