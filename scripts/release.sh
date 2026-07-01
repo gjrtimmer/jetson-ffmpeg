@@ -105,7 +105,7 @@ fi
 
 echo "[i] creating GitLab release ${TAG}"
 release-cli create \
-    --name "jetson-ffmpeg ${VERSION}" \
+    --name "v${VERSION}" \
     --tag-name "${TAG}" \
     --description "NOTES.md" \
     "${ASSET_ARGS[@]}"

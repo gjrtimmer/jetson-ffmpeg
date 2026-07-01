@@ -106,6 +106,15 @@ Without `-o ci.skip` on the main push, GitLab runs a redundant main pipeline
 alongside the tag pipeline, wasting runner time and competing for Jetson hw.
 Sequence: `git push origin main -o ci.skip` then `git push origin v<ver>`.
 
+**Release names must be `vX.Y.Z`.** Both GitLab and GitHub releases use the
+tag name as the display title — never `jetson-ffmpeg X.Y.Z` or any other
+format. The release script (`scripts/release.sh`) passes `--name "v${VERSION}"`
+to `release-cli create`. After a tag pipeline creates the GitLab release,
+manually create the matching GitHub release:
+`gh release create v<ver> -R gjrtimmer/jetson-ffmpeg --title "v<ver>" --generate-notes`.
+The push-mirror syncs tags to GitHub but does NOT create GitHub releases —
+that is a separate step.
+
 **Never put `[ci skip]` or `[skip ci]` in commit messages.** These tokens
 poison every pipeline that includes the commit — branch pipelines AND MR
 pipelines. Use `-o ci.skip` on `git push` instead; that flag is scoped to the
