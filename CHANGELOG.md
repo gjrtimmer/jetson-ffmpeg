@@ -1,5 +1,30 @@
 # Changelog
 
+## 3.7.0 - 2026-07-01
+
+### Features
+
+- Add VIC hardware scale filter for zero-copy DRM_PRIME scaling — `scale_vic` filter uses Tegra VIC engine for hardware-accelerated resize without CPU/GPU copy (nvmpi, ffmpeg)
+- Add DRM_PRIME output support to all nvmpi decoders — decoded frames expose DMA-BUF fds for zero-copy downstream pipelines (ffmpeg)
+- Add DRM_PRIME input support to all nvmpi encoders — encode directly from DMA-BUF fds with mmap CPU-read path (ffmpeg)
+- Add DMA-BUF fd passthrough API (`nvmpi_dec_get_dmabuf_fd`, `nvmpi_enc_put_dmabuf_frame`) for zero-copy decode/encode (nvmpi)
+- Add `hwcontext_nvmpi` for `-hwaccel nvmpi` support — hardware device context with CUDA interop (ffmpeg)
+- Add CUDA interop for hwcontext_nvmpi — EGL-based zero-copy DRM_PRIME to CUDA transfer (ffmpeg)
+- Add dlopen lazy-loading for libnvmpi — no link-time dependency on libnvmpi.so (ffmpeg)
+
+### Bug Fixes
+
+- Use feature detection (`#ifndef FF_PROFILE_UNKNOWN`) for FF_PROFILE compatibility guard — fixes compile failure on libavcodec 63+ where MINOR resets to 0 on MAJOR bump (ffmpeg)
+- Guard decoder pool release callback against use-after-free — `shared_ptr<atomic<bool>>` pool_alive flag prevents crash when FFmpeg 8.1+ scheduler closes codec before all frame refs drop (nvmpi)
+- Add VIC filter passthrough — skip VIC transform when input/output dimensions match to avoid NvBufSurfTransform identity deadlock on JP6 (ffmpeg)
+- Use MMAP encoder path for DRM_PRIME input — avoids DMABUF-mode driver bugs (bBlitMode throughput deadlock, YUV420M segfault at >1024x576) (ffmpeg)
+- Use VIC compute mode instead of GPU for scale filter transforms (nvmpi)
+- Use internal buffer copy for encoder DMABUF input (nvmpi)
+- Serialize NvBufSurfTransform calls to prevent Tegra driver deadlock (nvmpi, ffmpeg)
+- Make VIC scale filter reinit-safe for FFmpeg 7.x (ffmpeg)
+- Propagate hw_frames_ctx on DRM_PRIME output frames and VIC filter output (ffmpeg)
+- Add libavcodec 63 version guards for pix_fmts field move (ffmpeg)
+
 ## 3.6.7 - 2026-06-25
 
 ### Bug Fixes
