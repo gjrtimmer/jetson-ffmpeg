@@ -33,6 +33,7 @@ sort_commits = "oldest"
 # Map commit types to changelog sections.
 commit_parsers = [
     # Skip internal/non-user-facing commits
+    { message = ".*\\(retro\\)", skip = true },
     { message = "^chore", skip = true },
     { message = "^style", skip = true },
     { message = "^ci", skip = true },
