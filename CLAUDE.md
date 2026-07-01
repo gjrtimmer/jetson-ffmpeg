@@ -600,11 +600,15 @@ default for all sessions in this repo — do not wait for the user to request it
   through `tee /tmp/<name>.log` and report the path so the user can
   `tail -f`. Don't rely on background-task notifications alone — the user
   needs real-time visibility.
-- **Prefer periodic polling over per-event monitors for long test runs.**
-  When monitoring `smoke-all.sh` or `hw-all.sh`, check progress every ~10 min
-  with a grep summary rather than streaming every suite result as a
-  notification. Per-event monitors are noisy and waste context — use them only
-  when immediate reaction to a specific failure is needed.
+- **Use polling monitors for test runs, never per-event streaming.**
+  Tests get stuck, monitors time out, and per-event streaming wastes context.
+  Use a Bash `run_in_background` poll loop instead:
+  - **Single suite** (~1-5 min): poll every 60s.
+  - **`hw-all.sh`** (~15-20 min): poll every 5 min.
+  - **`smoke-all.sh`** (~2h): poll every 15 min.
+  Poll command: `grep -c "PASS\|FAIL" /tmp/<log>` for progress count, plus
+  `tail -1` for current activity. On stuck detection (no progress between two
+  polls), investigate and kill if needed.
 - **Never `pkill`/`kill`/`killall` ffmpeg or V4L2 processes without checking
   CI first.** The Tegra V4L2 driver shares device state — killing one process
   crashes another's device session. Run `glab ci list` or
@@ -656,7 +660,27 @@ default for all sessions in this repo — do not wait for the user to request it
 - **Verify process cleanup after kills.** After killing processes (`kill`,
   `pkill`), always run `ps aux | grep` to confirm they're gone, check for
   orphaned child processes (tee, subshells), and clean up lock files. One
-  kill is not proof of death — verify.
+  kill is not proof of death — verify. **Orphaned test processes cause flaky
+  segfaults** — they compete for V4L2 hardware with the next test run,
+  producing false-positive crashes indistinguishable from code bugs. When
+  killing `smoke-all.sh` or `hw-all.sh`, kill the entire process tree:
+  parent shells, `timeout` wrappers, `tee` pipes, AND child `ffmpeg`
+  processes. Verify zero remaining before starting the next test.
+- **On smoke-all failure, re-test only the failed version+suite.**
+  Never re-run the full matrix when only one version or suite failed. Use
+  `smoke-all.sh -v "<ver>"` to re-run a single version, or
+  `HW_SUITES="<suite>" hw-all.sh` to re-run a single suite. If the failure
+  is in a test the branch didn't modify (pre-existing flake), one successful
+  standalone re-run of that suite is sufficient — don't gate on a full matrix
+  re-run. Stochastic V4L2 driver crashes on rapid open/close are expected
+  and do not indicate code bugs.
+- **Never write stress tests that rapid-cycle V4L2 device open/close.**
+  The Tegra V4L2 driver has stochastic segfaults on rapid encoder/decoder
+  init/teardown cycles (especially HEVC, >~100 iterations). Stress tests
+  that loop ffmpeg invocations cannot distinguish code bugs from driver
+  crashes. OOM/NULL-deref guard paths cannot be tested without fault
+  injection — don't write tests that claim to exercise them through
+  normal-path repetition.
 - **Prefer CI pipeline over local smoke-all for final validation.** When
   changes have been locally validated on the affected version(s) and an MR
   exists, let the CI pipeline handle full matrix validation. Don't start a
