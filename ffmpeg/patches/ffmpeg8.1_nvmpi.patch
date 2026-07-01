@@ -589,10 +589,10 @@ index 0000000..7f18a44
 +#endif /* DYNLINK_NVMPI_H */
 diff --git a/libavcodec/nvmpi_dec.c b/libavcodec/nvmpi_dec.c
 new file mode 100644
-index 0000000..c384f96
+index 0000000..17e9bf0
 --- /dev/null
 +++ b/libavcodec/nvmpi_dec.c
-@@ -0,0 +1,903 @@
+@@ -0,0 +1,928 @@
 +/*
 + * nvmpi_dec.c — FFmpeg decoder wrapper for libnvmpi (layer 2 of
 + * jetson-ffmpeg, the FFmpeg integration layer).
@@ -943,6 +943,10 @@ index 0000000..c384f96
 +		 * nvmpi_decode() can copy decoded planes straight into it. A fresh
 +		 * bufFrame is re-acquired after each frame is handed to the user. */
 +		nvmpi_context->bufFrame = av_frame_alloc();
++		/* Guard against av_frame_alloc OOM — dereferencing NULL here
++		 * would crash immediately. Freed in nvmpi_decode_close(). */
++		if (!nvmpi_context->bufFrame)
++			return AVERROR(ENOMEM);
 +		nvmpi_context->bufFrame->width = avctx->width;
 +		nvmpi_context->bufFrame->height = avctx->height;
 +		if (ff_get_buffer(avctx, nvmpi_context->bufFrame, 0) < 0)
@@ -1153,8 +1157,15 @@ index 0000000..c384f96
 +		 *  hw_frames_ctx to be non-NULL!" */
 +		if (avctx->hw_frames_ctx) {
 +			frame->hw_frames_ctx = av_buffer_ref(avctx->hw_frames_ctx);
-+			if (!frame->hw_frames_ctx)
++			if (!frame->hw_frames_ctx) {
++				/* Unref buf[0] to trigger nvmpi_drm_release_frame —
++				 * returns the dup'd fd and the frame pool slot.
++				 * Without this, OOM here leaks the DMA-BUF fd and
++				 * starves the libnvmpi frame pool. */
++				av_buffer_unref(&frame->buf[0]);
++				frame->data[0] = NULL;
 +				return AVERROR(ENOMEM);
++			}
 +		}
 +
 +		if (width && height) {
@@ -1167,6 +1178,17 @@ index 0000000..c384f96
 +	}
 +
 +	/* ---- Software-frame path: copy decoded pixels into bufFrame ---- */
++
++	/* Re-acquire bufFrame if a prior ff_get_buffer failure left it without
++	 * backing store.  Without this guard, the payload[] assignments below
++	 * copy NULL pointers into nvframe and libnvmpi writes to address 0. */
++	if (bufFrame && !bufFrame->data[0]) {
++		bufFrame->width  = avctx->width;
++		bufFrame->height = avctx->height;
++		bufFrame->format = avctx->pix_fmt;
++		if (ff_get_buffer(avctx, bufFrame, 0) < 0)
++			return AVERROR(ENOMEM);
++	}
 +
 +	//Point the nvFrame at bufFrame's pre-allocated planes; on success
 +	//libnvmpi copies the decoded frame directly into FFmpeg-owned memory.
@@ -1316,8 +1338,11 @@ index 0000000..c384f96
 +		return AVERROR_EXTERNAL;
 +	}
 +
-+	//Allocate or refresh bufFrame at the decoded resolution.
-+	//JPEG dimensions come from the bitstream; we must update avctx once known.
++	/* Allocate or refresh bufFrame at the decoded resolution.
++	 * JPEG dimensions come from the bitstream; we must update avctx once known.
++	 * Also serves as re-acquisition guard: if a prior ff_get_buffer failure
++	 * (during re-prime after av_frame_move_ref, or during resolution change)
++	 * left bufFrame without backing store, this re-acquires it. */
 +	AVFrame *bufFrame = nvmpi_context->bufFrame;
 +	if (!bufFrame->data[0] || bufFrame->width != avctx->width || bufFrame->height != avctx->height)
 +	{
@@ -1498,10 +1523,10 @@ index 0000000..c384f96
 +
 diff --git a/libavcodec/nvmpi_enc.c b/libavcodec/nvmpi_enc.c
 new file mode 100644
-index 0000000..1cd4248
+index 0000000..a1cd895
 --- /dev/null
 +++ b/libavcodec/nvmpi_enc.c
-@@ -0,0 +1,881 @@
+@@ -0,0 +1,898 @@
 +/*
 + * nvmpi_enc.c — FFmpeg encoder wrapper for libnvmpi (layer 2 of
 + * jetson-ffmpeg, the FFmpeg integration layer).
@@ -1917,9 +1942,21 @@ index 0000000..1cd4248
 +
 +			avctx->extradata_size=i;
 +			avctx->extradata	= av_mallocz( avctx->extradata_size + AV_INPUT_BUFFER_PADDING_SIZE );
++			/* Guard against av_mallocz OOM — memcpy to NULL is
++			 * undefined behavior (likely crash). */
++			if (!avctx->extradata) {
++				avctx->extradata_size = 0;
++				nvmpienc_nvPacket_free(nPkt);
++				av_freep(&dst[0]);
++				nvmpienc_deinitPktPool(avctx);
++				nvmpi_encoder_close(nvmpi_context->ctx);
++				nvmpi_context->ctx = NULL;
++				av_frame_free(&nvmpi_context->frame);
++				return AVERROR(ENOMEM);
++			}
 +			memcpy( avctx->extradata, nPkt->payload,avctx->extradata_size);
 +			memset( avctx->extradata + avctx->extradata_size, 0, AV_INPUT_BUFFER_PADDING_SIZE );
-+			
++
 +			nvmpienc_nvPacket_free(nPkt);
 +			nPkt = nvmpienc_nvPacket_alloc(avctx, NVMPI_ENC_CHUNK_SIZE);
 +			
@@ -1972,6 +2009,11 @@ index 0000000..1cd4248
 +	if(!nvmpi_context->ctx)
 +	{
 +		av_log(avctx, AV_LOG_ERROR, "nvmpi: encoder creation failed\n");
++		/* Free extradata allocated by the GLOBAL_HEADER block above —
++		 * FFmpeg does not call .close() after a failed .init() (unless
++		 * FF_CODEC_CAP_INIT_CLEANUP is set), so this is the only path. */
++		av_freep(&avctx->extradata);
++		avctx->extradata_size = 0;
 +		av_frame_free(&nvmpi_context->frame);
 +		/* AVERROR_EXTERNAL: device-level failure (EBUSY, ENODEV, etc.),
 +		 * not a memory allocation error. See #37. */
@@ -2815,10 +2857,10 @@ index 0000000..ac0d0a1
 +#endif /* DYNLINK_NVMPI_VIC_H */
 diff --git a/libavfilter/vf_scale_vic.c b/libavfilter/vf_scale_vic.c
 new file mode 100644
-index 0000000..a759d88
+index 0000000..ac09246
 --- /dev/null
 +++ b/libavfilter/vf_scale_vic.c
-@@ -0,0 +1,642 @@
+@@ -0,0 +1,650 @@
 +/*
 + * vf_scale_vic.c — Tegra VIC hardware scale/CSC filter for FFmpeg.
 + *
@@ -3140,6 +3182,11 @@ index 0000000..a759d88
 +         * resolution.  The decoder outputs dup'd fds that are not
 +         * registered in NvBufSurface.  Frame data is copied into these
 +         * registered buffers before VIC transform. */
++        /* Increment pool counter per successful allocation so uninit
++         * can free fds 0..size-1 on partial failure.  Previously the
++         * counter was set only after the loop, leaving partially
++         * allocated fds leaked on mid-loop failure. */
++        s->in_pool_size = 0;
 +        for (i = 0; i < VIC_OUTPUT_POOL_SIZE; i++) {
 +            /* Allocated here; freed in scale_vic_uninit() */
 +            ret = nvmpi_surface_alloc(inlink->w, inlink->h, &s->in_fds[i]);
@@ -3149,8 +3196,8 @@ index 0000000..a759d88
 +                       "(%dx%d)\n", i, inlink->w, inlink->h);
 +                return AVERROR_EXTERNAL;
 +            }
++            s->in_pool_size++;
 +        }
-+        s->in_pool_size = VIC_OUTPUT_POOL_SIZE;
 +        s->in_pool_idx  = 0;
 +
 +        /* Pre-allocate output DMA-BUF surface pool at target resolution.
@@ -3158,6 +3205,7 @@ index 0000000..a759d88
 +         * destinations AND encoder DMABUF inputs; the encoder's NvMMLite
 +         * layer requires VIDEO_ENC to resolve NvMap handles during its
 +         * internal format conversion. */
++        s->pool_size = 0;
 +        for (i = 0; i < VIC_OUTPUT_POOL_SIZE; i++) {
 +            /* Allocated here; freed in scale_vic_uninit() */
 +            ret = nvmpi_surface_alloc_for_enc(out_w, out_h, &s->out_fds[i]);
@@ -3167,8 +3215,8 @@ index 0000000..a759d88
 +                       "(%dx%d)\n", i, out_w, out_h);
 +                return AVERROR_EXTERNAL;
 +            }
++            s->pool_size++;
 +        }
-+        s->pool_size = VIC_OUTPUT_POOL_SIZE;
 +        s->pool_idx  = 0;
 +    }
 +
@@ -3323,7 +3371,9 @@ index 0000000..a759d88
 +     * Uses the same NVMPI_DRM_MOD_ORIG_FD convention as the decoder. */
 +    out_desc->nb_objects = 1;
 +    out_desc->objects[0].fd              = dup_fd;
-+    out_desc->objects[0].size            = (size_t)dst_pitch * outlink->h * 3 / 2;
++    /* Widen both operands to size_t before multiply to prevent
++     * int32 overflow at 8192x8192+ (dst_pitch * h wraps int). */
++    out_desc->objects[0].size            = (size_t)dst_pitch * (size_t)outlink->h * 3 / 2;
 +    out_desc->objects[0].format_modifier =
 +        ((0x4EULL) << 56) | ((uint64_t)(unsigned int)(dst_fd));
 +
