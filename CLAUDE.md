@@ -609,6 +609,13 @@ default for all sessions in this repo — do not wait for the user to request it
   Poll command: `grep -c "PASS\|FAIL" /tmp/<log>` for progress count, plus
   `tail -1` for current activity. On stuck detection (no progress between two
   polls), investigate and kill if needed.
+- **Pipeline polling interval is 10 minutes — hard rule.** When using
+  `ScheduleWakeup` to poll CI pipelines (MR pipelines, main pipelines, tag
+  pipelines), always use 600s delay. Never use shorter intervals — pipelines
+  take minutes to hours; sub-10-minute polling wastes tokens and cache for no
+  benefit. This applies to all pipeline monitoring in all skills (release,
+  fix-issue, MR workflows). Local test polling (above) uses different
+  intervals because test output changes faster.
 - **Never `pkill`/`kill`/`killall` ffmpeg or V4L2 processes without checking
   CI first.** The Tegra V4L2 driver shares device state — killing one process
   crashes another's device session. Run `glab ci list` or
