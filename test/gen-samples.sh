@@ -17,13 +17,15 @@
 # helpers give every signal-killed invocation one retry before failing.
 #
 # POSIX: a process killed by signal N exits with rc = 128 + N.
-# Valid signal range: 1–64 → rc 129–192. Values outside this range are
-# normal (non-signal) exit codes and must NOT be treated as crashes.
+# Valid signal range: standard POSIX signals 1–31 → rc 129–159.
+# Real-time signals (34–64 → rc 162–192) are excluded — the Tegra V4L2
+# driver uses them internally for thread communication and they leak out
+# as process kills on error paths without indicating a code bug.
 # ---------------------------------------------------------------------------
 
 # is_signal_rc RC
-# Returns 0 (true) if RC falls in the POSIX signal-kill range (129–192).
-is_signal_rc() { [ "$1" -ge 129 ] && [ "$1" -le 192 ]; }
+# Returns 0 (true) if RC falls in the standard signal-kill range (129–159).
+is_signal_rc() { [ "$1" -ge 129 ] && [ "$1" -le 159 ]; }
 
 # run_with_signal_retry CMD...
 # Run CMD; on signal-kill, wait 200 ms and retry once (output suppressed).
