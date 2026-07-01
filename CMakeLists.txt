@@ -146,6 +146,8 @@ set(NVMPI_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_dec_api.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_dec_capture.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_dec_planes.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_enc_init.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_enc_input.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_enc_api.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_enc_output.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_frame_buffer.cpp

@@ -114,8 +114,9 @@ struct nvmpictx
 
 //Forward declarations for functions defined across the split encoder files.
 //encoder_capture_plane_dq_callback: defined in nvmpi_enc_output.cpp; registered
-//with NvVideoEncoder's capture-plane DQ thread in nvmpi_create_encoder().
+//with NvVideoEncoder's capture-plane DQ thread in nvmpi_create_encoder()
+//(nvmpi_enc_init.cpp) and nvmpi_encoder_flush() (nvmpi_enc_api.cpp).
 bool encoder_capture_plane_dq_callback(struct v4l2_buffer *v4l2_buf, NvBuffer *buffer, NvBuffer *shared_buffer, void *arg);
-//copyFrameToNvBuf: defined in nvmpi_enc_api.cpp; copies a caller raw frame
+//copyFrameToNvBuf: defined in nvmpi_enc_input.cpp; copies a caller raw frame
 //into a V4L2 OUTPUT-plane NvBuffer (used by nvmpi_encoder_put_frame()).
 int copyFrameToNvBuf(nvFrame* frame, NvBuffer& buffer);
