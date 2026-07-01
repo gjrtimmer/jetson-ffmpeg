@@ -680,6 +680,10 @@ default for all sessions in this repo — do not wait for the user to request it
   killing `smoke-all.sh` or `hw-all.sh`, kill the entire process tree:
   parent shells, `timeout` wrappers, `tee` pipes, AND child `ffmpeg`
   processes. Verify zero remaining before starting the next test.
+- **Verify suite names before composing `HW_SUITES`.** Suite names are the
+  `hw-*.sh` filenames minus prefix/extension — list them with
+  `ls test/hw-*.sh` first. Never guess names; an invalid name in `HW_SUITES`
+  wastes a full build+test cycle before the error surfaces.
 - **On smoke-all failure, re-test only the failed version+suite.**
   Never re-run the full matrix when only one version or suite failed. Use
   `smoke-all.sh -v "<ver>"` to re-run a single version, or
