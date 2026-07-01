@@ -319,6 +319,11 @@ static int scale_vic_config_output(AVFilterLink *outlink)
          * resolution.  The decoder outputs dup'd fds that are not
          * registered in NvBufSurface.  Frame data is copied into these
          * registered buffers before VIC transform. */
+        /* Increment pool counter per successful allocation so uninit
+         * can free fds 0..size-1 on partial failure.  Previously the
+         * counter was set only after the loop, leaving partially
+         * allocated fds leaked on mid-loop failure. */
+        s->in_pool_size = 0;
         for (i = 0; i < VIC_OUTPUT_POOL_SIZE; i++) {
             /* Allocated here; freed in scale_vic_uninit() */
             ret = nvmpi_surface_alloc(inlink->w, inlink->h, &s->in_fds[i]);
@@ -328,8 +333,8 @@ static int scale_vic_config_output(AVFilterLink *outlink)
                        "(%dx%d)\n", i, inlink->w, inlink->h);
                 return AVERROR_EXTERNAL;
             }
+            s->in_pool_size++;
         }
-        s->in_pool_size = VIC_OUTPUT_POOL_SIZE;
         s->in_pool_idx  = 0;
 
         /* Pre-allocate output DMA-BUF surface pool at target resolution.
@@ -337,6 +342,7 @@ static int scale_vic_config_output(AVFilterLink *outlink)
          * destinations AND encoder DMABUF inputs; the encoder's NvMMLite
          * layer requires VIDEO_ENC to resolve NvMap handles during its
          * internal format conversion. */
+        s->pool_size = 0;
         for (i = 0; i < VIC_OUTPUT_POOL_SIZE; i++) {
             /* Allocated here; freed in scale_vic_uninit() */
             ret = nvmpi_surface_alloc_for_enc(out_w, out_h, &s->out_fds[i]);
@@ -346,8 +352,8 @@ static int scale_vic_config_output(AVFilterLink *outlink)
                        "(%dx%d)\n", i, out_w, out_h);
                 return AVERROR_EXTERNAL;
             }
+            s->pool_size++;
         }
-        s->pool_size = VIC_OUTPUT_POOL_SIZE;
         s->pool_idx  = 0;
     }
 
@@ -502,7 +508,9 @@ static int scale_vic_filter_frame(AVFilterLink *inlink, AVFrame *in)
      * Uses the same NVMPI_DRM_MOD_ORIG_FD convention as the decoder. */
     out_desc->nb_objects = 1;
     out_desc->objects[0].fd              = dup_fd;
-    out_desc->objects[0].size            = (size_t)dst_pitch * outlink->h * 3 / 2;
+    /* Widen both operands to size_t before multiply to prevent
+     * int32 overflow at 8192x8192+ (dst_pitch * h wraps int). */
+    out_desc->objects[0].size            = (size_t)dst_pitch * (size_t)outlink->h * 3 / 2;
     out_desc->objects[0].format_modifier =
         ((0x4EULL) << 56) | ((uint64_t)(unsigned int)(dst_fd));
 
