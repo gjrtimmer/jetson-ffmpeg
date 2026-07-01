@@ -3,13 +3,15 @@ name: create-release
 description: >-
   Autonomous release workflow — waits for open MRs and pipelines to land green,
   then bumps version, regenerates changelog, tags, and pushes. Walk-away safe.
-  Invoke with "/create-release vX.Y.Z".
-argument-hint: "vX.Y.Z"
+  Invoke with "/create-release [vX.Y.Z]" — version auto-detected if omitted.
+argument-hint: "[vX.Y.Z | patch | minor | major]"
 user-invocable: true
 ---
 # create-release
 
-Create a release end-to-end. Invoke: **`/create-release vX.Y.Z`**.
+Create a release end-to-end. Invoke: **`/create-release [vX.Y.Z]`**.
+
+Version is optional — if omitted, auto-detected from commit history since last tag.
 
 Walk-away safe: if MRs or pipelines are still in-flight, the skill monitors
 them autonomously and proceeds only after everything lands green on main.
@@ -35,16 +37,53 @@ Before starting work, activate these skills if not already active:
 
 ---
 
-## Phase 0: Parse & Validate Input
+## Phase 0: Determine Version
 
-Extract version from argument. Must match `vX.Y.Z` (semver with `v` prefix).
+Three input modes:
+
+| Argument | Behavior |
+|----------|----------|
+| `v3.8.0` | Use exactly as given |
+| `patch` / `minor` / `major` | Bump that component of the latest tag |
+| _(none)_ | Auto-detect from commit history since last tag |
+
+### Auto-detection (no argument)
+
+1. Get latest tag: `git describe --tags --abbrev=0`
+2. Parse into `MAJOR.MINOR.PATCH`.
+3. Scan commits since that tag for Conventional Commit types:
+
+```bash
+git log --pretty="%s" $(git describe --tags --abbrev=0)..main
+```
+
+4. Apply semver rules:
+   - Any commit with `!` after type/scope OR a `BREAKING CHANGE:` footer → **major** bump.
+   - Any `feat` or `feat(...)` type → **minor** bump (unless major).
+   - Only `fix`, `perf`, `refactor`, `docs`, `chore`, `ci`, `build`, `test`, `style` → **patch** bump.
+
+5. Compute new version and confirm with user:
+   ```
+   Latest tag: v3.7.0
+   Commits since tag: 4 feat, 2 fix, 1 chore
+   Detected bump: minor → v3.8.0
+   Proceed? [Y/n]
+   ```
+
+### Explicit version
+
+If argument matches `vX.Y.Z` → use directly. Validate it's > latest tag.
+
+### Bump keyword
+
+If argument is `patch`/`minor`/`major` → get latest tag, apply bump.
+
+### Output
 
 ```
-VERSION_TAG = argument       # e.g. "v3.8.0"
-VERSION     = strip 'v'      # e.g. "3.8.0"
+VERSION_TAG = "vX.Y.Z"
+VERSION     = "X.Y.Z"
 ```
-
-**Gate**: If no version argument provided → ask user. Do not guess.
 
 ---
 
