@@ -646,6 +646,13 @@ default for all sessions in this repo — do not wait for the user to request it
   undo and may corrupt an in-progress release or MR. **Multi-session risk:**
   another Claude Code session may have switched branches on this worktree —
   always check, especially after encountering unexpected state.
+- **CLAUDE.md commits always go on main.** CLAUDE.md is repo-level config
+  that applies globally — commit directly to main, never on feature/fix
+  branches. Switch to main, commit, switch back. CLAUDE.md is docs-only,
+  exempt from the smoke-all gate.
+- **Test monitoring and process-check subagents use haiku.** Monitoring
+  test logs, polling for progress, checking process cleanup — all grunt
+  work. Always pass `model: "haiku"` explicitly for these subagents.
 - **Never poll background tasks.** When a Monitor or `run_in_background` task
   is armed for a long-running process (build, pipeline, smoke-all), wait
   silently for the notification. Do NOT make repeated Bash calls to check
