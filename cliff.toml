@@ -9,8 +9,13 @@ body = """
 {% endif %}
 {% for group, commits in commits | group_by(attribute="group") %}
 ### {{ group | upper_first }}
-{% for commit in commits %}
-- {{ commit.message | upper_first }}{% if commit.scope %} ({{ commit.scope }}){% endif %}\
+{% for scope, scoped_commits in commits | group_by(attribute="scope") %}
+{% if scope %}
+**{{ scope }}**
+{% endif %}
+{% for commit in scoped_commits %}
+- {{ commit.message | upper_first }}\
+{% endfor %}
 {% endfor %}
 {% endfor %}
 """
@@ -27,19 +32,22 @@ topo_order = false
 sort_commits = "oldest"
 # Map commit types to changelog sections.
 commit_parsers = [
+    # Skip internal/non-user-facing commits
+    { message = "^chore", skip = true },
+    { message = "^style", skip = true },
+    { message = "^ci", skip = true },
+    { message = "^docs", skip = true },
+    { message = "^merge", skip = true },
+    { message = "^Merge", skip = true },
+    # User-facing changes only
     { message = "^feat", group = "Features" },
     { message = "^fix", group = "Bug Fixes" },
     { message = "^perf", group = "Performance" },
     { message = "^refactor", group = "Refactor" },
-    { message = "^docs", group = "Documentation" },
-    { message = "^test", group = "Testing" },
-    { message = "^ci", group = "CI" },
     { message = "^build", group = "Build" },
-    { message = "^chore", group = "Chores" },
-    { message = "^style", group = "Styling" },
+    { message = "^test", group = "Testing" },
     { body = ".*security", group = "Security" },
-    { message = "^merge", skip = true },
-    { message = "^Merge", skip = true },
     { message = "^Revert", group = "Reverts" },
-    { message = ".*", group = "Other" },
+    # Catch-all: skip anything not explicitly grouped
+    { message = ".*", skip = true },
 ]
