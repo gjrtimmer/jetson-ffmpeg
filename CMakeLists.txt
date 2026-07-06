@@ -143,6 +143,7 @@ set(JETSON_MULTIMEDIA_API_SRC
     ${JETSON_MULTIMEDIA_API_SRC_DIR}/NvJpegEncoder.cpp)
 
 set(NVMPI_SRC
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_dec_init.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_dec_api.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_dec_capture.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_dec_planes.cpp
@@ -152,6 +153,7 @@ set(NVMPI_SRC
     ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_enc_output.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_frame_buffer.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_dec_jpeg.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_dec_jpeg_ctx.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_enc_jpeg.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_surface.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/nvmpi_vic.cpp)
