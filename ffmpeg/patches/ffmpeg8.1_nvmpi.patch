@@ -589,10 +589,10 @@ index 0000000..7f18a44
 +#endif /* DYNLINK_NVMPI_H */
 diff --git a/libavcodec/nvmpi_dec.c b/libavcodec/nvmpi_dec.c
 new file mode 100644
-index 0000000..e81b815
+index 0000000..a11f1d7
 --- /dev/null
 +++ b/libavcodec/nvmpi_dec.c
-@@ -0,0 +1,727 @@
+@@ -0,0 +1,734 @@
 +/*
 + * nvmpi_dec.c — FFmpeg decoder wrapper for libnvmpi (layer 2 of
 + * jetson-ffmpeg, the FFmpeg integration layer).
@@ -1255,7 +1255,14 @@ index 0000000..e81b815
 +		packet.payload_size=avctx->extradata_size;
 +		packet.payload=avctx->extradata;
 +		packet.pts=0;
-+		nvmpi_decoder_put_packet(nvmpi_context->ctx, &packet);
++		{
++			int put_ret = nvmpi_decoder_put_packet(nvmpi_context->ctx, &packet);
++			if (put_ret < 0)
++				av_log(avctx, AV_LOG_WARNING,
++				       "nvmpi: failed to re-prime decoder with extradata "
++				       "after flush (ret=%d); decode may produce artifacts\n",
++				       put_ret);
++		}
 +	}
 +}
 +
@@ -1653,10 +1660,10 @@ index 0000000..51bb3b7
 +};
 diff --git a/libavcodec/nvmpi_enc.c b/libavcodec/nvmpi_enc.c
 new file mode 100644
-index 0000000..3993c48
+index 0000000..51fafe7
 --- /dev/null
 +++ b/libavcodec/nvmpi_enc.c
-@@ -0,0 +1,449 @@
+@@ -0,0 +1,482 @@
 +/*
 + * nvmpi_enc.c — FFmpeg encoder wrapper for libnvmpi (layer 2 of
 + * jetson-ffmpeg, the FFmpeg integration layer): codec init/close,
@@ -1731,11 +1738,24 @@ index 0000000..3993c48
 +//ff_get_encode_buffer() is how encoders obtain packet buffers (libavcodec 60+).
 +nvPacket* nvmpienc_nvPacket_alloc(AVCodecContext *avctx, int bufSize)
 +{
-+	AVPacket* pkt = av_packet_alloc();
-+	nvPacket* nPkt = (nvPacket*)malloc(sizeof(nvPacket));
++	AVPacket* pkt;
++	nvPacket* nPkt;
 +	int res;
++
++	/* Allocate AVPacket first — ff_get_encode_buffer requires a valid
++	 * AVPacket, so this must succeed before anything else. */
++	pkt = av_packet_alloc();
++	if (!pkt)
++		return NULL;
++
++	nPkt = (nvPacket*)malloc(sizeof(nvPacket));
++	if (!nPkt) {
++		av_packet_free(&pkt);
++		return NULL;
++	}
 +	memset(nPkt, 0, sizeof(nvPacket));
-+	if((res = ff_get_encode_buffer(avctx, pkt, bufSize, 0)))
++
++	if ((res = ff_get_encode_buffer(avctx, pkt, bufSize, 0)))
 +	{
 +		av_packet_free(&pkt);
 +		free(nPkt);
@@ -1934,7 +1954,18 @@ index 0000000..3993c48
 +		 * not a memory allocation error. See #37. */
 +		return AVERROR_EXTERNAL;
 +	}
-+	nvmpienc_initPktPool(avctx,nvmpi_context->packet_pool_size);
++	{
++		int pool_ret = nvmpienc_initPktPool(avctx, nvmpi_context->packet_pool_size);
++		if (pool_ret < 0) {
++			av_log(avctx, AV_LOG_ERROR, "nvmpi: packet pool init failed\n");
++			nvmpi_encoder_close(nvmpi_context->ctx);
++			nvmpi_context->ctx = NULL;
++			av_freep(&avctx->extradata);
++			avctx->extradata_size = 0;
++			av_frame_free(&nvmpi_context->frame);
++			return pool_ret;
++		}
++	}
 +
 +	/* Track initial bitrate for runtime change detection in send_frame. */
 +	nvmpi_context->last_bitrate = avctx->bit_rate;
@@ -1949,6 +1980,14 @@ index 0000000..3993c48
 +static av_cold int nvmpi_encode_close(AVCodecContext *avctx)
 +{
 +	nvmpiEncodeContext *nvmpi_context = avctx->priv_data;
++
++	/* FF_CODEC_CAP_INIT_CLEANUP: FFmpeg calls .close() even when .init()
++	 * failed partway through. Guard against NULL ctx — the encoder may
++	 * never have been created. */
++	if (!nvmpi_context->ctx) {
++		av_frame_free(&nvmpi_context->frame);
++		return 0;
++	}
 +
 +	//drain encoder
 +	{
@@ -2097,6 +2136,7 @@ index 0000000..3993c48
 +		/* libavcodec 63 (FFmpeg 9.0+): pix_fmts moved from AVCodec to FFCodec */ \
 +		NVMPI_ENC_PIXFMTS, \
 +		.p.capabilities   = AV_CODEC_CAP_HARDWARE | AV_CODEC_CAP_DELAY, \
++		.caps_internal  = FF_CODEC_CAP_INIT_CLEANUP, \
 +		.defaults       = defaults,\
 +		.p.wrapper_name   = "nvmpi", \
 +	};
@@ -2459,10 +2499,10 @@ index 0000000..7814ed2
 +};
 diff --git a/libavcodec/nvmpi_enc_runtime.c b/libavcodec/nvmpi_enc_runtime.c
 new file mode 100644
-index 0000000..80110fc
+index 0000000..ab702b4
 --- /dev/null
 +++ b/libavcodec/nvmpi_enc_runtime.c
-@@ -0,0 +1,463 @@
+@@ -0,0 +1,474 @@
 +/*
 + * nvmpi_enc_runtime.c — FFmpeg encoder wrapper for libnvmpi (layer 2 of
 + * jetson-ffmpeg, the FFmpeg integration layer): the encode hot path
@@ -2589,7 +2629,18 @@ index 0000000..80110fc
 +		 * not a memory allocation error. See #37. */
 +		return AVERROR_EXTERNAL;
 +	}
-+	nvmpienc_initPktPool(avctx,nvmpi_context->packet_pool_size);
++	{
++		int pool_ret = nvmpienc_initPktPool(avctx, nvmpi_context->packet_pool_size);
++		if (pool_ret < 0) {
++			av_log(avctx, AV_LOG_ERROR,
++			       "nvmpi: extradata encoder packet pool init failed\n");
++			av_freep(&dst[0]);
++			nvmpi_encoder_close(nvmpi_context->ctx);
++			nvmpi_context->ctx = NULL;
++			av_frame_free(&nvmpi_context->frame);
++			return pool_ret;
++		}
++	}
 +	i=0;
 +	_nvframe.timestamp=0;
 +
