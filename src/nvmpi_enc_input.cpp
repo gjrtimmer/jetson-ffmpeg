@@ -299,7 +299,13 @@ int nvmpi_encoder_put_frame_fd(nvmpictx* ctx,
 			ret = ctx->enc->output_plane.mapOutputBuffers(map_buf, fd);
 			if (ret < 0) {
 				NVMPI_LOG(NVMPI_LOG_ERROR,
-					  "Error mapping internal buffer to slot %d", slot);
+					  "Error mapping internal buffer to slot %d; "
+					  "destroying leaked fd", slot);
+				/* Rollback: destroy the just-allocated fd to prevent
+				 * DMA-BUF / CMA leak. Reset slot to -1 so close()
+				 * skips it and future put_frame_fd retries allocation. */
+				NvBufSurf::NvDestroy(fd);
+				ctx->output_plane_fd[slot] = -1;
 				return -1;
 			}
 

@@ -124,7 +124,18 @@ int nvmpi_encode_gen_global_header_extradata(AVCodecContext *avctx, nvEncParam *
 		 * not a memory allocation error. See #37. */
 		return AVERROR_EXTERNAL;
 	}
-	nvmpienc_initPktPool(avctx,nvmpi_context->packet_pool_size);
+	{
+		int pool_ret = nvmpienc_initPktPool(avctx, nvmpi_context->packet_pool_size);
+		if (pool_ret < 0) {
+			av_log(avctx, AV_LOG_ERROR,
+			       "nvmpi: extradata encoder packet pool init failed\n");
+			av_freep(&dst[0]);
+			nvmpi_encoder_close(nvmpi_context->ctx);
+			nvmpi_context->ctx = NULL;
+			av_frame_free(&nvmpi_context->frame);
+			return pool_ret;
+		}
+	}
 	i=0;
 	_nvframe.timestamp=0;
 

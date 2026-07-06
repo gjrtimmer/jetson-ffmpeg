@@ -660,7 +660,14 @@ static void nvmpi_flush_decoder(AVCodecContext *avctx)
 		packet.payload_size=avctx->extradata_size;
 		packet.payload=avctx->extradata;
 		packet.pts=0;
-		nvmpi_decoder_put_packet(nvmpi_context->ctx, &packet);
+		{
+			int put_ret = nvmpi_decoder_put_packet(nvmpi_context->ctx, &packet);
+			if (put_ret < 0)
+				av_log(avctx, AV_LOG_WARNING,
+				       "nvmpi: failed to re-prime decoder with extradata "
+				       "after flush (ret=%d); decode may produce artifacts\n",
+				       put_ret);
+		}
 	}
 }
 
