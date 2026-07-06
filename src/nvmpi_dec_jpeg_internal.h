@@ -101,3 +101,15 @@ struct nvmpictx_jpeg
 	/* Set up VIC transform rects for width×height pass-through. */
 	void updateTransformParams(uint32_t width, uint32_t height);
 };
+
+/* Copy decoded pixels from a DMA buffer to the caller's nvFrame.
+ * Same pattern as the V4L2 decoder's copyNvBufToFrame().
+ * Defined in nvmpi_dec_jpeg_ctx.cpp; used by nvmpi_jpeg_decoder_get_frame()
+ * in nvmpi_dec_jpeg.cpp. Not static because it is called from another TU. */
+int jpegCopyToFrame(nvmpictx_jpeg* ctx, nvmpi_frame_buffer *buf, nvFrame* frame);
+
+/* Scan a JPEG bitstream for SOF markers to detect progressive format.
+ * Returns true if a progressive marker (SOF2, 0xFFC2) is found.
+ * Defined in nvmpi_dec_jpeg_ctx.cpp; used by nvmpi_jpeg_decoder_put_packet()
+ * in nvmpi_dec_jpeg.cpp. Not static because it is called from another TU. */
+bool jpegIsProgressive(const unsigned char *data, unsigned long size);
