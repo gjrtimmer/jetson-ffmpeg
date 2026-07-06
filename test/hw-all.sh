@@ -36,16 +36,25 @@ variant="${JETSON_VARIANT:-unknown}"
 # should take longer; the longest (perf-bench) runs ~3 min on Orin Nano.
 SUITE_TIMEOUT="${HW_SUITE_TIMEOUT:-600}"
 
+# Suites now live under component subdirectories (test/decoder/, test/encoder/,
+# test/filter/, test/perf/, test/format/, test/integration/) instead of flat in
+# test/ — recurse to find them all. `find` excludes hw-all.sh itself by name.
 discover() {
-  local s
+  local s f
   echo smoke
-  for s in "${SCRIPT_DIR}"/hw-*.sh; do
-    s="$(basename "$s" .sh)"; s="${s#hw-}"
+  while IFS= read -r f; do
+    s="$(basename "$f" .sh)"; s="${s#hw-}"
     case "$s" in all|smoke) continue ;; esac
     echo "$s"
-  done
+  done < <(find "${SCRIPT_DIR}" -name 'hw-*.sh' ! -name 'hw-all.sh')
 }
 SUITES="${HW_SUITES:-$(discover | tr '\n' ' ')}"
+
+# Suite name -> script path. Suites can live in any subdirectory now, so
+# resolve by filename search instead of assuming a fixed parent directory.
+resolve_script() {
+  find "${SCRIPT_DIR}" -name "hw-${1}.sh" -print -quit
+}
 
 # Identify the binary under test — proves WHICH ffmpeg build a CI log
 # exercised (PATH-injected per-version trees all ship their own binary).
@@ -58,8 +67,8 @@ section_end()   { [ -n "${GITLAB_CI:-}" ] && printf '\e[0Ksection_end:%s:%s\r\e[
 
 results="" fail=0
 for s in $SUITES; do
-  script="${SCRIPT_DIR}/hw-${s}.sh"
-  if [ ! -f "$script" ]; then
+  script="$(resolve_script "$s")"
+  if [ -z "$script" ] || [ ! -f "$script" ]; then
     echo "[E] unknown suite: ${s} (no ${script})" >&2
     results="${results}${s}:MISSING\n"
     fail=1
