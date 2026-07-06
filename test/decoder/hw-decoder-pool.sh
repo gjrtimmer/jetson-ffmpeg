@@ -6,7 +6,7 @@
 # without deadlock, crash, or frame loss.
 set -eu
 # shellcheck source=test/gen-samples.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gen-samples.sh"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../gen-samples.sh"
 
 variant="${JETSON_VARIANT:-unknown}"
 echo "=== hw-decoder-pool on variant: ${variant} ==="

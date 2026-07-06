@@ -9,7 +9,7 @@
 # sample generation and are SKIPped (not FAILed) when absent.
 set -eu
 # shellcheck source=test/gen-samples.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gen-samples.sh"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../gen-samples.sh"
 
 variant="${JETSON_VARIANT:-unknown}"
 echo "=== hw-decoder-codecs on variant: ${variant} ==="

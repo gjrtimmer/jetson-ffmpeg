@@ -21,7 +21,7 @@ variant="${JETSON_VARIANT:-unknown}"
 echo "=== hw-format-pixfmt on variant: ${variant} ==="
 
 # shellcheck source=/dev/null
-. "$(dirname "${BASH_SOURCE[0]}")/gen-samples.sh"
+. "$(dirname "${BASH_SOURCE[0]}")/../gen-samples.sh"
 
 frame_count() {
   ffprobe -v error -select_streams v:0 -count_frames \

@@ -3,7 +3,7 @@
 # NON-FATAL: reports metrics, does not gate pass/fail.
 set -eu
 # shellcheck source=test/gen-samples.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gen-samples.sh"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../gen-samples.sh"
 
 variant="${JETSON_VARIANT:-unknown}"
 echo "=== hw-perf-blocking-wait on variant: ${variant} ==="

@@ -4,7 +4,7 @@
 # rejected with a clean error — no crash, no silent truncation).
 set -eu
 # shellcheck source=test/gen-samples.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gen-samples.sh"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../gen-samples.sh"
 
 variant="${JETSON_VARIANT:-unknown}"
 echo "=== hw-decoder-chunk on variant: ${variant} ==="

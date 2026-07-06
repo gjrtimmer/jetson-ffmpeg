@@ -96,7 +96,7 @@ index 1759694..26df4e7 100755
                               require_cpp_condition libx264 x264.h "X264_BUILD >= 155" && {
                               [ "$toolchain" != "msvc" ] ||
 diff --git a/libavcodec/Makefile b/libavcodec/Makefile
-index 1410bd8..962ded6 100644
+index 1410bd8..d06b95b 100644
 --- a/libavcodec/Makefile
 +++ b/libavcodec/Makefile
 @@ -439,6 +439,8 @@ OBJS-$(CONFIG_H264_MEDIACODEC_DECODER) += mediacodecdec.o
@@ -104,7 +104,7 @@ index 1410bd8..962ded6 100644
  OBJS-$(CONFIG_H264_MF_ENCODER)         += mfenc.o mf_utils.o
  OBJS-$(CONFIG_H264_MMAL_DECODER)       += mmaldec.o
 +OBJS-$(CONFIG_H264_NVMPI_DECODER)      += nvmpi_dec.o
-+OBJS-$(CONFIG_H264_NVMPI_ENCODER)      += nvmpi_enc.o
++OBJS-$(CONFIG_H264_NVMPI_ENCODER)      += nvmpi_enc.o nvmpi_enc_runtime.o
  OBJS-$(CONFIG_H264_NVENC_ENCODER)      += nvenc_h264.o nvenc.o
  OBJS-$(CONFIG_H264_OH_DECODER)         += ohcodec.o ohdec.o
  OBJS-$(CONFIG_H264_OH_ENCODER)         += ohcodec.o ohenc.o
@@ -113,7 +113,7 @@ index 1410bd8..962ded6 100644
  OBJS-$(CONFIG_HEVC_MEDIACODEC_ENCODER) += mediacodecenc.o
  OBJS-$(CONFIG_HEVC_MF_ENCODER)         += mfenc.o mf_utils.o
 +OBJS-$(CONFIG_HEVC_NVMPI_DECODER)      += nvmpi_dec.o
-+OBJS-$(CONFIG_HEVC_NVMPI_ENCODER)      += nvmpi_enc.o
++OBJS-$(CONFIG_HEVC_NVMPI_ENCODER)      += nvmpi_enc.o nvmpi_enc_runtime.o
  OBJS-$(CONFIG_HEVC_NVENC_ENCODER)      += nvenc_hevc.o nvenc.o
  OBJS-$(CONFIG_HEVC_OH_DECODER)         += ohcodec.o ohdec.o
  OBJS-$(CONFIG_HEVC_OH_ENCODER)         += ohcodec.o ohenc.o
@@ -121,7 +121,7 @@ index 1410bd8..962ded6 100644
  OBJS-$(CONFIG_MJPEG_ENCODER)           += mjpegenc.o mjpegenc_common.o \
                                            mjpegenc_huffman.o
  OBJS-$(CONFIG_MJPEGB_DECODER)          += mjpegbdec.o
-+OBJS-$(CONFIG_MJPEG_NVMPI_DECODER)      += nvmpi_dec.o
++OBJS-$(CONFIG_MJPEG_NVMPI_DECODER)      += nvmpi_dec_mjpeg.o
 +OBJS-$(CONFIG_MJPEG_NVMPI_ENCODER)      += nvmpi_enc_jpeg.o
  OBJS-$(CONFIG_MJPEG_CUVID_DECODER)     += cuviddec.o
  OBJS-$(CONFIG_MJPEG_QSV_ENCODER)       += qsvenc_jpeg.o
@@ -589,10 +589,10 @@ index 0000000..7f18a44
 +#endif /* DYNLINK_NVMPI_H */
 diff --git a/libavcodec/nvmpi_dec.c b/libavcodec/nvmpi_dec.c
 new file mode 100644
-index 0000000..17e9bf0
+index 0000000..e81b815
 --- /dev/null
 +++ b/libavcodec/nvmpi_dec.c
-@@ -0,0 +1,928 @@
+@@ -0,0 +1,727 @@
 +/*
 + * nvmpi_dec.c — FFmpeg decoder wrapper for libnvmpi (layer 2 of
 + * jetson-ffmpeg, the FFmpeg integration layer).
@@ -603,6 +603,10 @@ index 0000000..17e9bf0
 + * implements FFmpeg decoder codecs (h264_nvmpi, hevc_nvmpi, mpeg2_nvmpi,
 + * mpeg4_nvmpi, vp8_nvmpi, vp9_nvmpi) by delegating all real work to the
 + * libnvmpi C API (loaded at runtime via dynlink_nvmpi.h / dlopen).
++ *
++ * MJPEG uses a separate hardware engine (NvJPEGDecoder, not V4L2 M2M) with
++ * its own init/decode/close/flush callbacks and no shared state with the
++ * decoders below — see nvmpi_dec_mjpeg.c.
 + *
 + * One source file supports FFmpeg 6.0 through 9.0+: API differences are
 + * handled with LIBAVCODEC_VERSION_MAJOR preprocessor guards (see
@@ -663,14 +667,10 @@ index 0000000..17e9bf0
 +/* libavcodec 63 (FFmpeg 9.0+): pix_fmts on FFCodec directly */
 +#define NVMPI_DEC_PIXFMTS \
 +	.pix_fmts = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NV12, AV_PIX_FMT_P010LE, AV_PIX_FMT_DRM_PRIME, AV_PIX_FMT_NONE}
-+#define NVMPI_MJPEG_PIXFMTS \
-+	.pix_fmts = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NONE}
 +#else
 +/* libavcodec 60-62 (FFmpeg 6.0-8.x): pix_fmts on public AVCodec sub-struct */
 +#define NVMPI_DEC_PIXFMTS \
 +	.p.pix_fmts = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NV12, AV_PIX_FMT_P010LE, AV_PIX_FMT_DRM_PRIME, AV_PIX_FMT_NONE}
-+#define NVMPI_MJPEG_PIXFMTS \
-+	.p.pix_fmts = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NONE}
 +#endif
 +
 +//valid range / default for the frame_pool_size AVOption (mirrors the size
@@ -787,7 +787,7 @@ index 0000000..17e9bf0
 +		av_log(avctx, AV_LOG_ERROR, "Unknown codec type (%d).\n", avctx->codec_id);
 +		return AVERROR_UNKNOWN;
 +	}
-+	
++
 +	param.frame_pool_size = nvmpi_context->frame_pool_size;
 +	if(param.frame_pool_size < OPT_frame_pool_size_MIN || param.frame_pool_size > OPT_frame_pool_size_MAX)
 +	{
@@ -927,7 +927,7 @@ index 0000000..17e9bf0
 +        av_log(avctx, AV_LOG_ERROR, "Invalid resize expressions\n");
 +        return AVERROR(EINVAL);
 +    }
-+	
++
 +	//overwrite avctx w and h if resize option is used
 +	if(param.resized.width && param.resized.height)
 +	{
@@ -1259,6 +1259,172 @@ index 0000000..17e9bf0
 +	}
 +}
 +
++//AVOption table: user-settable private options, resolved into
++//nvmpiDecodeContext fields by FFmpeg's option system before .init runs.
++//OFFSET locates the field inside the priv_data struct; VD restricts the
++//options to video decoding.
++#define OFFSET(x) offsetof(nvmpiDecodeContext, x)
++#define VD AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_DECODING_PARAM
++static const AVOption options[] = {
++    { "resize",   "Resize (width)x(height)", OFFSET(resize_expr), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, VD, "resize" },
++    { "frame_pool_size", "Number of frames that could be buffered in the decoder before user must read it with avcodec_receive_frame()", OFFSET(frame_pool_size), AV_OPT_TYPE_INT, {.i64 = OPT_frame_pool_size_DEFAULT }, OPT_frame_pool_size_MIN, OPT_frame_pool_size_MAX, VD, "frame_pool_size" },
++    { "chunk_size", "Bytes per compressed-input buffer; one input packet must fit in one chunk (0 = auto, 10 MiB)", OFFSET(chunk_size), AV_OPT_TYPE_INT, {.i64 = OPT_chunk_size_AUTO }, 0, OPT_chunk_size_MAX, VD, "chunk_size" },
++    { "max_perf", "Enable max performance mode (lifts NVDEC clock governor)", OFFSET(max_perf), AV_OPT_TYPE_BOOL, {.i64 = 1 }, 0, 1, VD, "max_perf" },
++    { "disable_dpb", "Disable decoded-picture-buffer reordering (low-latency, B-frame-free streams only)", OFFSET(disable_dpb), AV_OPT_TYPE_BOOL, {.i64 = 0 }, 0, 1, VD, "disable_dpb" },
++    { "wait_timeout", "Blocking wait timeout in milliseconds for low-delay mode (0 = default 500ms)", OFFSET(wait_timeout), AV_OPT_TYPE_INT, {.i64 = OPT_wait_timeout_AUTO }, 0, OPT_wait_timeout_MAX, VD, "wait_timeout" },
++    { "output_format", "Decoder output pixel format (default auto=yuv420p; nv12; p010le for 10-bit HEVC)", OFFSET(output_format), AV_OPT_TYPE_PIXEL_FMT, {.i64 = AV_PIX_FMT_NONE }, -1, INT_MAX, VD },
++    { NULL }
++};
++
++//Per-codec AVClass: binds the shared option table above to each decoder
++//instance (referenced by priv_class in the registration struct below).
++#define NVMPI_DEC_CLASS(NAME) \
++	static const AVClass nvmpi_##NAME##_dec_class = { \
++		.class_name = "nvmpi_" #NAME "_dec", \
++		.option     = options, \
++		.version    = LIBAVUTIL_VERSION_INT, \
++	};
++
++//Codec registration struct, stamped out once per codec by NVMPI_DEC().
++//FFCodec variant for libavcodec >= 60 (FFmpeg 6.0+). The matching extern in
++//allcodecs.c is "extern const FFCodec". Capabilities: DELAY, AVOID_PROBING,
++//HARDWARE. BSFS inserts h264/hevc mp4toannexb for Annex-B NAL units.
++#define NVMPI_DEC(NAME, ID, BSFS) \
++	NVMPI_DEC_CLASS(NAME) \
++	const FFCodec ff_##NAME##_nvmpi_decoder = { \
++		.p.name           = #NAME "_nvmpi", \
++		CODEC_LONG_NAME(#NAME " (nvmpi)"), \
++		.p.type           = AVMEDIA_TYPE_VIDEO, \
++		.p.id             = ID, \
++		.priv_data_size = sizeof(nvmpiDecodeContext), \
++		.init           = nvmpi_init_decoder, \
++		.close          = nvmpi_close, \
++		FF_CODEC_DECODE_CB(nvmpi_decode), \
++		.flush          = nvmpi_flush_decoder, \
++		.p.priv_class     = &nvmpi_##NAME##_dec_class, \
++		.p.capabilities   = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_AVOID_PROBING | AV_CODEC_CAP_HARDWARE, \
++		.caps_internal  = FF_CODEC_CAP_INIT_CLEANUP, \
++		/* libavcodec 63 (FFmpeg 9.0+): pix_fmts moved from AVCodec to FFCodec */ \
++		NVMPI_DEC_PIXFMTS, \
++		.bsfs           = BSFS, \
++		.p.wrapper_name   = "nvmpi", \
++	};
++
++
++//Instantiate the six nvmpi decoders. Each expansion must have a matching
++//extern in allcodecs.c and a CONFIG_*_NVMPI_DECODER Makefile/configure
++//entry (added by ffpatch.sh / the version overlays).
++NVMPI_DEC(h264,  AV_CODEC_ID_H264,"h264_mp4toannexb");
++NVMPI_DEC(hevc,  AV_CODEC_ID_HEVC,"hevc_mp4toannexb");
++NVMPI_DEC(mpeg2, AV_CODEC_ID_MPEG2VIDEO,NULL);
++NVMPI_DEC(mpeg4, AV_CODEC_ID_MPEG4,NULL);
++NVMPI_DEC(vp9,  AV_CODEC_ID_VP9,NULL);
++NVMPI_DEC(vp8, AV_CODEC_ID_VP8,NULL);
+diff --git a/libavcodec/nvmpi_dec_mjpeg.c b/libavcodec/nvmpi_dec_mjpeg.c
+new file mode 100644
+index 0000000..51bb3b7
+--- /dev/null
++++ b/libavcodec/nvmpi_dec_mjpeg.c
+@@ -0,0 +1,325 @@
++/*
++ * nvmpi_dec_mjpeg.c — FFmpeg MJPEG decoder wrapper for libnvmpi's JPEG
++ * decoder (layer 2 of jetson-ffmpeg, the FFmpeg integration layer).
++ *
++ * This is a SEPARATE file from nvmpi_dec.c because the MJPEG decode path is
++ * fundamentally different from the V4L2-based H.264/HEVC/MPEG2/MPEG4/VP8/VP9
++ * decoders:
++ *   - Uses NvJPEGDecoder, not V4L2 M2M (no capture thread, no frame pool)
++ *   - Synchronous per-frame decode, with self-describing resolution that
++ *     may require a re-decode when the bitstream's dimensions differ from
++ *     avctx's current dimensions
++ *   - Always YUV420P output with JPEG (full) color range — no NV12/P010LE
++ *
++ * This file is NOT built in this repository: it is patched into a vanilla
++ * FFmpeg source tree (libavcodec/) by scripts/ffpatch.sh or the generated
++ * patches in ffmpeg/patches/, and compiled as part of FFmpeg itself.
++ *
++ * The private context struct, AVOption table, and codec-registration
++ * macros below are intentionally identical to the ones in nvmpi_dec.c —
++ * the mjpeg_nvmpi decoder shares the same priv_data layout and options as
++ * the V4L2-backed decoders (most are simply unused by this decode path).
++ * Each nvmpi_dec*.c file is patched in and compiled as its own translation
++ * unit, so this duplication is required for the file to be self-contained;
++ * it must be kept in sync with nvmpi_dec.c if either changes.
++ *
++ * One source file supports FFmpeg 6.0 through 9.0+: API differences are
++ * handled with LIBAVCODEC_VERSION_MAJOR preprocessor guards (see
++ * https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Development-Guide "Wrapper code paths by FFmpeg version").
++ */
++
++/* Runtime-loaded via dlopen -- no link-time dependency on libnvmpi.so.
++ * dynlink_nvmpi.h is self-contained (duplicates nvmpi.h types) and
++ * provides macro redirects so all nvmpi_* calls dispatch through
++ * function pointers resolved at codec init time. */
++#include "dynlink_nvmpi.h"
++#include "avcodec.h"
++#include "decode.h"
++#include "internal.h"
++#include "libavutil/common.h"
++#include "libavutil/frame.h"
++#include "libavutil/imgutils.h"
++#include "libavutil/mem.h"
++#include "libavutil/log.h"
++#include "libavutil/opt.h"
++
++#include "codec_internal.h"
++#include "version.h"
++
++/*
++ * libavcodec 63 (FFmpeg 9.0+): pix_fmts moved from the public AVCodec (.p)
++ * to a direct field on FFCodec in codec_internal.h. Pre-63 uses .p.pix_fmts;
++ * 63+ uses .pix_fmts (or the CODEC_PIXFMTS() macro).
++ */
++#if LIBAVCODEC_VERSION_MAJOR >= 63
++/* libavcodec 63 (FFmpeg 9.0+): pix_fmts on FFCodec directly */
++#define NVMPI_MJPEG_PIXFMTS \
++	.pix_fmts = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NONE}
++#else
++/* libavcodec 60-62 (FFmpeg 6.0-8.x): pix_fmts on public AVCodec sub-struct */
++#define NVMPI_MJPEG_PIXFMTS \
++	.p.pix_fmts = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NONE}
++#endif
++
++//valid range / default for the frame_pool_size AVOption (mirrors the size
++//of libnvmpi's decoded-frame pool, i.e. how many frames may buffer up
++//before the user must call avcodec_receive_frame()). Unused by the MJPEG
++//decode path but present because this decoder shares nvmpi_dec.c's options
++//table (see file header).
++#define OPT_frame_pool_size_MIN 1
++#define OPT_frame_pool_size_MAX 32
++#define OPT_frame_pool_size_DEFAULT 5
++
++//valid range for the chunk_size AVOption (bytes per compressed-input
++//buffer inside libnvmpi). Unused by the MJPEG decode path (see above).
++#define OPT_chunk_size_MIN 65536
++#define OPT_chunk_size_MAX (64*1024*1024)
++#define OPT_chunk_size_AUTO 0
++
++#define OPT_wait_timeout_MIN 50
++#define OPT_wait_timeout_MAX 5000
++#define OPT_wait_timeout_AUTO 0
++
++//Per-instance private context (priv_data of the AVCodecContext).
++//AVClass must stay discoverable for the AVOption system; resize_expr and
++//frame_pool_size are set via AVOptions before init.
++typedef struct {
++	char eos_reached;      //unused at present
++	nvmpictx* ctx;         //libnvmpi decoder handle
++	AVClass *av_class;
++	AVFrame *bufFrame;     //pre-allocated frame the next decode copies into
++	char *resize_expr;     //"-resize WxH" option (hw downscale in libnvmpi)
++	int frame_pool_size;   //"-frame_pool_size N" option
++	int chunk_size;        //"-chunk_size N" option (bytes; 0 = auto)
++	int max_perf;          //lift NVDEC clock governor (default on)
++	int disable_dpb;       //skip DPB reordering (low-latency, default off)
++	int wait_timeout;      //blocking wait timeout in ms (0 = default 500ms)
++	int output_format;     //requested output pixel format (AVPixelFormat; NONE = auto)
++} nvmpiDecodeContext;
++
 +/* ------------------------------------------------------------------ */
 +/* MJPEG-specific callbacks (NvJPEGDecoder, not V4L2)                  */
 +/* ------------------------------------------------------------------ */
@@ -1441,7 +1607,8 @@ index 0000000..17e9bf0
 +//AVOption table: user-settable private options, resolved into
 +//nvmpiDecodeContext fields by FFmpeg's option system before .init runs.
 +//OFFSET locates the field inside the priv_data struct; VD restricts the
-+//options to video decoding.
++//options to video decoding. Identical to nvmpi_dec.c's table (see file
++//header) — most entries are unused by the MJPEG decode path.
 +#define OFFSET(x) offsetof(nvmpiDecodeContext, x)
 +#define VD AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_DECODING_PARAM
 +static const AVOption options[] = {
@@ -1464,42 +1631,6 @@ index 0000000..17e9bf0
 +		.version    = LIBAVUTIL_VERSION_INT, \
 +	};
 +
-+//Codec registration struct, stamped out once per codec by NVMPI_DEC().
-+//FFCodec variant for libavcodec >= 60 (FFmpeg 6.0+). The matching extern in
-+//allcodecs.c is "extern const FFCodec". Capabilities: DELAY, AVOID_PROBING,
-+//HARDWARE. BSFS inserts h264/hevc mp4toannexb for Annex-B NAL units.
-+#define NVMPI_DEC(NAME, ID, BSFS) \
-+	NVMPI_DEC_CLASS(NAME) \
-+	const FFCodec ff_##NAME##_nvmpi_decoder = { \
-+		.p.name           = #NAME "_nvmpi", \
-+		CODEC_LONG_NAME(#NAME " (nvmpi)"), \
-+		.p.type           = AVMEDIA_TYPE_VIDEO, \
-+		.p.id             = ID, \
-+		.priv_data_size = sizeof(nvmpiDecodeContext), \
-+		.init           = nvmpi_init_decoder, \
-+		.close          = nvmpi_close, \
-+		FF_CODEC_DECODE_CB(nvmpi_decode), \
-+		.flush          = nvmpi_flush_decoder, \
-+		.p.priv_class     = &nvmpi_##NAME##_dec_class, \
-+		.p.capabilities   = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_AVOID_PROBING | AV_CODEC_CAP_HARDWARE, \
-+		.caps_internal  = FF_CODEC_CAP_INIT_CLEANUP, \
-+		/* libavcodec 63 (FFmpeg 9.0+): pix_fmts moved from AVCodec to FFCodec */ \
-+		NVMPI_DEC_PIXFMTS, \
-+		.bsfs           = BSFS, \
-+		.p.wrapper_name   = "nvmpi", \
-+	};
-+
-+
-+//Instantiate the six nvmpi decoders. Each expansion must have a matching
-+//extern in allcodecs.c and a CONFIG_*_NVMPI_DECODER Makefile/configure
-+//entry (added by ffpatch.sh / the version overlays).
-+NVMPI_DEC(h264,  AV_CODEC_ID_H264,"h264_mp4toannexb");
-+NVMPI_DEC(hevc,  AV_CODEC_ID_HEVC,"hevc_mp4toannexb");
-+NVMPI_DEC(mpeg2, AV_CODEC_ID_MPEG2VIDEO,NULL);
-+NVMPI_DEC(mpeg4, AV_CODEC_ID_MPEG4,NULL);
-+NVMPI_DEC(vp9,  AV_CODEC_ID_VP9,NULL);
-+NVMPI_DEC(vp8, AV_CODEC_ID_VP8,NULL);
-+
 +//MJPEG decoder — uses NvJPEGDecoder, not V4L2 M2M. Separate init/decode/
 +//close/flush callbacks, and only YUV420P output (no NV12/P010).
 +NVMPI_DEC_CLASS(mjpeg)
@@ -1520,28 +1651,17 @@ index 0000000..17e9bf0
 +	NVMPI_MJPEG_PIXFMTS,
 +	.p.wrapper_name   = "nvmpi",
 +};
-+
 diff --git a/libavcodec/nvmpi_enc.c b/libavcodec/nvmpi_enc.c
 new file mode 100644
-index 0000000..a1cd895
+index 0000000..3993c48
 --- /dev/null
 +++ b/libavcodec/nvmpi_enc.c
-@@ -0,0 +1,898 @@
+@@ -0,0 +1,449 @@
 +/*
 + * nvmpi_enc.c — FFmpeg encoder wrapper for libnvmpi (layer 2 of
-+ * jetson-ffmpeg, the FFmpeg integration layer).
-+ *
-+ * Like nvmpi_dec.c, this file is patched into a vanilla FFmpeg tree and
-+ * compiled inside FFmpeg. It implements the h264_nvmpi and hevc_nvmpi
-+ * encoders by delegating to the libnvmpi C API (loaded at runtime
-+ * via dynlink_nvmpi.h / dlopen).
-+ *
-+ * Key responsibility beyond plain forwarding: packet memory pooling.
-+ * libnvmpi's encoder never allocates packet memory — this wrapper
-+ * pre-allocates nvPackets whose payload is backed by real AVPacket buffers
-+ * (so delivering a packet to FFmpeg is a zero-copy move), queues them into
-+ * the encoder's empty pool, and recycles them after each
-+ * avcodec_receive_packet().
++ * jetson-ffmpeg, the FFmpeg integration layer): codec init/close,
++ * AVOptions, and codec registration. See nvmpi_enc_ff_internal.h for the
++ * shared nvmpiEncodeContext struct and companion nvmpi_enc_runtime.c.
 + *
 + * One source supports FFmpeg 6.0 .. 9.0+ via preprocessor guards:
 + *  - LIBAVCODEC_VERSION_MAJOR >= 60: FFCodec registration +
@@ -1556,25 +1676,12 @@ index 0000000..a1cd895
 + * function pointers resolved at codec init time. */
 +#include "dynlink_nvmpi.h"
 +#include "avcodec.h"
-+#include "internal.h"
-+#include <stdio.h>
-+#include "libavutil/avstring.h"
 +#include "libavutil/avutil.h"
 +#include "libavutil/common.h"
 +#include "libavutil/imgutils.h"
 +#include "libavutil/log.h"
 +#include "libavutil/opt.h"
 +#include "libavutil/mem.h"
-+/* AVDRMFrameDescriptor: extracts DMA-BUF fd + pitch from DRM_PRIME input
-+ * frames. DRM_PRIME frames are mmap'd for CPU read and fed through the
-+ * regular MMAP encoder path (put_frame) — this avoids DMABUF-mode driver
-+ * bugs (bBlitMode throughput deadlock, YUV420M segfault). */
-+#include "libavutil/hwcontext_drm.h"
-+#include <sys/mman.h>
-+#include <sys/ioctl.h>
-+#include <linux/dma-buf.h>
-+
-+#include "version.h"
 +
 +/* Compatibility with FFmpeg 8.0+ (libavcodec >= 62.11): FF_PROFILE_*
 + * names were deprecated in favour of AV_PROFILE_*.  Detect this by
@@ -1590,6 +1697,7 @@ index 0000000..a1cd895
 +
 +#include "encode.h"
 +#include "codec_internal.h"
++#include "nvmpi_enc_ff_internal.h"
 +
 +/*
 + * libavcodec 63 (FFmpeg 9.0+): pix_fmts moved from the public AVCodec (.p)
@@ -1605,10 +1713,6 @@ index 0000000..a1cd895
 +	.p.pix_fmts = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NV12, AV_PIX_FMT_DRM_PRIME, AV_PIX_FMT_NONE}
 +#endif
 +
-+//libnvmpi exchanges timestamps in microseconds; used with av_rescale_q to
-+//convert to/from the stream's AVCodecContext time_base.
-+static const AVRational NVENC_TIMEBASE = {1, 1000000};
-+
 +//valid range / default for the wait_timeout AVOption: how long (ms)
 +//nvmpi_encoder_get_packet() blocks in low-delay mode. Matches decoder.
 +#define OPT_wait_timeout_AUTO 0
@@ -1619,38 +1723,6 @@ index 0000000..a1cd895
 +#define OPT_packet_pool_size_MIN 1
 +#define OPT_packet_pool_size_MAX 32
 +#define OPT_packet_pool_size_DEFAULT 10
-+
-+//Per-instance private context (priv_data of the AVCodecContext). The int
-+//option fields are populated from the AVOption table before .init runs.
-+typedef struct {
-+	const AVClass *class;       //must be first for the AVOption system
-+	nvmpictx* ctx;              //libnvmpi encoder handle
-+	int num_capture_buffers;    //V4L2 buffer count option
-+	int packet_pool_size;       //packet pool depth option
-+	int profile;                //FF_PROFILE_H264_* numeric value or UNKNOWN
-+	int level;                  //level option (10*level, 0 = auto)
-+	int rc;                     //rate control option: -1 default, 0 CBR, 1 VBR
-+	int preset;                 //hw preset option: 1=ultrafast .. 4=slow
-+	int max_perf;               //lift NVENC clock governor (default on)
-+	int poc_type;               //H.264 picture order count type (0=default, 2=low-latency)
-+	int insert_vui;             //embed VUI timing_info (fps) in the bitstream (default on)
-+	int insert_aud;             //insert Access Unit Delimiter NALs
-+	int cabac;                  //enable CABAC entropy coding (H.264 only)
-+	int lossless;               //enable lossless encoding (H.264 only, QP 0 + High 4:4:4)
-+	int wait_timeout;           //blocking-wait ceiling in ms (0 = default 500ms)
-+	int encoder_flushing;       //set after EOS was sent to libnvmpi
-+	int dmabuf_input;           //set when pix_fmt is DRM_PRIME (mmap+CPU-read path)
-+	int64_t last_bitrate;       //track last-set bitrate for dynamic change detection
-+	AVFrame *frame; //tmp frame
-+	                //(holds the pulled-but-not-yet-sent input frame in the
-+	                // new-API receive_packet path)
-+}nvmpiEncodeContext;
-+
-+nvPacket* nvmpienc_nvPacket_alloc(AVCodecContext *avctx, int bufSize);
-+void nvmpienc_nvPacket_free(nvPacket* nPkt);
-+int nvmpienc_nvPacket_reset(nvPacket* nPkt, AVCodecContext *avctx, int bufSize);
-+int nvmpienc_initPktPool(AVCodecContext *avctx, int pktNum);
-+int nvmpienc_deinitPktPool(AVCodecContext *avctx);
 +
 +//alloc nvPacket and AVPacket buffer;
 +//Creates one pool packet: an nvPacket whose payload points into a real
@@ -1673,14 +1745,7 @@ index 0000000..a1cd895
 +	nPkt->payload = pkt->data;
 +	return nPkt;
 +}
-+
-+//Free one pool packet: both the backing AVPacket and the nvPacket shell.
-+void nvmpienc_nvPacket_free(nvPacket* nPkt)
-+{
-+	AVPacket* pkt = nPkt->privData;
-+	av_packet_free(&pkt);
-+	free(nPkt);
-+}
++//(nvmpienc_nvPacket_free lives in nvmpi_enc_runtime.c, next to its main caller.)
 +
 +//Re-arm a pool packet after its previous buffer was moved into the user's
 +//AVPacket: acquire a fresh encode buffer for the (now empty) AVPacket and
@@ -1723,33 +1788,7 @@ index 0000000..a1cd895
 +	}
 +	return 0;
 +}
-+
-+//must call before nvmpi_encoder_close() too free buffers memory
-+//Drains BOTH pool queues (empty and filled) and frees every packet, since
-+//libnvmpi itself never deallocates packet memory. Safe only after the
-+//encoder has been fully drained (no packet checked out by the DQ thread).
-+int nvmpienc_deinitPktPool(AVCodecContext *avctx)
-+{
-+	nvmpiEncodeContext * nvmpi_context = avctx->priv_data;
-+	nvmpictx *ctx = nvmpi_context->ctx;
-+	nvPacket* nPkt;
-+	
-+	while(nvmpi_encoder_dqEmptyPacket(ctx, &nPkt) == 0)
-+	{
-+		AVPacket* pkt = nPkt->privData;
-+		av_packet_free(&pkt);
-+		free(nPkt);
-+	}
-+	while(nvmpi_encoder_get_packet(ctx, &nPkt, false) == 0)
-+	{
-+		AVPacket* pkt = nPkt->privData;
-+		av_packet_free(&pkt);
-+		free(nPkt);
-+	}
-+	
-+	//TODO check that all mem returned to nothing
-+	return 0;
-+}
++//(nvmpienc_deinitPktPool lives in nvmpi_enc_runtime.c with its drain loops.)
 +
 +//AVCodec/FFCodec .init callback: translate AVCodecContext settings and
 +//AVOptions into an nvEncParam, optionally pre-generate global extradata
@@ -1860,137 +1899,13 @@ index 0000000..a1cd895
 +	//instance, encode one blank frame, and scan the resulting bitstream
 +	//for the first IDR NAL — everything before it (SPS/PPS, VPS for HEVC)
 +	//becomes avctx->extradata. The temporary encoder is then drained and
-+	//destroyed; the real encoder is created afterwards.
++	//destroyed; the real encoder is created afterwards (helper call below
++	//is defined in nvmpi_enc_runtime.c).
 +	if ((avctx->flags & AV_CODEC_FLAG_GLOBAL_HEADER) && (avctx->codec->id == AV_CODEC_ID_H264 || avctx->codec->id == AV_CODEC_ID_H265))
 +	{
-+		uint8_t *dst[4];
-+		int linesize[4];
-+		nvFrame _nvframe={0};
-+		nvPacket *nPkt;
-+		nvmpictx *_ctx;
-+		int i;
-+		int ret;
-+		int64_t shiftPts = 1000000/param.fps_n;
-+
-+		/* GLOBAL_HEADER temp encoder: allocate the blank frame as NV12
-+		 * when the real encoder uses DRM_PRIME (DRM_PRIME has no pixel
-+		 * description, so av_image_alloc would fail).  pixFormat is
-+		 * already NV_PIX_NV12 for DRM_PRIME input (set above). */
-+		enum AVPixelFormat alloc_fmt = (avctx->pix_fmt == AV_PIX_FMT_DRM_PRIME)
-+			? AV_PIX_FMT_NV12 : avctx->pix_fmt;
-+
-+		if(avctx->codec->id == AV_CODEC_ID_H264) param.codingType = NV_VIDEO_CodingH264;
-+		else param.codingType = NV_VIDEO_CodingHEVC;
-+		av_image_alloc(dst, linesize, avctx->width, avctx->height, alloc_fmt, 1);
-+
-+		nvmpi_context->ctx = nvmpi_create_encoder(&param);
-+		_ctx = nvmpi_context->ctx;
-+		if (!_ctx)
-+		{
-+			av_freep(&dst[0]);
-+			av_frame_free(&nvmpi_context->frame);
-+			/* AVERROR_EXTERNAL: device-level failure (EBUSY, ENODEV, etc.),
-+			 * not a memory allocation error. See #37. */
-+			return AVERROR_EXTERNAL;
-+		}
-+		nvmpienc_initPktPool(avctx,nvmpi_context->packet_pool_size);
-+		i=0;
-+		_nvframe.timestamp=0;
-+
-+		while(true)
-+		{
-+			_nvframe.payload[0]=dst[0];
-+			_nvframe.payload[1]=dst[1];
-+			_nvframe.payload[2]=dst[2];
-+			_nvframe.payload_size[0]=linesize[0]*avctx->height;
-+			_nvframe.payload_size[1]=linesize[1]*avctx->height/2;
-+			_nvframe.payload_size[2]=linesize[2]*avctx->height/2;
-+			_nvframe.linesize[0]=linesize[0];
-+			_nvframe.linesize[1]=linesize[1];
-+			_nvframe.linesize[2]=linesize[2];
-+			_nvframe.timestamp+=shiftPts;
-+
-+			nvmpi_encoder_put_frame(_ctx,&_nvframe);
-+
-+			ret=nvmpi_encoder_get_packet(_ctx,&nPkt, avctx->flags & AV_CODEC_FLAG_LOW_DELAY);
-+
-+			if(ret<0)
-+				continue;
-+
-+			//find idr index
-+			//Walk the Annex-B stream for the start code that begins the
-+			//IDR slice; 'i' then marks the end of the header NALs.
-+			while(i<nPkt->payload_size)
-+			{
-+				//check if nal start code (the start-code probe reads
-+				//payload[i+1..i+4], so stay 5 bytes inside the payload)
-+				if(i + 4 < nPkt->payload_size && nPkt->payload[i] == 0 && nPkt->payload[i+1] == 0 && nPkt->payload[i+2] == 0 && nPkt->payload[i+3] == 0x01)
-+				{
-+					if(param.codingType == NV_VIDEO_CodingH264)
-+					{
-+						//h264 idr
-+						if(nPkt->payload[i+4] == 0x65) break;
-+					}
-+					else // NV_VIDEO_CodingHEVC:
-+					{
-+						//h265 idr
-+						if(nPkt->payload[i+4] == 0x26 || nPkt->payload[i+4] == 0x28) break;
-+					}
-+				}
-+				i++;
-+			}
-+
-+			avctx->extradata_size=i;
-+			avctx->extradata	= av_mallocz( avctx->extradata_size + AV_INPUT_BUFFER_PADDING_SIZE );
-+			/* Guard against av_mallocz OOM — memcpy to NULL is
-+			 * undefined behavior (likely crash). */
-+			if (!avctx->extradata) {
-+				avctx->extradata_size = 0;
-+				nvmpienc_nvPacket_free(nPkt);
-+				av_freep(&dst[0]);
-+				nvmpienc_deinitPktPool(avctx);
-+				nvmpi_encoder_close(nvmpi_context->ctx);
-+				nvmpi_context->ctx = NULL;
-+				av_frame_free(&nvmpi_context->frame);
-+				return AVERROR(ENOMEM);
-+			}
-+			memcpy( avctx->extradata, nPkt->payload,avctx->extradata_size);
-+			memset( avctx->extradata + avctx->extradata_size, 0, AV_INPUT_BUFFER_PADDING_SIZE );
-+
-+			nvmpienc_nvPacket_free(nPkt);
-+			nPkt = nvmpienc_nvPacket_alloc(avctx, NVMPI_ENC_CHUNK_SIZE);
-+			
-+			//return buffer to pool
-+			nvmpi_encoder_qEmptyPacket(nvmpi_context->ctx, nPkt);
-+			//send eos
-+			nvmpi_encoder_put_frame(nvmpi_context->ctx,NULL);
-+			
-+			break;
-+		}
-+		
-+		//drain encoder
-+		//(keep pulling until get_packet reports EOS so the temporary
-+		// encoder can shut down cleanly; recycled packets keep the pool
-+		// populated while draining)
-+		while(true)
-+		{
-+			ret=nvmpi_encoder_get_packet(_ctx,&nPkt, false);
-+			if(ret < 0)
-+			{
-+				if(ret == -2) break; //got eos
-+				//usleep(1000);
-+				continue;
-+			}
-+			nvmpienc_nvPacket_free(nPkt);
-+			nPkt = nvmpienc_nvPacket_alloc(avctx, NVMPI_ENC_CHUNK_SIZE);
-+			nvmpi_encoder_qEmptyPacket(nvmpi_context->ctx, nPkt);
-+		}
-+
-+		av_freep(&dst[0]); //free allocated image planes
-+		nvmpienc_deinitPktPool(avctx);
-+		nvmpi_encoder_close(nvmpi_context->ctx);
-+		nvmpi_context->ctx = NULL;
-+
++		int hdr_ret = nvmpi_encode_gen_global_header_extradata(avctx, &param);
++		if (hdr_ret < 0)
++			return hdr_ret;
 +	}
 +
 +	//create the real encoder used for the rest of the session
@@ -2005,7 +1920,7 @@ index 0000000..a1cd895
 +		nvmpi_context->ctx=nvmpi_create_encoder(&param);
 +	}
 +	//else TODO
-+	
++
 +	if(!nvmpi_context->ctx)
 +	{
 +		av_log(avctx, AV_LOG_ERROR, "nvmpi: encoder creation failed\n");
@@ -2027,241 +1942,6 @@ index 0000000..a1cd895
 +	return 0;
 +}
 +
-+//send_frame half of the encode API: wrap the AVFrame's planes in an
-+//nvFrame (no copy here — libnvmpi memcpy's into its V4L2 buffer inside
-+//put_frame, which may block briefly) and rescale pts to microseconds.
-+//frame==NULL initiates flushing (EOS to libnvmpi). Called internally by
-+//ff_nvmpi_receive_packet_async().
-+static int ff_nvmpi_send_frame(AVCodecContext *avctx,const AVFrame *frame)
-+{
-+	nvmpiEncodeContext * nvmpi_context = avctx->priv_data;
-+	nvFrame _nvframe={0};
-+	int res;
-+
-+	if (nvmpi_context->encoder_flushing)
-+		return AVERROR_EOF;
-+
-+	if(frame)
-+	{
-+		/* Runtime control: force IDR when FFmpeg signals a keyframe request
-+		 * via pict_type (e.g. -force_key_frames or scene-change detection).
-+		 * Must be called BEFORE queueing the frame so the V4L2 encoder
-+		 * applies the IDR flag to this specific frame. */
-+		if (frame->pict_type == AV_PICTURE_TYPE_I)
-+			nvmpi_encoder_force_idr(nvmpi_context->ctx);
-+
-+		/* Runtime control: adaptive bitrate — detect changes to
-+		 * avctx->bit_rate between frames and propagate to the hw encoder.
-+		 * Comparison uses int64_t to match AVCodecContext.bit_rate type. */
-+		if (avctx->bit_rate > 0 && avctx->bit_rate != nvmpi_context->last_bitrate) {
-+			nvmpi_encoder_set_bitrate(nvmpi_context->ctx, (uint32_t)avctx->bit_rate);
-+			nvmpi_context->last_bitrate = avctx->bit_rate;
-+		}
-+
-+		/* DRM_PRIME path: mmap the DMA-BUF fd for CPU read, build an
-+		 * nvFrame from the NV12 plane data, and feed it through the
-+		 * regular MMAP encoder path (put_frame).
-+		 *
-+		 * This avoids DMABUF-mode driver bugs entirely — the encoder
-+		 * uses its own MMAP buffers, so there is no NvBufSurface vs
-+		 * V4L2 format mismatch and bBlitMode never triggers.
-+		 *
-+		 * The dup'd fd from objects[0] works for mmap — it points to
-+		 * the same kernel DMA-BUF as the original. */
-+		if (nvmpi_context->dmabuf_input) {
-+			AVDRMFrameDescriptor *desc = (AVDRMFrameDescriptor *)frame->data[0];
-+			int drm_fd;
-+			int pitch;
-+			size_t y_size, uv_size, total_size;
-+			void *map;
-+			struct dma_buf_sync sync;
-+
-+			if (!desc || desc->nb_objects < 1) {
-+				av_log(avctx, AV_LOG_ERROR,
-+				       "nvmpi: DRM_PRIME frame missing descriptor or objects\n");
-+				return AVERROR(EINVAL);
-+			}
-+
-+			drm_fd = desc->objects[0].fd;
-+			pitch  = desc->layers[0].planes[0].pitch;
-+
-+			/* NV12 layout: Y plane (pitch * height) + UV plane (pitch * height/2) */
-+			y_size  = (size_t)pitch * frame->height;
-+			uv_size = (size_t)pitch * frame->height / 2;
-+			total_size = y_size + uv_size;
-+
-+			/* DMA-BUF sync: ensure VIC/decoder writes are visible to CPU */
-+			memset(&sync, 0, sizeof(sync));
-+			sync.flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ;
-+			ioctl(drm_fd, DMA_BUF_IOCTL_SYNC, &sync);
-+
-+			map = mmap(NULL, total_size, PROT_READ, MAP_SHARED, drm_fd, 0);
-+			if (map == MAP_FAILED) {
-+				av_log(avctx, AV_LOG_ERROR,
-+				       "nvmpi: mmap DRM_PRIME fd=%d failed\n", drm_fd);
-+				sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ;
-+				ioctl(drm_fd, DMA_BUF_IOCTL_SYNC, &sync);
-+				return AVERROR_EXTERNAL;
-+			}
-+
-+			/* Build nvFrame pointing into the mapped NV12 data.
-+			 * payload[0] = Y, payload[1] = interleaved UV.
-+			 * linesize = pitch (may differ from width due to alignment). */
-+			_nvframe.payload[0] = map;
-+			_nvframe.payload[1] = (uint8_t *)map + y_size;
-+			_nvframe.payload[2] = NULL;
-+			_nvframe.payload_size[0] = y_size;
-+			_nvframe.payload_size[1] = uv_size;
-+			_nvframe.payload_size[2] = 0;
-+			_nvframe.linesize[0] = pitch;
-+			_nvframe.linesize[1] = pitch;
-+			_nvframe.linesize[2] = 0;
-+			_nvframe.timestamp = av_rescale_q(frame->pts, avctx->time_base, NVENC_TIMEBASE);
-+
-+			res = nvmpi_encoder_put_frame(nvmpi_context->ctx, &_nvframe);
-+
-+			munmap(map, total_size);
-+			sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ;
-+			ioctl(drm_fd, DMA_BUF_IOCTL_SYNC, &sync);
-+
-+			return res < 0 ? res : 0;
-+		}
-+
-+		/* Software frame path: copy plane pointers into nvFrame for
-+		 * libnvmpi to memcpy into its V4L2 buffer. */
-+		_nvframe.payload[0]=frame->data[0];
-+		_nvframe.payload[1]=frame->data[1];
-+		_nvframe.payload[2]=frame->data[2];
-+
-+		_nvframe.payload_size[0]=frame->linesize[0]*frame->height;
-+		_nvframe.payload_size[1]=frame->linesize[1]*frame->height/2;
-+		_nvframe.payload_size[2]=frame->linesize[2]*frame->height/2;
-+
-+		_nvframe.linesize[0]=frame->linesize[0];
-+		_nvframe.linesize[1]=frame->linesize[1];
-+		_nvframe.linesize[2]=frame->linesize[2];
-+
-+		_nvframe.timestamp=av_rescale_q(frame->pts, avctx->time_base, NVENC_TIMEBASE);
-+
-+		res=nvmpi_encoder_put_frame(nvmpi_context->ctx,&_nvframe);
-+
-+		if(res<0)
-+			return res;
-+	}
-+	else
-+	{
-+		/* EOS: signal end-of-stream to libnvmpi.  Both DRM_PRIME and
-+		 * software paths use MMAP mode — put_frame(NULL) works for both. */
-+		nvmpi_context->encoder_flushing = 1;
-+		nvmpi_encoder_put_frame(nvmpi_context->ctx, NULL);
-+	}
-+
-+	return 0;
-+}
-+
-+//receive_packet half of the encode API: pop a filled nvPacket from
-+//libnvmpi, rescale the pts back to the codec time_base, shrink the backing
-+//AVPacket to the actual payload size and MOVE its buffer into the user's
-+//pkt (zero-copy). The pool packet is then re-armed with a fresh buffer and
-+//returned to the empty queue. EAGAIN when nothing is ready; AVERROR_EOF
-+//once flushing has drained.
-+static int ff_nvmpi_receive_packet(AVCodecContext *avctx, AVPacket *pkt)
-+{
-+	nvmpiEncodeContext * nvmpi_context = avctx->priv_data;
-+	nvPacket *nPkt;
-+	AVPacket *aPkt;
-+	int res;
-+
-+	/* During flushing, use blocking get_packet to avoid CPU spin while
-+	 * waiting for the DQ thread to deliver final encoded packets. */
-+	res = nvmpi_encoder_get_packet(nvmpi_context->ctx, &nPkt,
-+		(avctx->flags & AV_CODEC_FLAG_LOW_DELAY) || nvmpi_context->encoder_flushing);
-+	if(res<0)
-+	{
-+		/* -2 = actual EOS from the V4L2 DQ thread (all packets drained).
-+		 * -1 = no packet ready yet (DQ thread still processing); return
-+		 * EAGAIN so FFmpeg keeps calling receive_packet during flush.
-+		 * Previously, -1 during flushing was treated as EOF, causing
-+		 * final packets to be dropped (see #15). */
-+		if(res == -2) return AVERROR_EOF;
-+		return AVERROR(EAGAIN);
-+	}
-+	
-+	aPkt = (AVPacket*)(nPkt->privData);
-+	//aPkt->dts=aPkt->pts=nPkt->pts;
-+	aPkt->dts = aPkt->pts = av_rescale_q(nPkt->pts, NVENC_TIMEBASE, avctx->time_base);
-+	av_shrink_packet(aPkt, nPkt->payload_size);
-+	if(nPkt->flags& AV_PKT_FLAG_KEY) aPkt->flags = AV_PKT_FLAG_KEY;
-+	av_packet_move_ref(pkt, aPkt);
-+	
-+	if(nvmpienc_nvPacket_reset(nPkt, avctx, NVMPI_ENC_CHUNK_SIZE))
-+	{
-+		nvmpienc_nvPacket_free(nPkt);
-+		return AVERROR(ENOMEM);
-+	}
-+	
-+	nvmpi_encoder_qEmptyPacket(nvmpi_context->ctx, nPkt);
-+
-+	return 0;
-+}
-+
-+//Single-callback encoder entry point: FFmpeg
-+//only calls receive_packet, and the encoder pulls its own input via
-+//ff_encode_get_frame(). Flow per call:
-+//  1. if no frame is pending, pull one (EAGAIN = nothing to send yet;
-+//     EOF = flush by sending NULL);
-+//  2. push it to libnvmpi via ff_nvmpi_send_frame() and unref on success
-+//     (on failure the frame stays in nvmpi_context->frame for retry);
-+//  3. try to return an encoded packet via ff_nvmpi_receive_packet().
-+static int ff_nvmpi_receive_packet_async(AVCodecContext *avctx, AVPacket *pkt)
-+{
-+	int res;
-+	nvmpiEncodeContext * nvmpi_context = avctx->priv_data;
-+	AVFrame *frame = nvmpi_context->frame;
-+	bool needSendFrame = true;
-+
-+	if (!frame->buf[0])
-+	{
-+		res = ff_encode_get_frame(avctx, frame);
-+		if (res < 0)
-+		{
-+			if(res == AVERROR(EAGAIN)) needSendFrame = false;
-+			else if(res == AVERROR_EOF) frame = NULL;
-+			else return res;
-+		}
-+	}
-+	
-+	if(needSendFrame)
-+	{
-+		res = ff_nvmpi_send_frame(avctx, frame);
-+		if (res < 0)
-+		{
-+			if(res != AVERROR_EOF && res != AVERROR(EAGAIN)) return res;
-+		}
-+		else av_frame_unref(frame);
-+	}
-+
-+	res = ff_nvmpi_receive_packet(avctx, pkt);
-+	if(res<0) return res;
-+
-+	return 0;
-+}
-+
-+//AVCodec/FFCodec .flush callback: reset the V4L2 encoder pipeline for
-+//mid-stream restart (e.g. after seek). Resets the libnvmpi encoder
-+//(STREAMOFF/STREAMON, drain packet pool, restart DQ thread) and clears
-+//the FFmpeg-side flushing flag so send_frame accepts new input.
-+static void nvmpi_flush_encoder(AVCodecContext *avctx)
-+{
-+    nvmpiEncodeContext *nvmpi_context = avctx->priv_data;
-+
-+    /* Reset the libnvmpi encoder pipeline. */
-+    nvmpi_encoder_flush(nvmpi_context->ctx);
-+
-+    /* Clear the FFmpeg-side flushing flag so send_frame accepts frames. */
-+    nvmpi_context->encoder_flushing = 0;
-+}
-+
 +//AVCodec/FFCodec .close callback: make sure EOS was sent, drain remaining
 +//packets (recycling pool buffers while doing so), then free the pool and
 +//close the libnvmpi encoder. Order matters — the pool must be drained
@@ -2280,7 +1960,7 @@ index 0000000..a1cd895
 +			/* MMAP mode for both DRM_PRIME and software paths. */
 +			nvmpi_encoder_put_frame(nvmpi_context->ctx, NULL);
 +		}
-+		
++
 +		while(1)
 +		{
 +			ret=nvmpi_encoder_get_packet(nvmpi_context->ctx, &nPkt, false);
@@ -2399,7 +2079,8 @@ index 0000000..a1cd895
 +//Codec registration, stamped out per codec by NVMPI_ENC(). Covers paths C/D:
 +//  - lavc >= 60 (FFmpeg 6.0–7.x, path C): FFCodec struct, pull-based receive_packet.
 +//  - lavc >= 62.11 (FFmpeg 8.0, path D): same, plus AV_PROFILE_* aliases above.
-+//Matching allcodecs.c extern is "extern const FFCodec".
++//Matching allcodecs.c extern is "extern const FFCodec" (receive_packet/flush
++//callbacks are implemented in nvmpi_enc_runtime.c).
 +#define NVMPI_ENC(NAME, LONGNAME, CODEC) \
 +	NVMPI_ENC_CLASS(NAME) \
 +	const FFCodec ff_ ## NAME ## _nvmpi_encoder = { \
@@ -2425,6 +2106,76 @@ index 0000000..a1cd895
 +//entries (added by ffpatch.sh / the version overlays).
 +NVMPI_ENC(h264, "H.264", AV_CODEC_ID_H264);
 +NVMPI_ENC(hevc, "HEVC", AV_CODEC_ID_HEVC);
+diff --git a/libavcodec/nvmpi_enc_ff_internal.h b/libavcodec/nvmpi_enc_ff_internal.h
+new file mode 100644
+index 0000000..6728e7f
+--- /dev/null
++++ b/libavcodec/nvmpi_enc_ff_internal.h
+@@ -0,0 +1,64 @@
++#pragma once
++
++/*
++ * nvmpi_enc_ff_internal.h — shared declarations between the two halves of
++ * the FFmpeg H.264/HEVC encoder wrapper:
++ *
++ *   nvmpi_enc.c         — codec init/close, AVOptions, codec registration.
++ *   nvmpi_enc_runtime.c — encode hot path (send_frame/receive_packet/flush)
++ *                         and the packet pool backing it.
++ *
++ * Both files operate on the same per-instance nvmpiEncodeContext, and
++ * nvmpi_enc.c's GLOBAL_HEADER extradata-generation block (in .init) and
++ * .close callback drive the packet pool implemented in nvmpi_enc_runtime.c
++ * — so both the struct and the pool/entry-point declarations live here.
++ */
++
++#include "dynlink_nvmpi.h"
++#include "avcodec.h"
++
++//Per-instance private context (priv_data of the AVCodecContext). The int
++//option fields are populated from the AVOption table before .init runs.
++typedef struct {
++	const AVClass *class;       //must be first for the AVOption system
++	nvmpictx* ctx;              //libnvmpi encoder handle
++	int num_capture_buffers;    //V4L2 buffer count option
++	int packet_pool_size;       //packet pool depth option
++	int profile;                //FF_PROFILE_H264_* numeric value or UNKNOWN
++	int level;                  //level option (10*level, 0 = auto)
++	int rc;                     //rate control option: -1 default, 0 CBR, 1 VBR
++	int preset;                 //hw preset option: 1=ultrafast .. 4=slow
++	int max_perf;               //lift NVENC clock governor (default on)
++	int poc_type;               //H.264 picture order count type (0=default, 2=low-latency)
++	int insert_vui;             //embed VUI timing_info (fps) in the bitstream (default on)
++	int insert_aud;             //insert Access Unit Delimiter NALs
++	int cabac;                  //enable CABAC entropy coding (H.264 only)
++	int lossless;               //enable lossless encoding (H.264 only, QP 0 + High 4:4:4)
++	int wait_timeout;           //blocking-wait ceiling in ms (0 = default 500ms)
++	int encoder_flushing;       //set after EOS was sent to libnvmpi
++	int dmabuf_input;           //set when pix_fmt is DRM_PRIME (mmap+CPU-read path)
++	int64_t last_bitrate;       //track last-set bitrate for dynamic change detection
++	AVFrame *frame; //tmp frame
++	                //(holds the pulled-but-not-yet-sent input frame in the
++	                // new-API receive_packet path)
++}nvmpiEncodeContext;
++
++//Packet pool management, split across both files by line-count budget
++//(both call each other's halves — see the definition site of each):
++//  nvmpi_enc.c:         nvmpienc_nvPacket_alloc, _reset, initPktPool
++//  nvmpi_enc_runtime.c: nvmpienc_nvPacket_free, deinitPktPool
++nvPacket* nvmpienc_nvPacket_alloc(AVCodecContext *avctx, int bufSize);
++void nvmpienc_nvPacket_free(nvPacket* nPkt);
++int nvmpienc_nvPacket_reset(nvPacket* nPkt, AVCodecContext *avctx, int bufSize);
++int nvmpienc_initPktPool(AVCodecContext *avctx, int pktNum);
++int nvmpienc_deinitPktPool(AVCodecContext *avctx);
++
++//Encode hot-path entry points — defined in nvmpi_enc_runtime.c, wired into
++//the FFCodec struct by the NVMPI_ENC() registration macro in nvmpi_enc.c.
++int ff_nvmpi_receive_packet_async(AVCodecContext *avctx, AVPacket *pkt);
++void nvmpi_flush_encoder(AVCodecContext *avctx);
++
++//GLOBAL_HEADER extradata pre-generation — defined in nvmpi_enc_runtime.c
++//(it drives the same packet-pool/put_frame/get_packet machinery as the
++//encode hot path), called from nvmpi_encode_init() in nvmpi_enc.c.
++int nvmpi_encode_gen_global_header_extradata(AVCodecContext *avctx, nvEncParam *param);
 diff --git a/libavcodec/nvmpi_enc_jpeg.c b/libavcodec/nvmpi_enc_jpeg.c
 new file mode 100644
 index 0000000..7814ed2
@@ -2706,15 +2457,485 @@ index 0000000..7814ed2
 +    .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
 +    .p.wrapper_name   = "nvmpi",
 +};
+diff --git a/libavcodec/nvmpi_enc_runtime.c b/libavcodec/nvmpi_enc_runtime.c
+new file mode 100644
+index 0000000..80110fc
+--- /dev/null
++++ b/libavcodec/nvmpi_enc_runtime.c
+@@ -0,0 +1,463 @@
++/*
++ * nvmpi_enc_runtime.c — FFmpeg encoder wrapper for libnvmpi (layer 2 of
++ * jetson-ffmpeg, the FFmpeg integration layer): the encode hot path
++ * (send_frame / receive_packet / flush), GLOBAL_HEADER extradata
++ * pre-generation, and packet-pool teardown. Companion to nvmpi_enc.c
++ * (init/close/AVOptions/registration + pool setup) — see
++ * nvmpi_enc_ff_internal.h for the shared nvmpiEncodeContext struct.
++ *
++ * libnvmpi's encoder never allocates packet memory — nvPackets pooled
++ * here are backed by real AVPacket buffers so delivering a packet to
++ * FFmpeg is a zero-copy move; they are recycled after each
++ * avcodec_receive_packet().
++ */
++/* Runtime-loaded via dlopen -- no link-time dependency on libnvmpi.so.
++ * dynlink_nvmpi.h is self-contained (duplicates nvmpi.h types) and
++ * provides macro redirects so all nvmpi_* calls dispatch through
++ * function pointers resolved at codec init time. */
++#include "dynlink_nvmpi.h"
++#include "avcodec.h"
++#include "libavutil/avutil.h"
++#include "libavutil/common.h"
++#include "libavutil/imgutils.h"
++#include "libavutil/log.h"
++#include "libavutil/mem.h"
++/* AVDRMFrameDescriptor: extracts DMA-BUF fd + pitch from DRM_PRIME input
++ * frames. DRM_PRIME frames are mmap'd for CPU read and fed through the
++ * regular MMAP encoder path (put_frame) — this avoids DMABUF-mode driver
++ * bugs (bBlitMode throughput deadlock, YUV420M segfault). */
++#include "libavutil/hwcontext_drm.h"
++#include <sys/mman.h>
++#include <sys/ioctl.h>
++#include <linux/dma-buf.h>
++
++#include "encode.h"
++
++//Shared nvmpiEncodeContext struct + cross-file declarations.
++#include "nvmpi_enc_ff_internal.h"
++
++/* dynlink_nvmpi.h declares all function pointers and nvmpi_dynlink_load()
++ * as file-scoped static — each TU that includes it gets its own copy.
++ * nvmpi_enc.c calls nvmpi_dynlink_load() in its .init, but that only
++ * populates nvmpi_enc.c's copy.  This TU's pointers remain NULL unless
++ * we call nvmpi_dynlink_load() ourselves.  The function is idempotent
++ * per-TU (checks nvmpi_lib_handle), so the cost is a single pointer
++ * compare after the first call. */
++
++//libnvmpi exchanges timestamps in microseconds; used with av_rescale_q to
++//convert to/from the stream's AVCodecContext time_base.
++static const AVRational NVENC_TIMEBASE = {1, 1000000};
++
++//Free one pool packet: both the backing AVPacket and the nvPacket shell.
++//(nvmpienc_nvPacket_alloc lives in nvmpi_enc.c with the other pool setup.)
++void nvmpienc_nvPacket_free(nvPacket* nPkt)
++{
++	AVPacket* pkt = nPkt->privData;
++	av_packet_free(&pkt);
++	free(nPkt);
++}
++
++//must call before nvmpi_encoder_close() too free buffers memory
++//Drains BOTH pool queues (empty and filled) and frees every packet, since
++//libnvmpi itself never deallocates packet memory. Safe only after the
++//encoder has been fully drained (no packet checked out by the DQ thread).
++int nvmpienc_deinitPktPool(AVCodecContext *avctx)
++{
++	nvmpi_dynlink_load(); /* populate this TU's static function pointers */
++	nvmpiEncodeContext * nvmpi_context = avctx->priv_data;
++	nvmpictx *ctx = nvmpi_context->ctx;
++	nvPacket* nPkt;
++
++	while(nvmpi_encoder_dqEmptyPacket(ctx, &nPkt) == 0)
++	{
++		AVPacket* pkt = nPkt->privData;
++		av_packet_free(&pkt);
++		free(nPkt);
++	}
++	while(nvmpi_encoder_get_packet(ctx, &nPkt, false) == 0)
++	{
++		AVPacket* pkt = nPkt->privData;
++		av_packet_free(&pkt);
++		free(nPkt);
++	}
++
++	//TODO check that all mem returned to nothing
++	return 0;
++}
++
++//Called from nvmpi_encode_init() (nvmpi_enc.c). Spins up a THROWAWAY
++//encoder, encodes one blank frame, and scans the bitstream for the first
++//IDR NAL — everything before it (SPS/PPS, VPS for HEVC) becomes
++//avctx->extradata. On error, frees nvmpi_context->frame (FFmpeg skips
++//.close() after a failed .init()).
++int nvmpi_encode_gen_global_header_extradata(AVCodecContext *avctx, nvEncParam *param)
++{
++	nvmpi_dynlink_load(); /* populate this TU's static function pointers */
++	nvmpiEncodeContext * nvmpi_context = avctx->priv_data;
++	uint8_t *dst[4];
++	int linesize[4];
++	nvFrame _nvframe={0};
++	nvPacket *nPkt;
++	nvmpictx *_ctx;
++	int i;
++	int ret;
++	int64_t shiftPts = 1000000/param->fps_n;
++
++	/* GLOBAL_HEADER temp encoder: allocate the blank frame as NV12
++	 * when the real encoder uses DRM_PRIME (DRM_PRIME has no pixel
++	 * description, so av_image_alloc would fail).  pixFormat is
++	 * already NV_PIX_NV12 for DRM_PRIME input (set above). */
++	enum AVPixelFormat alloc_fmt = (avctx->pix_fmt == AV_PIX_FMT_DRM_PRIME)
++		? AV_PIX_FMT_NV12 : avctx->pix_fmt;
++
++	if(avctx->codec->id == AV_CODEC_ID_H264) param->codingType = NV_VIDEO_CodingH264;
++	else param->codingType = NV_VIDEO_CodingHEVC;
++	av_image_alloc(dst, linesize, avctx->width, avctx->height, alloc_fmt, 1);
++
++	nvmpi_context->ctx = nvmpi_create_encoder(param);
++	_ctx = nvmpi_context->ctx;
++	if (!_ctx)
++	{
++		av_freep(&dst[0]);
++		av_frame_free(&nvmpi_context->frame);
++		/* AVERROR_EXTERNAL: device-level failure (EBUSY, ENODEV, etc.),
++		 * not a memory allocation error. See #37. */
++		return AVERROR_EXTERNAL;
++	}
++	nvmpienc_initPktPool(avctx,nvmpi_context->packet_pool_size);
++	i=0;
++	_nvframe.timestamp=0;
++
++	while(true)
++	{
++		_nvframe.payload[0]=dst[0];
++		_nvframe.payload[1]=dst[1];
++		_nvframe.payload[2]=dst[2];
++		_nvframe.payload_size[0]=linesize[0]*avctx->height;
++		_nvframe.payload_size[1]=linesize[1]*avctx->height/2;
++		_nvframe.payload_size[2]=linesize[2]*avctx->height/2;
++		_nvframe.linesize[0]=linesize[0];
++		_nvframe.linesize[1]=linesize[1];
++		_nvframe.linesize[2]=linesize[2];
++		_nvframe.timestamp+=shiftPts;
++
++		nvmpi_encoder_put_frame(_ctx,&_nvframe);
++
++		ret=nvmpi_encoder_get_packet(_ctx,&nPkt, avctx->flags & AV_CODEC_FLAG_LOW_DELAY);
++
++		if(ret<0)
++			continue;
++
++		//find idr index
++		//Walk the Annex-B stream for the start code that begins the
++		//IDR slice; 'i' then marks the end of the header NALs.
++		while(i<nPkt->payload_size)
++		{
++			//check if nal start code (the start-code probe reads
++			//payload[i+1..i+4], so stay 5 bytes inside the payload)
++			if(i + 4 < nPkt->payload_size && nPkt->payload[i] == 0 && nPkt->payload[i+1] == 0 && nPkt->payload[i+2] == 0 && nPkt->payload[i+3] == 0x01)
++			{
++				if(param->codingType == NV_VIDEO_CodingH264)
++				{
++					//h264 idr
++					if(nPkt->payload[i+4] == 0x65) break;
++				}
++				else // NV_VIDEO_CodingHEVC:
++				{
++					//h265 idr
++					if(nPkt->payload[i+4] == 0x26 || nPkt->payload[i+4] == 0x28) break;
++				}
++			}
++			i++;
++		}
++
++		avctx->extradata_size=i;
++		avctx->extradata	= av_mallocz( avctx->extradata_size + AV_INPUT_BUFFER_PADDING_SIZE );
++		/* Guard against av_mallocz OOM — memcpy to NULL is
++		 * undefined behavior (likely crash). */
++		if (!avctx->extradata) {
++			avctx->extradata_size = 0;
++			nvmpienc_nvPacket_free(nPkt);
++			av_freep(&dst[0]);
++			nvmpienc_deinitPktPool(avctx);
++			nvmpi_encoder_close(nvmpi_context->ctx);
++			nvmpi_context->ctx = NULL;
++			av_frame_free(&nvmpi_context->frame);
++			return AVERROR(ENOMEM);
++		}
++		memcpy( avctx->extradata, nPkt->payload,avctx->extradata_size);
++		memset( avctx->extradata + avctx->extradata_size, 0, AV_INPUT_BUFFER_PADDING_SIZE );
++
++		nvmpienc_nvPacket_free(nPkt);
++		nPkt = nvmpienc_nvPacket_alloc(avctx, NVMPI_ENC_CHUNK_SIZE);
++
++		//return buffer to pool
++		nvmpi_encoder_qEmptyPacket(nvmpi_context->ctx, nPkt);
++		//send eos
++		nvmpi_encoder_put_frame(nvmpi_context->ctx,NULL);
++
++		break;
++	}
++
++	//drain encoder
++	//(keep pulling until get_packet reports EOS so the temporary
++	// encoder can shut down cleanly; recycled packets keep the pool
++	// populated while draining)
++	while(true)
++	{
++		ret=nvmpi_encoder_get_packet(_ctx,&nPkt, false);
++		if(ret < 0)
++		{
++			if(ret == -2) break; //got eos
++			//usleep(1000);
++			continue;
++		}
++		nvmpienc_nvPacket_free(nPkt);
++		nPkt = nvmpienc_nvPacket_alloc(avctx, NVMPI_ENC_CHUNK_SIZE);
++		nvmpi_encoder_qEmptyPacket(nvmpi_context->ctx, nPkt);
++	}
++
++	av_freep(&dst[0]); //free allocated image planes
++	nvmpienc_deinitPktPool(avctx);
++	nvmpi_encoder_close(nvmpi_context->ctx);
++	nvmpi_context->ctx = NULL;
++
++	return 0;
++}
++
++//send_frame half of the encode API: wrap the AVFrame's planes in an
++//nvFrame (no copy here — libnvmpi memcpy's into its V4L2 buffer inside
++//put_frame, which may block briefly) and rescale pts to microseconds.
++//frame==NULL initiates flushing (EOS to libnvmpi). Called internally by
++//ff_nvmpi_receive_packet_async().
++static int ff_nvmpi_send_frame(AVCodecContext *avctx,const AVFrame *frame)
++{
++	nvmpiEncodeContext * nvmpi_context = avctx->priv_data;
++	nvFrame _nvframe={0};
++	int res;
++
++	if (nvmpi_context->encoder_flushing)
++		return AVERROR_EOF;
++
++	if(frame)
++	{
++		/* Runtime control: force IDR when FFmpeg signals a keyframe request
++		 * via pict_type (e.g. -force_key_frames or scene-change detection).
++		 * Must be called BEFORE queueing the frame so the V4L2 encoder
++		 * applies the IDR flag to this specific frame. */
++		if (frame->pict_type == AV_PICTURE_TYPE_I)
++			nvmpi_encoder_force_idr(nvmpi_context->ctx);
++
++		/* Runtime control: adaptive bitrate — detect changes to
++		 * avctx->bit_rate between frames and propagate to the hw encoder.
++		 * Comparison uses int64_t to match AVCodecContext.bit_rate type. */
++		if (avctx->bit_rate > 0 && avctx->bit_rate != nvmpi_context->last_bitrate) {
++			nvmpi_encoder_set_bitrate(nvmpi_context->ctx, (uint32_t)avctx->bit_rate);
++			nvmpi_context->last_bitrate = avctx->bit_rate;
++		}
++
++		/* DRM_PRIME path: mmap the DMA-BUF fd for CPU read, build an
++		 * nvFrame from the NV12 plane data, and feed it through the
++		 * regular MMAP encoder path (put_frame).
++		 *
++		 * This avoids DMABUF-mode driver bugs entirely — the encoder
++		 * uses its own MMAP buffers, so there is no NvBufSurface vs
++		 * V4L2 format mismatch and bBlitMode never triggers.
++		 *
++		 * The dup'd fd from objects[0] works for mmap — it points to
++		 * the same kernel DMA-BUF as the original. */
++		if (nvmpi_context->dmabuf_input) {
++			AVDRMFrameDescriptor *desc = (AVDRMFrameDescriptor *)frame->data[0];
++			int drm_fd;
++			int pitch;
++			size_t y_size, uv_size, total_size;
++			void *map;
++			struct dma_buf_sync sync;
++
++			if (!desc || desc->nb_objects < 1) {
++				av_log(avctx, AV_LOG_ERROR,
++				       "nvmpi: DRM_PRIME frame missing descriptor or objects\n");
++				return AVERROR(EINVAL);
++			}
++
++			drm_fd = desc->objects[0].fd;
++			pitch  = desc->layers[0].planes[0].pitch;
++
++			/* NV12 layout: Y plane (pitch * height) + UV plane (pitch * height/2) */
++			y_size  = (size_t)pitch * frame->height;
++			uv_size = (size_t)pitch * frame->height / 2;
++			total_size = y_size + uv_size;
++
++			/* DMA-BUF sync: ensure VIC/decoder writes are visible to CPU */
++			memset(&sync, 0, sizeof(sync));
++			sync.flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ;
++			ioctl(drm_fd, DMA_BUF_IOCTL_SYNC, &sync);
++
++			map = mmap(NULL, total_size, PROT_READ, MAP_SHARED, drm_fd, 0);
++			if (map == MAP_FAILED) {
++				av_log(avctx, AV_LOG_ERROR,
++				       "nvmpi: mmap DRM_PRIME fd=%d failed\n", drm_fd);
++				sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ;
++				ioctl(drm_fd, DMA_BUF_IOCTL_SYNC, &sync);
++				return AVERROR_EXTERNAL;
++			}
++
++			/* Build nvFrame pointing into the mapped NV12 data.
++			 * payload[0] = Y, payload[1] = interleaved UV.
++			 * linesize = pitch (may differ from width due to alignment). */
++			_nvframe.payload[0] = map;
++			_nvframe.payload[1] = (uint8_t *)map + y_size;
++			_nvframe.payload[2] = NULL;
++			_nvframe.payload_size[0] = y_size;
++			_nvframe.payload_size[1] = uv_size;
++			_nvframe.payload_size[2] = 0;
++			_nvframe.linesize[0] = pitch;
++			_nvframe.linesize[1] = pitch;
++			_nvframe.linesize[2] = 0;
++			_nvframe.timestamp = av_rescale_q(frame->pts, avctx->time_base, NVENC_TIMEBASE);
++
++			res = nvmpi_encoder_put_frame(nvmpi_context->ctx, &_nvframe);
++
++			munmap(map, total_size);
++			sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ;
++			ioctl(drm_fd, DMA_BUF_IOCTL_SYNC, &sync);
++
++			return res < 0 ? res : 0;
++		}
++
++		/* Software frame path: copy plane pointers into nvFrame for
++		 * libnvmpi to memcpy into its V4L2 buffer. */
++		_nvframe.payload[0]=frame->data[0];
++		_nvframe.payload[1]=frame->data[1];
++		_nvframe.payload[2]=frame->data[2];
++
++		_nvframe.payload_size[0]=frame->linesize[0]*frame->height;
++		_nvframe.payload_size[1]=frame->linesize[1]*frame->height/2;
++		_nvframe.payload_size[2]=frame->linesize[2]*frame->height/2;
++
++		_nvframe.linesize[0]=frame->linesize[0];
++		_nvframe.linesize[1]=frame->linesize[1];
++		_nvframe.linesize[2]=frame->linesize[2];
++
++		_nvframe.timestamp=av_rescale_q(frame->pts, avctx->time_base, NVENC_TIMEBASE);
++
++		res=nvmpi_encoder_put_frame(nvmpi_context->ctx,&_nvframe);
++
++		if(res<0)
++			return res;
++	}
++	else
++	{
++		/* EOS: signal end-of-stream to libnvmpi.  Both DRM_PRIME and
++		 * software paths use MMAP mode — put_frame(NULL) works for both. */
++		nvmpi_context->encoder_flushing = 1;
++		nvmpi_encoder_put_frame(nvmpi_context->ctx, NULL);
++	}
++
++	return 0;
++}
++
++//receive_packet half of the encode API: pop a filled nvPacket from
++//libnvmpi, rescale the pts back to the codec time_base, shrink the backing
++//AVPacket to the actual payload size and MOVE its buffer into the user's
++//pkt (zero-copy). The pool packet is then re-armed with a fresh buffer and
++//returned to the empty queue. EAGAIN when nothing is ready; AVERROR_EOF
++//once flushing has drained.
++static int ff_nvmpi_receive_packet(AVCodecContext *avctx, AVPacket *pkt)
++{
++	nvmpiEncodeContext * nvmpi_context = avctx->priv_data;
++	nvPacket *nPkt;
++	AVPacket *aPkt;
++	int res;
++
++	/* During flushing, use blocking get_packet to avoid CPU spin while
++	 * waiting for the DQ thread to deliver final encoded packets. */
++	res = nvmpi_encoder_get_packet(nvmpi_context->ctx, &nPkt,
++		(avctx->flags & AV_CODEC_FLAG_LOW_DELAY) || nvmpi_context->encoder_flushing);
++	if(res<0)
++	{
++		/* -2 = actual EOS from the V4L2 DQ thread (all packets drained).
++		 * -1 = no packet ready yet (DQ thread still processing); return
++		 * EAGAIN so FFmpeg keeps calling receive_packet during flush.
++		 * Previously, -1 during flushing was treated as EOF, causing
++		 * final packets to be dropped (see #15). */
++		if(res == -2) return AVERROR_EOF;
++		return AVERROR(EAGAIN);
++	}
++
++	aPkt = (AVPacket*)(nPkt->privData);
++	//aPkt->dts=aPkt->pts=nPkt->pts;
++	aPkt->dts = aPkt->pts = av_rescale_q(nPkt->pts, NVENC_TIMEBASE, avctx->time_base);
++	av_shrink_packet(aPkt, nPkt->payload_size);
++	if(nPkt->flags& AV_PKT_FLAG_KEY) aPkt->flags = AV_PKT_FLAG_KEY;
++	av_packet_move_ref(pkt, aPkt);
++
++	if(nvmpienc_nvPacket_reset(nPkt, avctx, NVMPI_ENC_CHUNK_SIZE))
++	{
++		nvmpienc_nvPacket_free(nPkt);
++		return AVERROR(ENOMEM);
++	}
++
++	nvmpi_encoder_qEmptyPacket(nvmpi_context->ctx, nPkt);
++
++	return 0;
++}
++
++//Single-callback encoder entry point: FFmpeg
++//only calls receive_packet, and the encoder pulls its own input via
++//ff_encode_get_frame(). Flow per call:
++//  1. if no frame is pending, pull one (EAGAIN = nothing to send yet;
++//     EOF = flush by sending NULL);
++//  2. push it to libnvmpi via ff_nvmpi_send_frame() and unref on success
++//     (on failure the frame stays in nvmpi_context->frame for retry);
++//  3. try to return an encoded packet via ff_nvmpi_receive_packet().
++int ff_nvmpi_receive_packet_async(AVCodecContext *avctx, AVPacket *pkt)
++{
++	nvmpi_dynlink_load(); /* populate this TU's static function pointers */
++	int res;
++	nvmpiEncodeContext * nvmpi_context = avctx->priv_data;
++	AVFrame *frame = nvmpi_context->frame;
++	bool needSendFrame = true;
++
++	if (!frame->buf[0])
++	{
++		res = ff_encode_get_frame(avctx, frame);
++		if (res < 0)
++		{
++			if(res == AVERROR(EAGAIN)) needSendFrame = false;
++			else if(res == AVERROR_EOF) frame = NULL;
++			else return res;
++		}
++	}
++
++	if(needSendFrame)
++	{
++		res = ff_nvmpi_send_frame(avctx, frame);
++		if (res < 0)
++		{
++			if(res != AVERROR_EOF && res != AVERROR(EAGAIN)) return res;
++		}
++		else av_frame_unref(frame);
++	}
++
++	res = ff_nvmpi_receive_packet(avctx, pkt);
++	if(res<0) return res;
++
++	return 0;
++}
++
++//AVCodec/FFCodec .flush callback: reset the V4L2 encoder pipeline for
++//mid-stream restart (e.g. after seek). Resets the libnvmpi encoder
++//(STREAMOFF/STREAMON, drain packet pool, restart DQ thread) and clears
++//the FFmpeg-side flushing flag so send_frame accepts new input.
++void nvmpi_flush_encoder(AVCodecContext *avctx)
++{
++    nvmpi_dynlink_load(); /* populate this TU's static function pointers */
++    nvmpiEncodeContext *nvmpi_context = avctx->priv_data;
++
++    /* Reset the libnvmpi encoder pipeline. */
++    nvmpi_encoder_flush(nvmpi_context->ctx);
++
++    /* Clear the FFmpeg-side flushing flag so send_frame accepts frames. */
++    nvmpi_context->encoder_flushing = 0;
++}
 diff --git a/libavfilter/Makefile b/libavfilter/Makefile
-index a530cfa..c2fc0f8 100644
+index a530cfa..ef949f5 100644
 --- a/libavfilter/Makefile
 +++ b/libavfilter/Makefile
-@@ -478,6 +478,7 @@ OBJS-$(CONFIG_SCALE_CUDA_FILTER)             += vf_scale_cuda.o scale_eval.o \
+@@ -478,6 +478,8 @@ OBJS-$(CONFIG_SCALE_CUDA_FILTER)             += vf_scale_cuda.o scale_eval.o \
  OBJS-$(CONFIG_SCALE_NPP_FILTER)              += vf_scale_npp.o scale_eval.o
  OBJS-$(CONFIG_SCALE_QSV_FILTER)              += vf_vpp_qsv.o
  OBJS-$(CONFIG_SCALE_VAAPI_FILTER)            += vf_scale_vaapi.o scale_eval.o vaapi_vpp.o
 +OBJS-$(CONFIG_SCALE_VIC_FILTER)              += vf_scale_vic.o
++OBJS-$(CONFIG_SCALE_VIC_FILTER)              += vf_scale_vic_frame.o
  OBJS-$(CONFIG_SCALE_VT_FILTER)               += vf_scale_vt.o scale_eval.o
  OBJS-$(CONFIG_SCALE_VULKAN_FILTER)           += vf_scale_vulkan.o vulkan.o vulkan_filter.o
  OBJS-$(CONFIG_SCALE2REF_FILTER)              += vf_scale.o scale_eval.o framesync.o
@@ -2857,10 +3078,10 @@ index 0000000..ac0d0a1
 +#endif /* DYNLINK_NVMPI_VIC_H */
 diff --git a/libavfilter/vf_scale_vic.c b/libavfilter/vf_scale_vic.c
 new file mode 100644
-index 0000000..ac09246
+index 0000000..828a4b8
 --- /dev/null
 +++ b/libavfilter/vf_scale_vic.c
-@@ -0,0 +1,650 @@
+@@ -0,0 +1,387 @@
 +/*
 + * vf_scale_vic.c — Tegra VIC hardware scale/CSC filter for FFmpeg.
 + *
@@ -2879,6 +3100,11 @@ index 0000000..ac09246
 + *   ffmpeg -hwaccel nvmpi -i input.mp4 -vf scale_vic=1280:720 \
 + *          -c:v h264_nvmpi output.mp4
 + *
++ * This file holds filter setup, config, options, and registration.
++ * Per-frame processing (scale_vic_filter_frame + the DRM_PRIME release
++ * callback) lives in vf_scale_vic_frame.c — see vf_scale_vic_internal.h
++ * for the shared ScaleVICContext definition.
++ *
 + * Copyright (c) 2024-2026 G.J.R. Timmer <gjr.timmer@gmail.com>
 + *
 + * This file is part of FFmpeg.
@@ -2889,15 +3115,9 @@ index 0000000..ac09246
 + * or (at your option) any later version.
 + */
 +
-+#include <inttypes.h>
-+#include <string.h>
-+#include <unistd.h>
-+
-+#include "libavutil/mem.h"
 +#include "libavutil/opt.h"
 +#include "libavutil/pixdesc.h"
 +#include "libavutil/hwcontext.h"
-+#include "libavutil/hwcontext_drm.h"
 +
 +#include "avfilter.h"
 +#include "video.h"
@@ -2936,74 +3156,11 @@ index 0000000..ac09246
 +#include "internal.h"
 +#endif
 +
-+/* DRM_FORMAT_NV12 from drm_fourcc.h — defined here to avoid a build
-+ * dependency on libdrm-dev headers.  Same value as the decoder uses
-+ * in nvmpi_dec.c. */
-+#ifndef DRM_FORMAT_NV12
-+#define DRM_FORMAT_NV12 0x3231564E
-+#endif
-+
 +/* Runtime-loaded via dlopen — no link-time dependency on libnvmpi.so.
-+ * Only VIC + surface symbols are resolved (not decoder/encoder). */
-+#include "dynlink_nvmpi_vic.h"
-+
-+/* Maximum number of pre-allocated output DMA-BUF surfaces.  Matches
-+ * the typical decoded-frame pipeline depth — enough for the encoder
-+ * input queue without over-allocating scarce DMA memory. */
-+#define VIC_OUTPUT_POOL_SIZE 8
-+
-+/* ------------------------------------------------------------------ */
-+/* Filter context                                                      */
-+/* ------------------------------------------------------------------ */
-+
-+typedef struct ScaleVICContext {
-+    const AVClass *class;
-+
-+    /* User-specified output dimensions (AVOption) */
-+    int width;
-+    int height;
-+
-+    /* VIC engine context — allocated in init, freed in uninit.
-+     * Allocated in scale_vic_init(); freed in scale_vic_uninit(). */
-+    nvmpi_vic_ctx *vic_ctx;
-+
-+    /* Output buffer pool: pre-allocated pitch-linear NV12 DMA-BUF
-+     * surfaces at the target resolution.  Ring-buffered — pool_idx
-+     * cycles through the array.
-+     * Allocated in scale_vic_config_output(); freed in scale_vic_uninit(). */
-+    int out_fds[VIC_OUTPUT_POOL_SIZE];
-+    int pool_size;
-+    int pool_idx;
-+
-+    /* Source buffer pool: registered NV12 surfaces at input dimensions.
-+     * The decoder outputs dup'd DMA-BUF fds that are NOT registered in
-+     * NvBufSurface — NvBufSurfTransform rejects them.  Frame data is
-+     * copied from the dup'd fd into a source pool buffer before VIC
-+     * transform.  Ring-buffered like the output pool.
-+     * Allocated in scale_vic_config_output(); freed in scale_vic_uninit(). */
-+    int in_fds[VIC_OUTPUT_POOL_SIZE];
-+    int in_pool_size;
-+    int in_pool_idx;
-+
-+    /* Track whether dynlink was loaded */
-+    int dynlink_loaded;
-+} ScaleVICContext;
-+
-+/* ------------------------------------------------------------------ */
-+/* Release callback for output DRM_PRIME frames                        */
-+/* ------------------------------------------------------------------ */
-+
-+/* The output DMA-BUF fd is borrowed from the pool, not dup'd — but
-+ * FFmpeg filters may hold frame refs across multiple filter_frame calls.
-+ * We dup() the fd so each output frame owns its copy. This callback
-+ * closes the dup'd fd when the frame ref is released. */
-+static void scale_vic_drm_release(void *opaque, uint8_t *data)
-+{
-+    AVDRMFrameDescriptor *desc = (AVDRMFrameDescriptor *)data;
-+    if (desc && desc->nb_objects > 0 && desc->objects[0].fd >= 0)
-+        close(desc->objects[0].fd);
-+    av_free(desc);
-+}
++ * Only VIC + surface symbols are resolved (not decoder/encoder).
++ * Shared ScaleVICContext + scale_vic_filter_frame() declaration; the
++ * per-frame implementation lives in vf_scale_vic_frame.c. */
++#include "vf_scale_vic_internal.h"
 +
 +/* ------------------------------------------------------------------ */
 +/* Init / uninit                                                       */
@@ -3229,11 +3386,176 @@ index 0000000..ac09246
 +}
 +
 +/* ------------------------------------------------------------------ */
++/* AVFilter definition                                                 */
++/* ------------------------------------------------------------------ */
++
++#define OFFSET(x) offsetof(ScaleVICContext, x)
++#define FLAGS AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_FILTERING_PARAM
++
++static const AVOption scale_vic_options[] = {
++    { "w",      "Output width",  OFFSET(width),  AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 8192, FLAGS },
++    { "width",  "Output width",  OFFSET(width),  AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 8192, FLAGS },
++    { "h",      "Output height", OFFSET(height), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 8192, FLAGS },
++    { "height", "Output height", OFFSET(height), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 8192, FLAGS },
++    { NULL }
++};
++
++AVFILTER_DEFINE_CLASS(scale_vic);
++
++static const AVFilterPad scale_vic_inputs[] = {
++    {
++        .name         = "default",
++        .type         = AVMEDIA_TYPE_VIDEO,
++        .filter_frame = scale_vic_filter_frame,
++    },
++#if LIBAVFILTER_VERSION_MAJOR < 9
++    { NULL }
++#endif
++};
++
++static const AVFilterPad scale_vic_outputs[] = {
++    {
++        .name         = "default",
++        .type         = AVMEDIA_TYPE_VIDEO,
++        .config_props = scale_vic_config_output,
++    },
++#if LIBAVFILTER_VERSION_MAJOR < 9
++    { NULL }
++#endif
++};
++
++#if LIBAVFILTER_VERSION_MAJOR >= 11
++/* FFmpeg 8.0+: FFFilter wraps AVFilter in .p sub-struct.
++ * name/description/priv_class live under .p; init/uninit/priv_size
++ * are direct FFFilter fields. */
++const FFFilter ff_vf_scale_vic = {
++    .p.name        = "scale_vic",
++    .p.description = NULL_IF_CONFIG_SMALL("Tegra VIC hardware scaler (DRM_PRIME)"),
++    .p.priv_class  = &scale_vic_class,
++
++    .init      = scale_vic_init,
++    .uninit    = scale_vic_uninit,
++    .priv_size = sizeof(ScaleVICContext),
++
++    FILTER_INPUTS(scale_vic_inputs),
++    FILTER_OUTPUTS(scale_vic_outputs),
++    FILTER_SINGLE_PIXFMT(AV_PIX_FMT_DRM_PRIME),
++
++    .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
++};
++#else
++const AVFilter ff_vf_scale_vic = {
++    .name        = "scale_vic",
++    .description = NULL_IF_CONFIG_SMALL("Tegra VIC hardware scaler (DRM_PRIME)"),
++
++    .init   = scale_vic_init,
++    .uninit = scale_vic_uninit,
++
++    .priv_size  = sizeof(ScaleVICContext),
++    .priv_class = &scale_vic_class,
++
++#if LIBAVFILTER_VERSION_MAJOR >= 9
++    /* FFmpeg 6.0+: use FILTER_INPUTS/OUTPUTS macros */
++    FILTER_INPUTS(scale_vic_inputs),
++    FILTER_OUTPUTS(scale_vic_outputs),
++    FILTER_SINGLE_PIXFMT(AV_PIX_FMT_DRM_PRIME),
++#else
++    /* FFmpeg 4.x/5.x: direct field assignment */
++    .inputs  = scale_vic_inputs,
++    .outputs = scale_vic_outputs,
++    .query_formats = scale_vic_query_formats,
++#endif
++
++    .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
++};
++#endif
+diff --git a/libavfilter/vf_scale_vic_frame.c b/libavfilter/vf_scale_vic_frame.c
+new file mode 100644
+index 0000000..fc68a49
+--- /dev/null
++++ b/libavfilter/vf_scale_vic_frame.c
+@@ -0,0 +1,273 @@
++/*
++ * vf_scale_vic_frame.c — per-frame processing for the Tegra VIC hardware
++ * scale/CSC filter.
++ *
++ * Contains scale_vic_filter_frame() (the hot path: DMA-BUF copy-in, VIC
++ * transform dispatch, output frame construction) and its DRM_PRIME frame
++ * release callback.  Filter setup, config, options, and registration live
++ * in vf_scale_vic.c — see vf_scale_vic_internal.h for the shared
++ * ScaleVICContext definition.
++ *
++ * Copyright (c) 2024-2026 G.J.R. Timmer <gjr.timmer@gmail.com>
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU Lesser General Public License as published
++ * by the Free Software Foundation; either version 2.1 of the License,
++ * or (at your option) any later version.
++ */
++
++#include <inttypes.h>
++#include <unistd.h>
++
++#include "libavutil/mem.h"
++#include "libavutil/hwcontext_drm.h"
++
++#include "avfilter.h"
++/* ff_filter_frame() lives in internal.h (FFmpeg <9) or filters.h (FFmpeg 9+).
++ * Both may coexist; __has_include is supported by all Jetson toolchains. */
++#if LIBAVFILTER_VERSION_MAJOR >= 9
++#include "filters.h"
++#endif
++#if defined(__has_include)
++#if __has_include("internal.h")
++#include "internal.h"
++#endif
++#else
++#include "internal.h"
++#endif
++#include "video.h"
++
++#include "vf_scale_vic_internal.h"
++
++/* dynlink_nvmpi_vic.h declares all function pointers and
++ * nvmpi_vic_dynlink_load() as file-scoped static — each TU that
++ * includes it gets its own copy.  vf_scale_vic.c calls
++ * nvmpi_vic_dynlink_load() in its .init, but that only populates
++ * vf_scale_vic.c's copy.  This TU's pointers remain NULL unless we
++ * call nvmpi_vic_dynlink_load() ourselves.  The function is
++ * idempotent per-TU (checks nvmpi_vic_lib_handle). */
++
++/* DRM_FORMAT_NV12 from drm_fourcc.h — defined here to avoid a build
++ * dependency on libdrm-dev headers.  Same value as the decoder uses
++ * in nvmpi_dec.c. */
++#ifndef DRM_FORMAT_NV12
++#define DRM_FORMAT_NV12 0x3231564E
++#endif
++
++/* ------------------------------------------------------------------ */
++/* Release callback for output DRM_PRIME frames                        */
++/* ------------------------------------------------------------------ */
++
++/* The output DMA-BUF fd is borrowed from the pool, not dup'd — but
++ * FFmpeg filters may hold frame refs across multiple filter_frame calls.
++ * We dup() the fd so each output frame owns its copy. This callback
++ * closes the dup'd fd when the frame ref is released. */
++static void scale_vic_drm_release(void *opaque, uint8_t *data)
++{
++    AVDRMFrameDescriptor *desc = (AVDRMFrameDescriptor *)data;
++    if (desc && desc->nb_objects > 0 && desc->objects[0].fd >= 0)
++        close(desc->objects[0].fd);
++    av_free(desc);
++}
++
++/* ------------------------------------------------------------------ */
 +/* Per-frame transform                                                 */
 +/* ------------------------------------------------------------------ */
 +
-+static int scale_vic_filter_frame(AVFilterLink *inlink, AVFrame *in)
++int scale_vic_filter_frame(AVFilterLink *inlink, AVFrame *in)
 +{
++    nvmpi_vic_dynlink_load(); /* populate this TU's static function pointers */
 +    AVFilterContext *avctx = inlink->dst;
 +    AVFilterLink *outlink  = avctx->outputs[0];
 +    ScaleVICContext *s     = avctx->priv;
@@ -3426,91 +3748,85 @@ index 0000000..ac09246
 +
 +    return ff_filter_frame(outlink, out);
 +}
+diff --git a/libavfilter/vf_scale_vic_internal.h b/libavfilter/vf_scale_vic_internal.h
+new file mode 100644
+index 0000000..5e643e7
+--- /dev/null
++++ b/libavfilter/vf_scale_vic_internal.h
+@@ -0,0 +1,73 @@
++/*
++ * vf_scale_vic_internal.h — shared declarations for the Tegra VIC
++ * hardware scale/CSC filter, split across vf_scale_vic.c (filter setup,
++ * config, options, registration) and vf_scale_vic_frame.c (per-frame
++ * processing).
++ *
++ * Copyright (c) 2024-2026 G.J.R. Timmer <gjr.timmer@gmail.com>
++ *
++ * This file is part of FFmpeg.
++ *
++ * FFmpeg is free software; you can redistribute it and/or modify it
++ * under the terms of the GNU Lesser General Public License as published
++ * by the Free Software Foundation; either version 2.1 of the License,
++ * or (at your option) any later version.
++ */
++
++#ifndef AVFILTER_VF_SCALE_VIC_INTERNAL_H
++#define AVFILTER_VF_SCALE_VIC_INTERNAL_H
++
++#include "avfilter.h"
++
++/* Runtime-loaded via dlopen — no link-time dependency on libnvmpi.so.
++ * Only VIC + surface symbols are resolved (not decoder/encoder). */
++#include "dynlink_nvmpi_vic.h"
++
++/* Maximum number of pre-allocated output DMA-BUF surfaces.  Matches
++ * the typical decoded-frame pipeline depth — enough for the encoder
++ * input queue without over-allocating scarce DMA memory. */
++#define VIC_OUTPUT_POOL_SIZE 8
 +
 +/* ------------------------------------------------------------------ */
-+/* AVFilter definition                                                 */
++/* Filter context                                                      */
 +/* ------------------------------------------------------------------ */
 +
-+#define OFFSET(x) offsetof(ScaleVICContext, x)
-+#define FLAGS AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_FILTERING_PARAM
++typedef struct ScaleVICContext {
++    const AVClass *class;
 +
-+static const AVOption scale_vic_options[] = {
-+    { "w",      "Output width",  OFFSET(width),  AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 8192, FLAGS },
-+    { "width",  "Output width",  OFFSET(width),  AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 8192, FLAGS },
-+    { "h",      "Output height", OFFSET(height), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 8192, FLAGS },
-+    { "height", "Output height", OFFSET(height), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 8192, FLAGS },
-+    { NULL }
-+};
++    /* User-specified output dimensions (AVOption) */
++    int width;
++    int height;
 +
-+AVFILTER_DEFINE_CLASS(scale_vic);
++    /* VIC engine context — allocated in init, freed in uninit.
++     * Allocated in scale_vic_init(); freed in scale_vic_uninit(). */
++    nvmpi_vic_ctx *vic_ctx;
 +
-+static const AVFilterPad scale_vic_inputs[] = {
-+    {
-+        .name         = "default",
-+        .type         = AVMEDIA_TYPE_VIDEO,
-+        .filter_frame = scale_vic_filter_frame,
-+    },
-+#if LIBAVFILTER_VERSION_MAJOR < 9
-+    { NULL }
-+#endif
-+};
++    /* Output buffer pool: pre-allocated pitch-linear NV12 DMA-BUF
++     * surfaces at the target resolution.  Ring-buffered — pool_idx
++     * cycles through the array.
++     * Allocated in scale_vic_config_output(); freed in scale_vic_uninit(). */
++    int out_fds[VIC_OUTPUT_POOL_SIZE];
++    int pool_size;
++    int pool_idx;
 +
-+static const AVFilterPad scale_vic_outputs[] = {
-+    {
-+        .name         = "default",
-+        .type         = AVMEDIA_TYPE_VIDEO,
-+        .config_props = scale_vic_config_output,
-+    },
-+#if LIBAVFILTER_VERSION_MAJOR < 9
-+    { NULL }
-+#endif
-+};
++    /* Source buffer pool: registered NV12 surfaces at input dimensions.
++     * The decoder outputs dup'd DMA-BUF fds that are NOT registered in
++     * NvBufSurface — NvBufSurfTransform rejects them.  Frame data is
++     * copied from the dup'd fd into a source pool buffer before VIC
++     * transform.  Ring-buffered like the output pool.
++     * Allocated in scale_vic_config_output(); freed in scale_vic_uninit(). */
++    int in_fds[VIC_OUTPUT_POOL_SIZE];
++    int in_pool_size;
++    int in_pool_idx;
 +
-+#if LIBAVFILTER_VERSION_MAJOR >= 11
-+/* FFmpeg 8.0+: FFFilter wraps AVFilter in .p sub-struct.
-+ * name/description/priv_class live under .p; init/uninit/priv_size
-+ * are direct FFFilter fields. */
-+const FFFilter ff_vf_scale_vic = {
-+    .p.name        = "scale_vic",
-+    .p.description = NULL_IF_CONFIG_SMALL("Tegra VIC hardware scaler (DRM_PRIME)"),
-+    .p.priv_class  = &scale_vic_class,
++    /* Track whether dynlink was loaded */
++    int dynlink_loaded;
++} ScaleVICContext;
 +
-+    .init      = scale_vic_init,
-+    .uninit    = scale_vic_uninit,
-+    .priv_size = sizeof(ScaleVICContext),
++/* Per-frame processing entry point — defined in vf_scale_vic_frame.c,
++ * wired into scale_vic_inputs[].filter_frame in vf_scale_vic.c.  External
++ * linkage (not static) because it is referenced across translation units. */
++int scale_vic_filter_frame(AVFilterLink *inlink, AVFrame *in);
 +
-+    FILTER_INPUTS(scale_vic_inputs),
-+    FILTER_OUTPUTS(scale_vic_outputs),
-+    FILTER_SINGLE_PIXFMT(AV_PIX_FMT_DRM_PRIME),
-+
-+    .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
-+};
-+#else
-+const AVFilter ff_vf_scale_vic = {
-+    .name        = "scale_vic",
-+    .description = NULL_IF_CONFIG_SMALL("Tegra VIC hardware scaler (DRM_PRIME)"),
-+
-+    .init   = scale_vic_init,
-+    .uninit = scale_vic_uninit,
-+
-+    .priv_size  = sizeof(ScaleVICContext),
-+    .priv_class = &scale_vic_class,
-+
-+#if LIBAVFILTER_VERSION_MAJOR >= 9
-+    /* FFmpeg 6.0+: use FILTER_INPUTS/OUTPUTS macros */
-+    FILTER_INPUTS(scale_vic_inputs),
-+    FILTER_OUTPUTS(scale_vic_outputs),
-+    FILTER_SINGLE_PIXFMT(AV_PIX_FMT_DRM_PRIME),
-+#else
-+    /* FFmpeg 4.x/5.x: direct field assignment */
-+    .inputs  = scale_vic_inputs,
-+    .outputs = scale_vic_outputs,
-+    .query_formats = scale_vic_query_formats,
-+#endif
-+
-+    .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
-+};
-+#endif
++#endif /* AVFILTER_VF_SCALE_VIC_INTERNAL_H */
 diff --git a/libavutil/Makefile b/libavutil/Makefile
 index c524189..9f56d5e 100644
 --- a/libavutil/Makefile

@@ -9,7 +9,7 @@
 # RTSP, without needing an RTSP server.
 set -eu
 # shellcheck source=test/gen-samples.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gen-samples.sh"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../gen-samples.sh"
 
 variant="${JETSON_VARIANT:-unknown}"
 echo "=== hw-rtp-sdp on variant: ${variant} ==="

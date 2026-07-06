@@ -21,7 +21,7 @@
 # shellcheck source=test/gen-samples.sh
 set -eu
 
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gen-samples.sh"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../gen-samples.sh"
 
 variant="${JETSON_VARIANT:-unknown}"
 echo "=== hw-decoder-teardown on variant: ${variant} ==="

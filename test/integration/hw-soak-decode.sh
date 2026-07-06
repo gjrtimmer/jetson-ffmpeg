@@ -21,7 +21,7 @@
 #   SOAK_DRIFT_MAX  — max allowed drift: late_avg - early_avg (default: 15)
 set -eu
 # shellcheck source=test/gen-samples.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gen-samples.sh"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../gen-samples.sh"
 
 variant="${JETSON_VARIANT:-unknown}"
 echo "=== hw-soak-decode on variant: ${variant} ==="

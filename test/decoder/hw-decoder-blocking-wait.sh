@@ -3,7 +3,7 @@
 # true blocking wait in nvmpi_decoder_get_frame() (issue #10).
 set -eu
 # shellcheck source=test/gen-samples.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/gen-samples.sh"
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../gen-samples.sh"
 
 variant="${JETSON_VARIANT:-unknown}"
 echo "=== hw-decoder-blocking-wait on variant: ${variant} ==="
