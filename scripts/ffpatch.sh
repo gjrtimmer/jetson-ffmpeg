@@ -202,14 +202,14 @@ function path_ff_libavcodec_Makefile ()
 #add nvmpi avc/h264 encoder and decoder
 if ! grep -q 'CONFIG_H264_NVMPI_DECODER' "$BKP_FILE_LIBAVCODEC_MAKEFILE"; then
 	cp "$BKP_FILE_LIBAVCODEC_MAKEFILE" "$BKP_FILE_LIBAVCODEC_MAKEFILE.1"
-	sed -i '/OBJS-\$(CONFIG_H264_NVENC_ENCODER)/i OBJS-\$(CONFIG_H264_NVMPI_DECODER)      += nvmpi_dec.o\nOBJS-$(CONFIG_H264_NVMPI_ENCODER)      += nvmpi_enc.o' "$BKP_FILE_LIBAVCODEC_MAKEFILE"
+	sed -i '/OBJS-\$(CONFIG_H264_NVENC_ENCODER)/i OBJS-\$(CONFIG_H264_NVMPI_DECODER)      += nvmpi_dec.o\nOBJS-$(CONFIG_H264_NVMPI_ENCODER)      += nvmpi_enc.o nvmpi_enc_runtime.o' "$BKP_FILE_LIBAVCODEC_MAKEFILE"
 	if cmp "$BKP_FILE_LIBAVCODEC_MAKEFILE" "$BKP_FILE_LIBAVCODEC_MAKEFILE.1"; then return 1; fi;
 fi
 
 #add nvmpi hevc/h265 encoder and decoder
 if ! grep -q 'CONFIG_HEVC_NVMPI_DECODER' "$BKP_FILE_LIBAVCODEC_MAKEFILE"; then
 	cp "$BKP_FILE_LIBAVCODEC_MAKEFILE" "$BKP_FILE_LIBAVCODEC_MAKEFILE.1"
-	sed -i '/OBJS-\$(CONFIG_HEVC_NVENC_ENCODER)/i OBJS-\$(CONFIG_HEVC_NVMPI_DECODER)      += nvmpi_dec.o\nOBJS-$(CONFIG_HEVC_NVMPI_ENCODER)      += nvmpi_enc.o' "$BKP_FILE_LIBAVCODEC_MAKEFILE"
+	sed -i '/OBJS-\$(CONFIG_HEVC_NVENC_ENCODER)/i OBJS-\$(CONFIG_HEVC_NVMPI_DECODER)      += nvmpi_dec.o\nOBJS-$(CONFIG_HEVC_NVMPI_ENCODER)      += nvmpi_enc.o nvmpi_enc_runtime.o' "$BKP_FILE_LIBAVCODEC_MAKEFILE"
 	if cmp "$BKP_FILE_LIBAVCODEC_MAKEFILE" "$BKP_FILE_LIBAVCODEC_MAKEFILE.1"; then return 1; fi;
 fi
 
@@ -244,7 +244,7 @@ fi
 #add nvmpi mjpeg decoder
 if ! grep -q 'CONFIG_MJPEG_NVMPI_DECODER' "$BKP_FILE_LIBAVCODEC_MAKEFILE"; then
 	cp "$BKP_FILE_LIBAVCODEC_MAKEFILE" "$BKP_FILE_LIBAVCODEC_MAKEFILE.1"
-	sed -i '/OBJS-\$(CONFIG_MJPEG_CUVID_DECODER)/i OBJS-\$(CONFIG_MJPEG_NVMPI_DECODER)      += nvmpi_dec.o' "$BKP_FILE_LIBAVCODEC_MAKEFILE"
+	sed -i '/OBJS-\$(CONFIG_MJPEG_CUVID_DECODER)/i OBJS-\$(CONFIG_MJPEG_NVMPI_DECODER)      += nvmpi_dec_mjpeg.o' "$BKP_FILE_LIBAVCODEC_MAKEFILE"
 	if cmp "$BKP_FILE_LIBAVCODEC_MAKEFILE" "$BKP_FILE_LIBAVCODEC_MAKEFILE.1"; then return 1; fi;
 fi
 
@@ -410,11 +410,13 @@ if ! grep -q 'ff_vf_scale_vic' "$BKP_FILE_LIBAVFILTER_ALLFILTERSC"; then
 	if cmp "$BKP_FILE_LIBAVFILTER_ALLFILTERSC" "$BKP_FILE_LIBAVFILTER_ALLFILTERSC.1"; then return 1; fi;
 fi
 
-#add OBJS line for vf_scale_vic.o in libavfilter/Makefile.
-#insert after SCALE_VAAPI_FILTER line.
+#add OBJS lines for vf_scale_vic.o and vf_scale_vic_frame.o in libavfilter/Makefile.
+#insert after SCALE_VAAPI_FILTER line. Split into setup (vf_scale_vic.c) and
+#per-frame processing (vf_scale_vic_frame.c) translation units — see issue #105.
 if ! grep -q 'SCALE_VIC_FILTER' "$BKP_FILE_LIBAVFILTER_MAKEFILE"; then
 	cp "$BKP_FILE_LIBAVFILTER_MAKEFILE" "$BKP_FILE_LIBAVFILTER_MAKEFILE.1"
 	sed -i '/OBJS-\$(CONFIG_SCALE_VAAPI_FILTER)/a OBJS-$(CONFIG_SCALE_VIC_FILTER)              += vf_scale_vic.o' "$BKP_FILE_LIBAVFILTER_MAKEFILE"
+	sed -i '/OBJS-\$(CONFIG_SCALE_VIC_FILTER).*vf_scale_vic\.o/a OBJS-$(CONFIG_SCALE_VIC_FILTER)              += vf_scale_vic_frame.o' "$BKP_FILE_LIBAVFILTER_MAKEFILE"
 	if cmp "$BKP_FILE_LIBAVFILTER_MAKEFILE" "$BKP_FILE_LIBAVFILTER_MAKEFILE.1"; then return 1; fi;
 fi
 
@@ -441,7 +443,10 @@ cp "$BKP_FILE_LIBAVFILTER_ALLFILTERSC" "$FF_FILE_LIBAVFILTER_ALLFILTERSC"
 #copy nvmpi enc, dec, and dynlink files to ffmpeg libavcodec dir
 cp "${REPO_ROOT}/ffmpeg/dev/common/libavcodec/dynlink_nvmpi.h" ${FF_DIR_LIBAVCODEC}"/dynlink_nvmpi.h"
 cp "${REPO_ROOT}/ffmpeg/dev/common/libavcodec/nvmpi_dec.c" ${FF_DIR_LIBAVCODEC}"/nvmpi_dec.c"
+cp "${REPO_ROOT}/ffmpeg/dev/common/libavcodec/nvmpi_dec_mjpeg.c" ${FF_DIR_LIBAVCODEC}"/nvmpi_dec_mjpeg.c"
 cp "${REPO_ROOT}/ffmpeg/dev/common/libavcodec/nvmpi_enc.c" ${FF_DIR_LIBAVCODEC}"/nvmpi_enc.c"
+cp "${REPO_ROOT}/ffmpeg/dev/common/libavcodec/nvmpi_enc_runtime.c" ${FF_DIR_LIBAVCODEC}"/nvmpi_enc_runtime.c"
+cp "${REPO_ROOT}/ffmpeg/dev/common/libavcodec/nvmpi_enc_ff_internal.h" ${FF_DIR_LIBAVCODEC}"/nvmpi_enc_ff_internal.h"
 cp "${REPO_ROOT}/ffmpeg/dev/common/libavcodec/nvmpi_enc_jpeg.c" ${FF_DIR_LIBAVCODEC}"/nvmpi_enc_jpeg.c"
 
 #copy hwcontext_nvmpi files to ffmpeg libavutil dir
@@ -451,6 +456,8 @@ cp "${REPO_ROOT}/ffmpeg/dev/common/libavutil/dynlink_nvmpi_cuda.h" ${FF_DIR_LIBA
 
 #copy scale_vic filter files to ffmpeg libavfilter dir
 cp "${REPO_ROOT}/ffmpeg/dev/common/libavfilter/vf_scale_vic.c" ${FF_DIR_LIBAVFILTER}"/vf_scale_vic.c"
+cp "${REPO_ROOT}/ffmpeg/dev/common/libavfilter/vf_scale_vic_frame.c" ${FF_DIR_LIBAVFILTER}"/vf_scale_vic_frame.c"
+cp "${REPO_ROOT}/ffmpeg/dev/common/libavfilter/vf_scale_vic_internal.h" ${FF_DIR_LIBAVFILTER}"/vf_scale_vic_internal.h"
 cp "${REPO_ROOT}/ffmpeg/dev/common/libavfilter/dynlink_nvmpi_vic.h" ${FF_DIR_LIBAVFILTER}"/dynlink_nvmpi_vic.h"
 
 echo "Success!"
