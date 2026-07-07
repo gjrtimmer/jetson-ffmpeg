@@ -213,10 +213,10 @@ index 5136a56..b60caf4 100644
  extern const FFCodec ff_vqa_decoder;
 diff --git a/libavcodec/dynlink_nvmpi.h b/libavcodec/dynlink_nvmpi.h
 new file mode 100644
-index 0000000..7f18a44
+index 0000000..3d065b4
 --- /dev/null
 +++ b/libavcodec/dynlink_nvmpi.h
-@@ -0,0 +1,369 @@
+@@ -0,0 +1,374 @@
 +/*
 + * dynlink_nvmpi.h -- Runtime lazy-loading of libnvmpi via dlopen/dlsym.
 + *
@@ -268,6 +268,10 @@ index 0000000..7f18a44
 +/* Maximum encoded-frame buffer size in bytes.  Shared with nvmpi.h;
 + * used by the encoder wrapper for packet pool allocation. */
 +#define NVMPI_ENC_CHUNK_SIZE 10*1024*1024
++
++/* Encoder would block waiting for a free OUTPUT-plane buffer; caller should
++ * drain output packets (receive_packet) and retry. Matches Linux EAGAIN. */
++#define NVMPI_ERR_EAGAIN (-11)
 +
 +/* Opaque context handle.  Decoder and encoder each define their own
 + * internal struct; a handle must only be passed back to the API family
@@ -330,6 +334,7 @@ index 0000000..7f18a44
 +    char enable_cabac;
 +    char insert_aud;
 +    int use_dmabuf;
++    int nonblocking;
 +} nvEncParam;
 +
 +/* Decoder creation parameters. */
@@ -1659,10 +1664,10 @@ index 0000000..51bb3b7
 +};
 diff --git a/libavcodec/nvmpi_enc.c b/libavcodec/nvmpi_enc.c
 new file mode 100644
-index 0000000..51fafe7
+index 0000000..a52572a
 --- /dev/null
 +++ b/libavcodec/nvmpi_enc.c
-@@ -0,0 +1,482 @@
+@@ -0,0 +1,484 @@
 +/*
 + * nvmpi_enc.c — FFmpeg encoder wrapper for libnvmpi (layer 2 of
 + * jetson-ffmpeg, the FFmpeg integration layer): codec init/close,
@@ -1858,6 +1863,7 @@ index 0000000..51fafe7
 +	param.enable_cabac=nvmpi_context->cabac;
 +	param.enableLossless=nvmpi_context->lossless;
 +	param.wait_timeout=nvmpi_context->wait_timeout;
++	param.nonblocking=nvmpi_context->nonblocking;
 +
 +	//Raw input layout: NV12 routes to libnvmpi's V4L2 NV12M path, otherwise
 +	//planar YUV420. Full-range (YUVJ420P / MJPEG) input is intentionally NOT
@@ -2099,6 +2105,7 @@ index 0000000..51fafe7
 +	{ "cabac", "Enable CABAC entropy coding (H.264 only; ~10-15%% better compression than CAVLC)", OFFSET(cabac), AV_OPT_TYPE_BOOL, {.i64 = 0 }, 0, 1, VE, "cabac" },
 +	{ "lossless", "Enable lossless encoding (H.264 only, constant QP 0 + High 4:4:4 Predictive profile)", OFFSET(lossless), AV_OPT_TYPE_BOOL, {.i64 = 0 }, 0, 1, VE, "lossless" },
 +	{ "wait_timeout", "Blocking wait timeout in milliseconds for low-delay mode (0 = default 500ms)", OFFSET(wait_timeout), AV_OPT_TYPE_INT, {.i64 = OPT_wait_timeout_AUTO }, 0, OPT_wait_timeout_MAX, VE, "wait_timeout" },
++	{ "nonblocking", "Non-blocking encode mode: send_frame returns EAGAIN instead of blocking when no output-plane buffer is available", OFFSET(nonblocking), AV_OPT_TYPE_BOOL, {.i64 = 0 }, 0, 1, VE, "nonblocking" },
 +	{ NULL }
 +};
 +
@@ -2147,10 +2154,10 @@ index 0000000..51fafe7
 +NVMPI_ENC(hevc, "HEVC", AV_CODEC_ID_HEVC);
 diff --git a/libavcodec/nvmpi_enc_ff_internal.h b/libavcodec/nvmpi_enc_ff_internal.h
 new file mode 100644
-index 0000000..6728e7f
+index 0000000..e6bca98
 --- /dev/null
 +++ b/libavcodec/nvmpi_enc_ff_internal.h
-@@ -0,0 +1,64 @@
+@@ -0,0 +1,65 @@
 +#pragma once
 +
 +/*
@@ -2188,6 +2195,7 @@ index 0000000..6728e7f
 +	int cabac;                  //enable CABAC entropy coding (H.264 only)
 +	int lossless;               //enable lossless encoding (H.264 only, QP 0 + High 4:4:4)
 +	int wait_timeout;           //blocking-wait ceiling in ms (0 = default 500ms)
++	int nonblocking;            //non-blocking mode: put_frame returns EAGAIN instead of blocking
 +	int encoder_flushing;       //set after EOS was sent to libnvmpi
 +	int dmabuf_input;           //set when pix_fmt is DRM_PRIME (mmap+CPU-read path)
 +	int64_t last_bitrate;       //track last-set bitrate for dynamic change detection
@@ -2498,10 +2506,10 @@ index 0000000..7814ed2
 +};
 diff --git a/libavcodec/nvmpi_enc_runtime.c b/libavcodec/nvmpi_enc_runtime.c
 new file mode 100644
-index 0000000..ab702b4
+index 0000000..cd1e348
 --- /dev/null
 +++ b/libavcodec/nvmpi_enc_runtime.c
-@@ -0,0 +1,474 @@
+@@ -0,0 +1,479 @@
 +/*
 + * nvmpi_enc_runtime.c — FFmpeg encoder wrapper for libnvmpi (layer 2 of
 + * jetson-ffmpeg, the FFmpeg integration layer): the encode hot path
@@ -2742,9 +2750,10 @@ index 0000000..ab702b4
 +
 +//send_frame half of the encode API: wrap the AVFrame's planes in an
 +//nvFrame (no copy here — libnvmpi memcpy's into its V4L2 buffer inside
-+//put_frame, which may block briefly) and rescale pts to microseconds.
-+//frame==NULL initiates flushing (EOS to libnvmpi). Called internally by
-+//ff_nvmpi_receive_packet_async().
++//put_frame) and rescale pts to microseconds. In blocking mode (default),
++//put_frame may block briefly; in non-blocking mode, returns AVERROR(EAGAIN)
++//when no OUTPUT-plane buffer is available. frame==NULL initiates flushing
++//(EOS to libnvmpi). Called internally by ff_nvmpi_receive_packet_async().
 +static int ff_nvmpi_send_frame(AVCodecContext *avctx,const AVFrame *frame)
 +{
 +	nvmpiEncodeContext * nvmpi_context = avctx->priv_data;
@@ -2837,6 +2846,8 @@ index 0000000..ab702b4
 +			sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ;
 +			ioctl(drm_fd, DMA_BUF_IOCTL_SYNC, &sync);
 +
++			/* Non-blocking mode: map libnvmpi EAGAIN to FFmpeg EAGAIN */
++			if (res == NVMPI_ERR_EAGAIN) return AVERROR(EAGAIN);
 +			return res < 0 ? res : 0;
 +		}
 +
@@ -2858,6 +2869,8 @@ index 0000000..ab702b4
 +
 +		res=nvmpi_encoder_put_frame(nvmpi_context->ctx,&_nvframe);
 +
++		/* Non-blocking mode: map libnvmpi EAGAIN to FFmpeg EAGAIN */
++		if (res == NVMPI_ERR_EAGAIN) return AVERROR(EAGAIN);
 +		if(res<0)
 +			return res;
 +	}

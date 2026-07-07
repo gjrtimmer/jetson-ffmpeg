@@ -238,9 +238,10 @@ int nvmpi_encode_gen_global_header_extradata(AVCodecContext *avctx, nvEncParam *
 
 //send_frame half of the encode API: wrap the AVFrame's planes in an
 //nvFrame (no copy here — libnvmpi memcpy's into its V4L2 buffer inside
-//put_frame, which may block briefly) and rescale pts to microseconds.
-//frame==NULL initiates flushing (EOS to libnvmpi). Called internally by
-//ff_nvmpi_receive_packet_async().
+//put_frame) and rescale pts to microseconds. In blocking mode (default),
+//put_frame may block briefly; in non-blocking mode, returns AVERROR(EAGAIN)
+//when no OUTPUT-plane buffer is available. frame==NULL initiates flushing
+//(EOS to libnvmpi). Called internally by ff_nvmpi_receive_packet_async().
 static int ff_nvmpi_send_frame(AVCodecContext *avctx,const AVFrame *frame)
 {
 	nvmpiEncodeContext * nvmpi_context = avctx->priv_data;
@@ -333,6 +334,8 @@ static int ff_nvmpi_send_frame(AVCodecContext *avctx,const AVFrame *frame)
 			sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ;
 			ioctl(drm_fd, DMA_BUF_IOCTL_SYNC, &sync);
 
+			/* Non-blocking mode: map libnvmpi EAGAIN to FFmpeg EAGAIN */
+			if (res == NVMPI_ERR_EAGAIN) return AVERROR(EAGAIN);
 			return res < 0 ? res : 0;
 		}
 
@@ -354,6 +357,8 @@ static int ff_nvmpi_send_frame(AVCodecContext *avctx,const AVFrame *frame)
 
 		res=nvmpi_encoder_put_frame(nvmpi_context->ctx,&_nvframe);
 
+		/* Non-blocking mode: map libnvmpi EAGAIN to FFmpeg EAGAIN */
+		if (res == NVMPI_ERR_EAGAIN) return AVERROR(EAGAIN);
 		if(res<0)
 			return res;
 	}

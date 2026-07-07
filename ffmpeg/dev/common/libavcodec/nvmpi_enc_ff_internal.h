@@ -35,6 +35,7 @@ typedef struct {
 	int cabac;                  //enable CABAC entropy coding (H.264 only)
 	int lossless;               //enable lossless encoding (H.264 only, QP 0 + High 4:4:4)
 	int wait_timeout;           //blocking-wait ceiling in ms (0 = default 500ms)
+	int nonblocking;            //non-blocking mode: put_frame returns EAGAIN instead of blocking
 	int encoder_flushing;       //set after EOS was sent to libnvmpi
 	int dmabuf_input;           //set when pix_fmt is DRM_PRIME (mmap+CPU-read path)
 	int64_t last_bitrate;       //track last-set bitrate for dynamic change detection

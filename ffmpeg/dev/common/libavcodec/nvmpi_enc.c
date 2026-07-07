@@ -193,6 +193,7 @@ static av_cold int nvmpi_encode_init(AVCodecContext *avctx)
 	param.enable_cabac=nvmpi_context->cabac;
 	param.enableLossless=nvmpi_context->lossless;
 	param.wait_timeout=nvmpi_context->wait_timeout;
+	param.nonblocking=nvmpi_context->nonblocking;
 
 	//Raw input layout: NV12 routes to libnvmpi's V4L2 NV12M path, otherwise
 	//planar YUV420. Full-range (YUVJ420P / MJPEG) input is intentionally NOT
@@ -434,6 +435,7 @@ static const AVOption options[] = {
 	{ "cabac", "Enable CABAC entropy coding (H.264 only; ~10-15%% better compression than CAVLC)", OFFSET(cabac), AV_OPT_TYPE_BOOL, {.i64 = 0 }, 0, 1, VE, "cabac" },
 	{ "lossless", "Enable lossless encoding (H.264 only, constant QP 0 + High 4:4:4 Predictive profile)", OFFSET(lossless), AV_OPT_TYPE_BOOL, {.i64 = 0 }, 0, 1, VE, "lossless" },
 	{ "wait_timeout", "Blocking wait timeout in milliseconds for low-delay mode (0 = default 500ms)", OFFSET(wait_timeout), AV_OPT_TYPE_INT, {.i64 = OPT_wait_timeout_AUTO }, 0, OPT_wait_timeout_MAX, VE, "wait_timeout" },
+	{ "nonblocking", "Non-blocking encode mode: send_frame returns EAGAIN instead of blocking when no output-plane buffer is available", OFFSET(nonblocking), AV_OPT_TYPE_BOOL, {.i64 = 0 }, 0, 1, VE, "nonblocking" },
 	{ NULL }
 };
 
