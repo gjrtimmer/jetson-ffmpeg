@@ -50,6 +50,10 @@
  * used by the encoder wrapper for packet pool allocation. */
 #define NVMPI_ENC_CHUNK_SIZE 10*1024*1024
 
+/* Encoder would block waiting for a free OUTPUT-plane buffer; caller should
+ * drain output packets (receive_packet) and retry. Matches Linux EAGAIN. */
+#define NVMPI_ERR_EAGAIN (-11)
+
 /* Opaque context handle.  Decoder and encoder each define their own
  * internal struct; a handle must only be passed back to the API family
  * (decoder_* or encoder_*) that created it. */
@@ -111,6 +115,7 @@ typedef struct _NVENCPARAM {
     char enable_cabac;
     char insert_aud;
     int use_dmabuf;
+    int nonblocking;
 } nvEncParam;
 
 /* Decoder creation parameters. */

@@ -147,8 +147,9 @@ int nvmpi_encoder_flush(nvmpictx* ctx)
 	int ret;
 
 	/* 1. Stop DQ thread — must complete before STREAMOFF to avoid
-	 *    callbacks on torn-down queues. */
-	if (ctx->blocking_mode && ctx->dq_thread_started) {
+	 *    callbacks on torn-down queues. DQ thread runs in both blocking
+	 *    and non-blocking modes (always started since non-blocking support). */
+	if (ctx->dq_thread_started) {
 		ctx->enc->capture_plane.stopDQThread();
 		ctx->enc->capture_plane.waitForDQThread(1000);
 		ctx->dq_thread_started = false;
@@ -204,16 +205,15 @@ int nvmpi_encoder_flush(nvmpictx* ctx)
 		}
 	}
 
-	/* 7. Restart DQ thread — resume capture-plane processing. */
-	if (ctx->blocking_mode) {
-		ctx->enc->capture_plane.setDQThreadCallback(encoder_capture_plane_dq_callback);
-		ret = ctx->enc->capture_plane.startDQThread(ctx);
-		if (ret < 0) {
-			NVMPI_LOG(NVMPI_LOG_ERROR, "Could not restart DQ thread after flush");
-			return ret;
-		}
-		ctx->dq_thread_started = true;
+	/* 7. Restart DQ thread — resume capture-plane processing.
+	 *    DQ thread runs in both blocking and non-blocking modes. */
+	ctx->enc->capture_plane.setDQThreadCallback(encoder_capture_plane_dq_callback);
+	ret = ctx->enc->capture_plane.startDQThread(ctx);
+	if (ret < 0) {
+		NVMPI_LOG(NVMPI_LOG_ERROR, "Could not restart DQ thread after flush");
+		return ret;
 	}
+	ctx->dq_thread_started = true;
 
 	/* 8. Reset output-plane buffer index — next put_frame starts
 	 *    from buffer 0 (first N frames use getNthBuffer directly). */
@@ -236,18 +236,14 @@ int nvmpi_encoder_close(nvmpictx* ctx)
 
 	/* Guard: only stop/join the DQ thread if it was actually started.
 	 * A half-initialized encoder (create failed after STREAMON but before
-	 * startDQThread) or a non-blocking-mode encoder never starts the DQ
-	 * thread. Calling stopDQThread/waitForDQThread on an un-started
-	 * thread invokes pthread_join on an uninitialized handle → UB/crash. */
-	if(ctx->blocking_mode && ctx->dq_thread_started)
+	 * startDQThread) never starts the DQ thread. Calling
+	 * stopDQThread/waitForDQThread on an un-started thread invokes
+	 * pthread_join on an uninitialized handle → UB/crash.
+	 * DQ thread runs in both blocking and non-blocking modes. */
+	if (ctx->dq_thread_started)
 	{
 		ctx->enc->capture_plane.stopDQThread();
 		ctx->enc->capture_plane.waitForDQThread(1000);
-	}
-	else
-	{
-		//sem_destroy(&ctx.pollthread_sema);
-		//sem_destroy(&ctx.encoderthread_sema);
 	}
 
 	/* Cleanup internal DMABUF surfaces. Applies to both compile-time

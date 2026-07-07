@@ -28,6 +28,10 @@
 //this are dropped with an error instead of overflowing the packet buffer.
 #define NVMPI_ENC_CHUNK_SIZE 10*1024*1024
 
+/* Encoder would block waiting for a free OUTPUT-plane buffer; caller should
+ * drain output packets (receive_packet) and retry. Matches Linux EAGAIN. */
+#define NVMPI_ERR_EAGAIN (-11)
+
 //Opaque context handle. Note: the decoder and encoder each define their own
 //(different) struct nvmpictx internally; a handle must only be passed back
 //to the API family (decoder_* or encoder_*) that created it.
@@ -97,6 +101,9 @@ typedef struct _NVENCPARAM{
 	char insert_aud;               //non-zero: insert Access Unit Delimiter NALs
 	int use_dmabuf;                //non-zero: encoder OUTPUT plane uses V4L2_MEMORY_DMABUF,
 	                               //enabling zero-copy frame input via nvmpi_encoder_put_frame_fd()
+	int nonblocking;               //non-zero: put_frame/put_frame_fd return NVMPI_ERR_EAGAIN
+	                               //instead of blocking when no OUTPUT-plane buffer is available.
+	                               //Default 0 = blocking (backward compatible).
 } nvEncParam;
 
 //Decoder creation parameters, consumed once by nvmpi_create_decoder().
@@ -240,9 +247,12 @@ extern "C" {
 	nvmpictx* nvmpi_create_encoder(nvEncParam* param);
 	//add frame to encoder
 	//Copies the frame planes into a V4L2 OUTPUT-plane buffer and queues it.
-	//May block waiting for a free buffer. frame==NULL sends EOS and puts the
-	//encoder into flushing mode. Returns 0 on success, negative on error or
-	//if already flushing.
+	//In blocking mode (default): blocks waiting for a free buffer.
+	//In non-blocking mode (nonblocking=1): returns NVMPI_ERR_EAGAIN when no
+	//OUTPUT-plane buffer is available — caller should drain encoded packets
+	//via get_packet and retry. frame==NULL sends EOS and puts the encoder
+	//into flushing mode. Returns 0 on success, NVMPI_ERR_EAGAIN when
+	//non-blocking and no buffer available, negative on error or if flushing.
 	int nvmpi_encoder_put_frame(nvmpictx* ctx, nvFrame* frame);
 	//get filled packet from encoder
 	//When wait=false: non-blocking, returns -1 immediately if no packet ready.
@@ -309,7 +319,8 @@ extern "C" {
 	//dimensions. The encoder accesses the buffer directly via
 	//V4L2_MEMORY_DMABUF — no CPU memcpy. Requires use_dmabuf=1 in
 	//nvEncParam at encoder creation time. dmabuf_fd==−1 signals EOS.
-	//Returns 0 on success, negative on error or if already flushing.
+	//Returns 0 on success, NVMPI_ERR_EAGAIN when non-blocking and no
+	//buffer available, negative on error or if already flushing.
 	int nvmpi_encoder_put_frame_fd(nvmpictx* ctx,
 		int dmabuf_fd, int width, int height, int pitch,
 		int64_t timestamp);

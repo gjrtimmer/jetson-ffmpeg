@@ -68,7 +68,8 @@ struct nvmpictx
 	uint32_t poc_type;             //H.264 picture order count type (0=default, 2=low-latency)
 	bool enable_extended_colorformat;
 	bool enableLossless;           //constant QP 0 + High 4:4:4 profile (H.264)
-	bool blocking_mode;            //true: use NvVideoEncoder's DQ thread (only mode implemented)
+	bool blocking_mode;            //true (default): put_frame blocks waiting for OUTPUT-plane
+	                               //buffers. false: put_frame returns NVMPI_ERR_EAGAIN instead.
 	bool dmabuf_external{false};   //true: OUTPUT plane uses V4L2_MEMORY_DMABUF from
 	                               //external DMA-BUF fds (zero-copy encoder input via
 	                               //nvmpi_encoder_put_frame_fd). Set at creation time
