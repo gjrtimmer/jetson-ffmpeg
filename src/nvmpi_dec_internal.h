@@ -85,7 +85,7 @@ struct nvmpictx
 	bool disable_dpb{false};            //skip DPB reordering (low-latency, B-frame-free only)
 	int wait_timeout_ms{500};           //blocking dequeue ceiling (ms); set via AVOption
 	//producer/consumer pool: capture thread fills, user thread consumes
-	NVMPI_bufPool<nvmpi_frame_buffer*>* framePool;
+	NVMPI_bufPool<nvmpi_frame_buffer*>* framePool{nullptr};
 	/* Shared flag: true while framePool is valid. Ref-counted via
 	 * shared_ptr so DRM_PRIME frame release callbacks can safely check
 	 * it after nvmpi_decoder_close deletes the pool. Without this,

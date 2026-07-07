@@ -269,6 +269,26 @@ int nvmpi_encoder_close(nvmpictx* ctx)
 	/* unique_ptr: release the NvVideoEncoder after the DQ thread is
 	 * joined and all V4L2 buffers are unmapped. */
 	ctx->enc.reset();
+
+	/* Safety-net drain: discard any packets still in the pool queues.
+	 * The normal path is the FFmpeg wrapper calling nvmpienc_deinitPktPool()
+	 * BEFORE this function, which drains and frees every nvPacket properly.
+	 * If the caller forgot to drain, these packets leak (libnvmpi cannot
+	 * call av_packet_free — no libavcodec linkage). The drain empties the
+	 * queues so the NVMPI_bufPool destructor does not warn, and logs the
+	 * count so the leak is diagnosable. */
+	if (ctx->pktPool) {
+		int leaked = 0;
+		nvPacket* discard;
+		while ((discard = ctx->pktPool->dqEmptyBuf()) != NULL)
+			leaked++;
+		while ((discard = ctx->pktPool->dqFilledBuf()) != NULL)
+			leaked++;
+		if (leaked > 0)
+			NVMPI_LOG(NVMPI_LOG_WARN,
+				  "nvmpi_encoder_close: discarded %d undrained packets "
+				  "(caller should drain before close)", leaked);
+	}
 	delete ctx->pktPool;
 	delete ctx;
 	return 0;

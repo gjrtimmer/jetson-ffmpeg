@@ -112,11 +112,28 @@ void nvmpictx::initDecoderCapturePlane(v4l2_format &format)
 	//NvUtils path: allocate all buffers in one call, then resolve the
 	//NvBufSurface view of each fd for use with NvBufSurfTransform.
 	ret = NvBufSurf::NvAllocate(&cParams, numberCaptureBuffers, dmaBufferFileDescriptor);
-	TEST_ERROR(ret < 0, "Failed to create buffers", ret);
+	if (ret < 0) {
+		NVMPI_LOG(NVMPI_LOG_ERROR, "Failed to create capture-plane buffers (code=%d)", ret);
+		/* NvAllocate is all-or-nothing — no partial cleanup needed. */
+		numberCaptureBuffers = 0;
+		return;
+	}
 	for (int index = 0; index < numberCaptureBuffers; index++)
 	{
 		ret = NvBufSurfaceFromFd(dmaBufferFileDescriptor[index], (void**)(&(dmaBufferSurface[index])));
-		TEST_ERROR(ret < 0, "Failed to get surface for buffer", ret);
+		if (ret < 0) {
+			NVMPI_LOG(NVMPI_LOG_ERROR,
+				  "Failed to get surface for buffer %d (code=%d); "
+				  "cleaning up %d allocated fds", index, ret, numberCaptureBuffers);
+			/* Destroy all batch-allocated fds — NvAllocate succeeded so
+			 * all numberCaptureBuffers fds are valid. */
+			for (int j = 0; j < numberCaptureBuffers; j++) {
+				NvBufferDestroy(dmaBufferFileDescriptor[j]);
+				dmaBufferFileDescriptor[j] = -1;
+			}
+			numberCaptureBuffers = 0;
+			return;
+		}
 	}
 #else
 	//legacy nvbuf_utils path: allocate the buffers one by one
@@ -126,7 +143,18 @@ void nvmpictx::initDecoderCapturePlane(v4l2_format &format)
 	for (int index = 0; index < numberCaptureBuffers; index++)
 	{
 		ret = NvBufferCreateEx(&dmaBufferFileDescriptor[index], &cParams);
-		TEST_ERROR(ret < 0, "Failed to create buffers", ret);
+		if (ret < 0) {
+			NVMPI_LOG(NVMPI_LOG_ERROR,
+				  "Failed to create buffer %d/%d (code=%d); "
+				  "cleaning up %d allocated fds", index, numberCaptureBuffers, ret, index);
+			/* Destroy fds allocated so far (0..index-1). */
+			for (int j = 0; j < index; j++) {
+				NvBufferDestroy(dmaBufferFileDescriptor[j]);
+				dmaBufferFileDescriptor[j] = -1;
+			}
+			numberCaptureBuffers = 0;
+			return;
+		}
 	}
 #endif
 

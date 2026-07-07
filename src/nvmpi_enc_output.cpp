@@ -142,7 +142,18 @@ int setup_output_dmabuf(nvmpictx *ctx, uint32_t num_buffers )
         ret = NvBufSurf::NvAllocate(&cParams, 1, &fd);
         if(ret < 0)
         {
-            NVMPI_LOG(NVMPI_LOG_ERROR, "failed to create NvBuffer");
+            NVMPI_LOG(NVMPI_LOG_ERROR,
+                  "failed to create NvBuffer at index %u/%u; "
+                  "rolling back %u already-allocated fds",
+                  i, ctx->enc->output_plane.getNumBuffers(), i);
+            /* Rollback: destroy fds allocated in previous iterations
+             * to prevent DMA-BUF / CMA leak on partial init failure. */
+            for (uint32_t j = 0; j < i; j++) {
+                if (ctx->output_plane_fd[j] >= 0) {
+                    NvBufferDestroy(ctx->output_plane_fd[j]);
+                    ctx->output_plane_fd[j] = -1;
+                }
+            }
             return ret;
         }
         ctx->output_plane_fd[i]=fd;

@@ -72,11 +72,24 @@
 //ff_get_encode_buffer() is how encoders obtain packet buffers (libavcodec 60+).
 nvPacket* nvmpienc_nvPacket_alloc(AVCodecContext *avctx, int bufSize)
 {
-	AVPacket* pkt = av_packet_alloc();
-	nvPacket* nPkt = (nvPacket*)malloc(sizeof(nvPacket));
+	AVPacket* pkt;
+	nvPacket* nPkt;
 	int res;
+
+	/* Allocate AVPacket first — ff_get_encode_buffer requires a valid
+	 * AVPacket, so this must succeed before anything else. */
+	pkt = av_packet_alloc();
+	if (!pkt)
+		return NULL;
+
+	nPkt = (nvPacket*)malloc(sizeof(nvPacket));
+	if (!nPkt) {
+		av_packet_free(&pkt);
+		return NULL;
+	}
 	memset(nPkt, 0, sizeof(nvPacket));
-	if((res = ff_get_encode_buffer(avctx, pkt, bufSize, 0)))
+
+	if ((res = ff_get_encode_buffer(avctx, pkt, bufSize, 0)))
 	{
 		av_packet_free(&pkt);
 		free(nPkt);
@@ -275,7 +288,18 @@ static av_cold int nvmpi_encode_init(AVCodecContext *avctx)
 		 * not a memory allocation error. See #37. */
 		return AVERROR_EXTERNAL;
 	}
-	nvmpienc_initPktPool(avctx,nvmpi_context->packet_pool_size);
+	{
+		int pool_ret = nvmpienc_initPktPool(avctx, nvmpi_context->packet_pool_size);
+		if (pool_ret < 0) {
+			av_log(avctx, AV_LOG_ERROR, "nvmpi: packet pool init failed\n");
+			nvmpi_encoder_close(nvmpi_context->ctx);
+			nvmpi_context->ctx = NULL;
+			av_freep(&avctx->extradata);
+			avctx->extradata_size = 0;
+			av_frame_free(&nvmpi_context->frame);
+			return pool_ret;
+		}
+	}
 
 	/* Track initial bitrate for runtime change detection in send_frame. */
 	nvmpi_context->last_bitrate = avctx->bit_rate;
@@ -290,6 +314,14 @@ static av_cold int nvmpi_encode_init(AVCodecContext *avctx)
 static av_cold int nvmpi_encode_close(AVCodecContext *avctx)
 {
 	nvmpiEncodeContext *nvmpi_context = avctx->priv_data;
+
+	/* FF_CODEC_CAP_INIT_CLEANUP: FFmpeg calls .close() even when .init()
+	 * failed partway through. Guard against NULL ctx — the encoder may
+	 * never have been created. */
+	if (!nvmpi_context->ctx) {
+		av_frame_free(&nvmpi_context->frame);
+		return 0;
+	}
 
 	//drain encoder
 	{
@@ -438,6 +470,7 @@ static const AVOption options[] = {
 		/* libavcodec 63 (FFmpeg 9.0+): pix_fmts moved from AVCodec to FFCodec */ \
 		NVMPI_ENC_PIXFMTS, \
 		.p.capabilities   = AV_CODEC_CAP_HARDWARE | AV_CODEC_CAP_DELAY, \
+		.caps_internal  = FF_CODEC_CAP_INIT_CLEANUP, \
 		.defaults       = defaults,\
 		.p.wrapper_name   = "nvmpi", \
 	};

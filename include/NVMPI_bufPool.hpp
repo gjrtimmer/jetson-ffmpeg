@@ -33,6 +33,7 @@
 #include <condition_variable>
 #include <chrono>
 #include <atomic>
+#include <cstdio>
 
 template <typename T>
 struct NVMPI_bufPool
@@ -86,6 +87,29 @@ struct NVMPI_bufPool
 	void shutdown();
 	/* Clear shutdown flag — call after flush/restart before reusing the pool. */
 	void reset();
+
+	/* Safety-net destructor: ensures shutdown is called and warns if either
+	 * queue still holds items — indicates the caller forgot to drain before
+	 * destroying the pool. Items are NOT freed here (the pool does not own
+	 * them); callers must drain and free before delete. */
+	~NVMPI_bufPool()
+	{
+		if (!m_shutdown.load(std::memory_order_acquire))
+			shutdown();
+		size_t empty_remaining = 0;
+		size_t filled_remaining = 0;
+		{
+			std::lock_guard<std::mutex> lock(m_emptyBuf);
+			empty_remaining = emptyBuf.size();
+		}
+		{
+			std::lock_guard<std::mutex> lock(m_filledBuf);
+			filled_remaining = filledBuf.size();
+		}
+		if (empty_remaining > 0 || filled_remaining > 0)
+			fprintf(stderr, "NVMPI_bufPool: destroyed with %zu empty + %zu filled items still queued (leak)\n",
+				empty_remaining, filled_remaining);
+	}
 };
 
 /* Dequeue one empty buffer (non-blocking). Returns NULL if none available. */

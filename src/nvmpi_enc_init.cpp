@@ -236,14 +236,12 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 					NVMPI_LOG(NVMPI_LOG_ERROR,
 						  "Encoder device %s unavailable (errno=%d: %s)",
 						  dev_path, saved_errno, strerror(saved_errno));
-					delete ctx;
-					return NULL;
+					goto cleanup;
 				}
 				if (saved_errno == EACCES) {
 					NVMPI_LOG(NVMPI_LOG_ERROR,
 						  "Encoder device %s: permission denied", dev_path);
-					delete ctx;
-					return NULL;
+					goto cleanup;
 				}
 				if (saved_errno == EBUSY) {
 					NVMPI_LOG(NVMPI_LOG_WARN,
@@ -265,8 +263,7 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 			/* Neither device node exists — MMAPI factory will also fail. */
 			NVMPI_LOG(NVMPI_LOG_ERROR,
 				  "No encoder device node found (/dev/nvhost-msenc or /dev/v4l2-nvenc)");
-			delete ctx;
-			return NULL;
+			goto cleanup;
 		}
 
 		if (ctx->blocking_mode)
@@ -282,8 +279,7 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 	if (!ctx->enc)
 	{
 		NVMPI_LOG(NVMPI_LOG_ERROR, "Could not create encoder after 3 attempts");
-		delete ctx;
-		return NULL;
+		goto cleanup;
 	}
 
 	/* CRITICAL FORMAT SETUP — format negotiation must succeed for the
