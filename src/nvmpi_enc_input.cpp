@@ -102,15 +102,21 @@ int nvmpi_encoder_put_frame(nvmpictx* ctx,nvFrame* frame)
 	}
 	else
 	{
-		/*TODO move it to another thread or make this call non-blocking.
-		 * DQBuffer could take considerable time. e.g. when encoder performance is 20fps and all output_plane is busy
-		 * it could take up to 1000/20=50ms... latency
-		 */
-		ret = ctx->enc->output_plane.dqBuffer(v4l2_buf, &nvBuffer, NULL, -1);
+		/* Reclaim a used OUTPUT-plane buffer. In blocking mode (default),
+		 * dqBuffer waits indefinitely (-1) until the encoder frees one.
+		 * In non-blocking mode, timeout=0 returns immediately — if no
+		 * buffer is available, return NVMPI_ERR_EAGAIN so the caller can
+		 * drain encoded packets and retry. */
+		int dq_timeout = ctx->blocking_mode ? -1 : 0;
+		ret = ctx->enc->output_plane.dqBuffer(v4l2_buf, &nvBuffer, NULL, dq_timeout);
 		if (ret < 0)
 		{
+			if (!ctx->blocking_mode) {
+				/* Non-blocking: no buffer available right now */
+				return NVMPI_ERR_EAGAIN;
+			}
 			NVMPI_LOG(NVMPI_LOG_ERROR, "Error DQing buffer at output plane");
-			return false;
+			return -1;
 		}
 	}
 
@@ -229,8 +235,9 @@ int nvmpi_encoder_put_frame_fd(nvmpictx* ctx,
 		return -1;
 
 	/* Buffer acquisition: same index-then-dqBuffer pattern as put_frame.
-	 * First N frames use sequential indices; after that, block in
-	 * dqBuffer until the encoder frees a slot. */
+	 * First N frames use sequential indices; after that, reclaim a used
+	 * buffer. Blocking mode waits indefinitely; non-blocking returns
+	 * NVMPI_ERR_EAGAIN when no buffer is available. */
 	if (ctx->index < ctx->enc->output_plane.getNumBuffers())
 	{
 		v4l2_buf.index = ctx->index;
@@ -239,9 +246,14 @@ int nvmpi_encoder_put_frame_fd(nvmpictx* ctx,
 	else
 	{
 		NvBuffer *nvBuffer;
-		ret = ctx->enc->output_plane.dqBuffer(v4l2_buf, &nvBuffer, NULL, -1);
+		int dq_timeout = ctx->blocking_mode ? -1 : 0;
+		ret = ctx->enc->output_plane.dqBuffer(v4l2_buf, &nvBuffer, NULL, dq_timeout);
 		if (ret < 0)
 		{
+			if (!ctx->blocking_mode) {
+				/* Non-blocking: no buffer available right now */
+				return NVMPI_ERR_EAGAIN;
+			}
 			NVMPI_LOG(NVMPI_LOG_ERROR, "Error DQing buffer at output plane (dmabuf mode)");
 			return -1;
 		}

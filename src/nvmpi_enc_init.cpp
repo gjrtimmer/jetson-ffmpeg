@@ -65,7 +65,10 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 	ctx->enable_cabac=(param->enable_cabac!=0)?true:false;
 	ctx->capPlaneGotEOS.store(false, std::memory_order_relaxed);
 	ctx->flushing.store(false, std::memory_order_relaxed);
-	ctx->blocking_mode = true; //TODO non-blocking mode support
+	/* Non-blocking mode: put_frame returns NVMPI_ERR_EAGAIN instead of
+	 * blocking when no OUTPUT-plane buffer is available. Default (0) =
+	 * blocking, preserving backward compatibility with existing callers. */
+	ctx->blocking_mode = !param->nonblocking;
 	ctx->dmabuf_external = (param->use_dmabuf != 0);
 	ctx->max_perf = param->max_perf;
 	ctx->poc_type = param->poc_type;
@@ -266,10 +269,13 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 			goto cleanup;
 		}
 
-		if (ctx->blocking_mode)
-			ctx->enc.reset(NvVideoEncoder::createVideoEncoder("enc0"));
-		else
-			ctx->enc.reset(NvVideoEncoder::createVideoEncoder("enc0", O_NONBLOCK));
+		/* Always open encoder WITHOUT O_NONBLOCK — the flag applies to ALL
+		 * V4L2 ioctls on the fd, including the CAPTURE-plane DQ thread's
+		 * dqBuffer. O_NONBLOCK would prevent the DQ thread from blocking
+		 * for encoded packets, causing a hang. Non-blocking behavior is
+		 * implemented per-call via dqBuffer(timeout=0) on the OUTPUT
+		 * plane only (see nvmpi_encoder_put_frame). */
+		ctx->enc.reset(NvVideoEncoder::createVideoEncoder("enc0"));
 		if (ctx->enc) break;
 		if (attempt < 2) {
 			NVMPI_LOG(NVMPI_LOG_WARN, "Encoder factory returned NULL, retrying (%d/3)...", attempt + 1);
@@ -499,27 +505,17 @@ nvmpictx* nvmpi_create_encoder(nvEncParam* param)
 		goto cleanup;
 	}
 
-	if(ctx->blocking_mode)
-	{
-		ctx->enc->capture_plane.setDQThreadCallback(encoder_capture_plane_dq_callback);
-		ret = ctx->enc->capture_plane.startDQThread(ctx);
-		if (ret < 0) {
-			NVMPI_LOG(NVMPI_LOG_ERROR, "Could not start DQ thread");
-			goto cleanup;
-		}
-		ctx->dq_thread_started = true;
+	/* CAPTURE-plane DQ thread: always started regardless of blocking_mode.
+	 * The DQ thread processes encoded output from the CAPTURE plane — needed
+	 * in both blocking and non-blocking modes. Non-blocking only changes the
+	 * OUTPUT-plane dqBuffer timeout (put_frame), not the capture path. */
+	ctx->enc->capture_plane.setDQThreadCallback(encoder_capture_plane_dq_callback);
+	ret = ctx->enc->capture_plane.startDQThread(ctx);
+	if (ret < 0) {
+		NVMPI_LOG(NVMPI_LOG_ERROR, "Could not start DQ thread");
+		goto cleanup;
 	}
-    else
-    {
-		/*
-        sem_init(&ctx->pollthread_sema, 0, 0);
-        sem_init(&ctx->encoderthread_sema, 0, 0);
-        // Set encoder poll thread for non-blocking io mode
-        pthread_create(&ctx->enc_pollthread, NULL, encoder_pollthread_fcn, ctx);
-        pthread_setname_np(ctx->enc_pollthread, "EncPollThread");
-        NVMPI_LOG(NVMPI_LOG_DEBUG, "created poll thread and encoder thread");
-        */
-    }
+	ctx->dq_thread_started = true;
 
 	// Enqueue all the empty capture plane buffers
 	for (uint32_t i = 0; i < ctx->enc->capture_plane.getNumBuffers(); i++){
