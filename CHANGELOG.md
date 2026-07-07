@@ -1,5 +1,39 @@
 # Changelog
 
+## 3.10.0 - 2026-07-07
+
+### Bug Fixes
+
+
+**ffmpeg**
+
+
+- Harden non-blocking mode for extradata and EOS paths
+
+
+### Features
+
+
+**ffmpeg**
+
+
+- Wire non-blocking encode through FFmpeg wrapper
+
+
+**nvmpi**
+
+
+- Add non-blocking encoder mode
+
+
+### Testing
+
+
+**encoder**
+
+
+- Add non-blocking encode test suite
+
 ## 3.9.0 - 2026-07-07
 
 ### Bug Fixes
