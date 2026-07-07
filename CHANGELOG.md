@@ -1,5 +1,47 @@
 # Changelog
 
+## 3.9.0 - 2026-07-07
+
+### Bug Fixes
+
+
+**nvmpi,ffmpeg**
+
+
+- Harden error-path resource lifecycle across encoder and decoder
+
+
+### Build
+
+
+**ffmpeg**
+
+
+- Regenerate patches for FFmpeg 6.0–8.1
+
+
+### Refactor
+
+
+**ffmpeg-dev**
+
+
+- Split encoder, decoder, and filter wrappers into focused units
+
+
+**nvmpi**
+
+
+- Split encoder API source into init/input/api units
+- Split decoder API source into init/api and jpeg/ctx units
+
+
+**test**
+
+
+- Reorganize hw suites into subdirectories by subsystem
+- Remove old flat test suite files
+
 ## 3.8.0 - 2026-07-01
 
 ### Bug Fixes
