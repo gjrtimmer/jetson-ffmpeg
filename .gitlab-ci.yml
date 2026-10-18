@@ -643,11 +643,18 @@ release:
     - job: "dist:jp5"
   variables:
     GIT_DEPTH: "0"   # full history + tags for git-cliff
+    # dl.min.io now returns HTTP 410 and MinIO archived mc (no security
+    # updates). Pin the last GitHub release and verify its sha256 (linux-arm64).
+    MC_VERSION: "RELEASE.2025-08-13T08-35-41Z"
+    MC_SHA256: "14c8c9616cfce4636add161304353244e8de383b2e2752c0e9dad01d4c27c12c"
   before_script:
     - |
-      echo "[i] installing mc (MinIO client)"
-      curl -fsSL https://dl.min.io/client/mc/release/linux-arm64/mc -o /usr/local/bin/mc
-      chmod +x /usr/local/bin/mc
+      echo "[i] installing mc (MinIO client) ${MC_VERSION}"
+      mc_tmp="$(mktemp)"
+      curl -fsSL "https://github.com/minio/mc/releases/download/${MC_VERSION}/mc.linux-arm64.${MC_VERSION}" -o "${mc_tmp}"
+      echo "${MC_SHA256}  ${mc_tmp}" | sha256sum -c -
+      install -m 0755 "${mc_tmp}" /usr/local/bin/mc
+      rm -f "${mc_tmp}"
       mc --version
   script:
     - git fetch --tags --force || true
