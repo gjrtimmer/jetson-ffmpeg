@@ -1,5 +1,14 @@
 # jetson-ffmpeg
 
+> **libnvmpi has moved to its own repository:
+> [jetson-nvmpi](https://github.com/gjrtimmer/jetson-nvmpi)** (history and tags
+> preserved). This repository is becoming the FFmpeg integration only: patches,
+> `ffpatch.sh`, and the hardware test suites. The in-tree copy of libnvmpi
+> (`src/`, `include/`, `stubs/`, `CMakeLists.txt`) stays here until the switch
+> lands ([#108](https://github.com/gjrtimmer/jetson-ffmpeg/issues/108)); after
+> that, builds fetch a pinned jetson-nvmpi release. New libnvmpi fixes and
+> issues go to jetson-nvmpi.
+
 Hardware-accelerated video encoding and decoding for NVIDIA Jetson, fully
 integrated into FFmpeg.
 
