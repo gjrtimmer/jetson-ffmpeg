@@ -1,5 +1,5 @@
 diff --git a/configure b/configure
-index 1759694..26df4e7 100755
+index 86a2437..4ff7c5b 100755
 --- a/configure
 +++ b/configure
 @@ -371,6 +371,7 @@ External library support:
@@ -18,7 +18,7 @@ index 1759694..26df4e7 100755
      $HWACCEL_LIBRARY_NONFREE_LIST
      libmfx
      libvpl
-@@ -3580,6 +3582,9 @@ h264_mediacodec_encoder_deps="mediacodec"
+@@ -3581,6 +3583,9 @@ h264_mediacodec_encoder_deps="mediacodec"
  h264_mediacodec_encoder_select="extract_extradata_bsf h264_metadata"
  h264_mf_encoder_deps="mediafoundation"
  h264_mmal_decoder_deps="mmal"
@@ -28,7 +28,7 @@ index 1759694..26df4e7 100755
  h264_nvenc_encoder_deps="nvenc"
  h264_nvenc_encoder_select="atsc_a53"
  h264_oh_decoder_deps="ohcodec"
-@@ -3606,6 +3611,9 @@ hevc_mediacodec_decoder_select="hevc_mp4toannexb_bsf hevc_parser"
+@@ -3607,6 +3612,9 @@ hevc_mediacodec_decoder_select="hevc_mp4toannexb_bsf hevc_parser"
  hevc_mediacodec_encoder_deps="mediacodec"
  hevc_mediacodec_encoder_select="extract_extradata_bsf hevc_metadata"
  hevc_mf_encoder_deps="mediafoundation"
@@ -38,7 +38,7 @@ index 1759694..26df4e7 100755
  hevc_nvenc_encoder_deps="nvenc"
  hevc_nvenc_encoder_select="atsc_a53"
  hevc_oh_decoder_deps="ohcodec"
-@@ -3623,6 +3631,8 @@ hevc_v4l2m2m_decoder_deps="v4l2_m2m hevc_v4l2_m2m"
+@@ -3624,6 +3632,8 @@ hevc_v4l2m2m_decoder_deps="v4l2_m2m hevc_v4l2_m2m"
  hevc_v4l2m2m_decoder_select="hevc_mp4toannexb_bsf"
  hevc_v4l2m2m_encoder_deps="v4l2_m2m hevc_v4l2_m2m"
  mjpeg_cuvid_decoder_deps="cuvid"
@@ -47,7 +47,7 @@ index 1759694..26df4e7 100755
  mjpeg_qsv_decoder_select="qsvdec"
  mjpeg_qsv_encoder_deps="libmfx"
  mjpeg_qsv_encoder_select="qsvenc"
-@@ -3634,6 +3644,7 @@ mp3_mediacodec_decoder_select="mpegaudioheader"
+@@ -3635,6 +3645,7 @@ mp3_mediacodec_decoder_select="mpegaudioheader"
  mpeg1_cuvid_decoder_deps="cuvid"
  mpeg1_v4l2m2m_decoder_deps="v4l2_m2m mpeg1_v4l2_m2m"
  mpeg2_cuvid_decoder_deps="cuvid"
@@ -55,7 +55,7 @@ index 1759694..26df4e7 100755
  mpeg2_mmal_decoder_deps="mmal"
  mpeg2_mediacodec_decoder_deps="mediacodec"
  mpeg2_qsv_decoder_select="qsvdec"
-@@ -3641,6 +3652,7 @@ mpeg2_qsv_encoder_select="qsvenc"
+@@ -3642,6 +3653,7 @@ mpeg2_qsv_encoder_select="qsvenc"
  mpeg2_vaapi_encoder_select="cbs_mpeg2 vaapi_encode"
  mpeg2_v4l2m2m_decoder_deps="v4l2_m2m mpeg2_v4l2_m2m"
  mpeg4_cuvid_decoder_deps="cuvid"
@@ -63,7 +63,7 @@ index 1759694..26df4e7 100755
  mpeg4_mediacodec_decoder_deps="mediacodec"
  mpeg4_mediacodec_encoder_deps="mediacodec"
  mpeg4_mediacodec_encoder_select="extract_extradata_bsf"
-@@ -3653,6 +3665,7 @@ vc1_mmal_decoder_deps="mmal"
+@@ -3654,6 +3666,7 @@ vc1_mmal_decoder_deps="mmal"
  vc1_qsv_decoder_select="qsvdec"
  vc1_v4l2m2m_decoder_deps="v4l2_m2m vc1_v4l2_m2m"
  vp8_cuvid_decoder_deps="cuvid"
@@ -71,7 +71,7 @@ index 1759694..26df4e7 100755
  vp8_mediacodec_decoder_deps="mediacodec"
  vp8_mediacodec_encoder_deps="mediacodec"
  vp8_qsv_decoder_select="qsvdec"
-@@ -3663,6 +3676,7 @@ vp8_v4l2m2m_decoder_deps="v4l2_m2m vp8_v4l2_m2m"
+@@ -3664,6 +3677,7 @@ vp8_v4l2m2m_decoder_deps="v4l2_m2m vp8_v4l2_m2m"
  vp8_v4l2m2m_encoder_deps="v4l2_m2m vp8_v4l2_m2m"
  vp9_amf_decoder_deps="amf"
  vp9_cuvid_decoder_deps="cuvid"
@@ -79,7 +79,7 @@ index 1759694..26df4e7 100755
  vp9_mediacodec_decoder_deps="mediacodec"
  vp9_mediacodec_encoder_deps="mediacodec"
  vp9_qsv_decoder_select="qsvdec"
-@@ -4238,6 +4252,7 @@ libvmaf_cuda_filter_deps="libvmaf libvmaf_cuda ffnvcodec"
+@@ -4239,6 +4253,7 @@ libvmaf_cuda_filter_deps="libvmaf libvmaf_cuda ffnvcodec"
  zmq_filter_deps="libzmq"
  zoompan_filter_deps="swscale"
  zscale_filter_deps="libzimg const_nan"
@@ -87,7 +87,7 @@ index 1759694..26df4e7 100755
  scale_vaapi_filter_deps="vaapi"
  scale_vt_filter_deps="videotoolbox VTPixelTransferSessionCreate"
  scale_vulkan_filter_deps="vulkan spirv_compiler spirv_library"
-@@ -7423,6 +7438,7 @@ enabled libvvenc          && require_pkg_config libvvenc "libvvenc >= 1.6.1" "vv
+@@ -7432,6 +7447,7 @@ enabled libvvenc          && require_pkg_config libvvenc "libvvenc >= 1.6.1" "vv
  enabled libwebp           && {
      enabled libwebp_encoder      && require_pkg_config libwebp "libwebp >= 0.2.0" webp/encode.h WebPGetEncoderVersion
      enabled libwebp_anim_encoder && check_pkg_config libwebp_anim_encoder "libwebpmux >= 0.4.0" webp/mux.h WebPAnimEncoderOptionsInit; }
@@ -214,10 +214,10 @@ index 695214f..7c6340c 100644
  extern const FFCodec ff_vqa_decoder;
 diff --git a/libavcodec/dynlink_nvmpi.h b/libavcodec/dynlink_nvmpi.h
 new file mode 100644
-index 0000000..3d065b4
+index 0000000..a450265
 --- /dev/null
 +++ b/libavcodec/dynlink_nvmpi.h
-@@ -0,0 +1,374 @@
+@@ -0,0 +1,381 @@
 +/*
 + * dynlink_nvmpi.h -- Runtime lazy-loading of libnvmpi via dlopen/dlsym.
 + *
@@ -479,7 +479,7 @@ index 0000000..3d065b4
 +} while (0)
 +
 +/*
-+ * Load libnvmpi.so and resolve all function pointers.
++ * Load libnvmpi.so.1 (or libnvmpi.so) and resolve all function pointers.
 + *
 + * Returns 0 on success, -1 on failure.  On failure, dlerror() describes
 + * the problem (missing library or missing symbol).  Subsequent calls
@@ -495,7 +495,14 @@ index 0000000..3d065b4
 +
 +    /* RTLD_LAZY: defer symbol resolution until first call -- faster
 +     * startup when codecs are registered but never used. */
-+    nvmpi_lib_handle = dlopen("libnvmpi.so", RTLD_LAZY);
++    /* Debian runtime package libnvmpi1 ships only the SONAME
++     * (libnvmpi.so.1); the unversioned libnvmpi.so symlink is -dev only.
++     * Try the SONAME first, fall back to libnvmpi.so for source/dev
++     * installs.  On double failure dlerror() reports the last attempt
++     * (libnvmpi.so); callers log it. */
++    nvmpi_lib_handle = dlopen("libnvmpi.so.1", RTLD_LAZY);
++    if (!nvmpi_lib_handle)
++        nvmpi_lib_handle = dlopen("libnvmpi.so", RTLD_LAZY);
 +    if (!nvmpi_lib_handle)
 +        return -1;
 +
@@ -3006,10 +3013,10 @@ index 0000000..9b32545
 +    nvmpi_context->encoder_flushing = 0;
 +}
 diff --git a/libavfilter/Makefile b/libavfilter/Makefile
-index a530cfa..ef949f5 100644
+index 7506327..5f91d47 100644
 --- a/libavfilter/Makefile
 +++ b/libavfilter/Makefile
-@@ -478,6 +478,8 @@ OBJS-$(CONFIG_SCALE_CUDA_FILTER)             += vf_scale_cuda.o scale_eval.o \
+@@ -478,6 +478,8 @@ OBJS-$(CONFIG_SCALE_CUDA_FILTER)             += vf_scale_cuda.o scale_eval.o sca
  OBJS-$(CONFIG_SCALE_NPP_FILTER)              += vf_scale_npp.o scale_eval.o
  OBJS-$(CONFIG_SCALE_QSV_FILTER)              += vf_vpp_qsv.o
  OBJS-$(CONFIG_SCALE_VAAPI_FILTER)            += vf_scale_vaapi.o scale_eval.o vaapi_vpp.o
@@ -3032,10 +3039,10 @@ index e26859e..bad0161 100644
  extern const FFFilter ff_vf_scale2ref;
 diff --git a/libavfilter/dynlink_nvmpi_vic.h b/libavfilter/dynlink_nvmpi_vic.h
 new file mode 100644
-index 0000000..ac0d0a1
+index 0000000..41256e7
 --- /dev/null
 +++ b/libavfilter/dynlink_nvmpi_vic.h
-@@ -0,0 +1,119 @@
+@@ -0,0 +1,126 @@
 +/*
 + * dynlink_nvmpi_vic.h -- Runtime lazy-loading of libnvmpi VIC API.
 + *
@@ -3110,7 +3117,7 @@ index 0000000..ac0d0a1
 +} while (0)
 +
 +/*
-+ * Load libnvmpi.so and resolve VIC + surface symbols.
++ * Load libnvmpi.so.1 (or libnvmpi.so) and resolve VIC + surface symbols.
 + * Returns 0 on success, -1 on failure.  Idempotent.
 + */
 +static int nvmpi_vic_dynlink_load(void)
@@ -3118,7 +3125,14 @@ index 0000000..ac0d0a1
 +    if (nvmpi_vic_lib_handle)
 +        return 0;
 +
-+    nvmpi_vic_lib_handle = dlopen("libnvmpi.so", RTLD_LAZY);
++    /* Debian runtime package libnvmpi1 ships only the SONAME
++     * (libnvmpi.so.1); the unversioned libnvmpi.so symlink is -dev only.
++     * Try the SONAME first, fall back to libnvmpi.so for source/dev
++     * installs.  On double failure dlerror() reports the last attempt
++     * (libnvmpi.so); callers log it. */
++    nvmpi_vic_lib_handle = dlopen("libnvmpi.so.1", RTLD_LAZY);
++    if (!nvmpi_vic_lib_handle)
++        nvmpi_vic_lib_handle = dlopen("libnvmpi.so", RTLD_LAZY);
 +    if (!nvmpi_vic_lib_handle)
 +        return -1;
 +

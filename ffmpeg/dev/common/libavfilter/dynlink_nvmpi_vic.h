@@ -72,7 +72,7 @@ static void *nvmpi_vic_lib_handle;
 } while (0)
 
 /*
- * Load libnvmpi.so and resolve VIC + surface symbols.
+ * Load libnvmpi.so.1 (or libnvmpi.so) and resolve VIC + surface symbols.
  * Returns 0 on success, -1 on failure.  Idempotent.
  */
 static int nvmpi_vic_dynlink_load(void)
@@ -80,7 +80,14 @@ static int nvmpi_vic_dynlink_load(void)
     if (nvmpi_vic_lib_handle)
         return 0;
 
-    nvmpi_vic_lib_handle = dlopen("libnvmpi.so", RTLD_LAZY);
+    /* Debian runtime package libnvmpi1 ships only the SONAME
+     * (libnvmpi.so.1); the unversioned libnvmpi.so symlink is -dev only.
+     * Try the SONAME first, fall back to libnvmpi.so for source/dev
+     * installs.  On double failure dlerror() reports the last attempt
+     * (libnvmpi.so); callers log it. */
+    nvmpi_vic_lib_handle = dlopen("libnvmpi.so.1", RTLD_LAZY);
+    if (!nvmpi_vic_lib_handle)
+        nvmpi_vic_lib_handle = dlopen("libnvmpi.so", RTLD_LAZY);
     if (!nvmpi_vic_lib_handle)
         return -1;
 

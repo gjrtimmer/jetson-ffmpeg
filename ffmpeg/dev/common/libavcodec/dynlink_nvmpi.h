@@ -259,7 +259,7 @@ static void *nvmpi_lib_handle;
 } while (0)
 
 /*
- * Load libnvmpi.so and resolve all function pointers.
+ * Load libnvmpi.so.1 (or libnvmpi.so) and resolve all function pointers.
  *
  * Returns 0 on success, -1 on failure.  On failure, dlerror() describes
  * the problem (missing library or missing symbol).  Subsequent calls
@@ -275,7 +275,14 @@ static int nvmpi_dynlink_load(void)
 
     /* RTLD_LAZY: defer symbol resolution until first call -- faster
      * startup when codecs are registered but never used. */
-    nvmpi_lib_handle = dlopen("libnvmpi.so", RTLD_LAZY);
+    /* Debian runtime package libnvmpi1 ships only the SONAME
+     * (libnvmpi.so.1); the unversioned libnvmpi.so symlink is -dev only.
+     * Try the SONAME first, fall back to libnvmpi.so for source/dev
+     * installs.  On double failure dlerror() reports the last attempt
+     * (libnvmpi.so); callers log it. */
+    nvmpi_lib_handle = dlopen("libnvmpi.so.1", RTLD_LAZY);
+    if (!nvmpi_lib_handle)
+        nvmpi_lib_handle = dlopen("libnvmpi.so", RTLD_LAZY);
     if (!nvmpi_lib_handle)
         return -1;
 
