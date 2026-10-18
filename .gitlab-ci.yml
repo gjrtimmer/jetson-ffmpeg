@@ -88,12 +88,15 @@ include:
 #
 # To add a new hardware variant:
 #   1. Register a project runner with tags: jetson, <variant>
-#   2. Add an entry to the shared .hw-test parallel matrix with JETSON_VARIANT
+#   2. Add an entry to the shared .hw-full/.hw-fast parallel matrix with JETSON_VARIANT
 #
 # To add a new FFmpeg version:
 #   1. Add the version string to the FFVER matrix in ffmpeg:jp6 and ffmpeg:jp5
-#   2. Add a test:ffmpeg-<ver>:jp6 job with the matching needs reference
+#   2. Add a hw job pair for it: test:ffmpeg-<ver>:jp6 (extends .hw-fast) and
+#      test:ffmpeg-<ver>:jp6:full (extends .hw-full-twin), both with the
+#      matching needs reference (see the stage: test section)
 #   3. Add the version to the FFVER matrix in dist:jp6 and dist:jp5
+#      (ffmpeg:jp5 only builds the oldest + newest version as a compile check)
 
 stages:
   - build
@@ -101,15 +104,58 @@ stages:
   - dist
   - release
 
-# Pipeline deduplication: when a branch has an open MR, only the MR
-# pipeline runs — the branch pipeline is suppressed. Tag pipelines always run.
+# Code paths: a change to any of these makes a pipeline worth running.
+# Docs-only changes (README, CHANGELOG, CLAUDE.md, wiki-ish files) skip it.
+# ANCHOR LIST: when a new top-level code directory is added, add it here.
+.code-paths: &code-paths
+  - "src/**/*"
+  - "include/**/*"
+  - "stubs/**/*"
+  - "cmake/**/*"
+  - "CMakeLists.txt"
+  - "nvmpi.pc.in"
+  - "ffmpeg/**/*"
+  - "scripts/**/*"
+  - "vendor/**/*"
+  - "ci/**/*"
+  - ".gitlab-ci.yml"
+  - "test/**/*.sh"
+  - "test/**/*.c"
+  - "test/**/*.cpp"
+
+# Pipeline creation and the default hardware test tier (HW_TIER):
+#   tag                -> release pipeline (dist + release only)
+#   merge request      -> builds + tiered hw tests (7.1/8.1 full, rest fast)
+#   web/schedule/api   -> HW_TIER as chosen in the UI / schedule variable
+#                         (default none; nightly schedule sets full)
+#   pipeline/trigger   -> full (cross-project trigger, e.g. from jetson-nvmpi)
+#   branch w/ open MR  -> none (the MR pipeline covers it)
+#   main push          -> builds only (hw tests already ran in the MR)
+#   other branch push  -> builds only, and only if code changed vs main
+# Variables set here lose against UI/schedule/trigger variables.
 workflow:
   rules:
     - if: '$CI_COMMIT_TAG'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      variables:
+        HW_TIER: "tiered"
+    - if: '$CI_PIPELINE_SOURCE =~ /^(pipeline|trigger)$/'
+      variables:
+        HW_TIER: "full"
+    - if: '$CI_PIPELINE_SOURCE =~ /^(schedule|web|api)$/'
     - if: '$CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS'
       when: never
-    - if: '$CI_COMMIT_BRANCH'
+    - if: '$CI_COMMIT_BRANCH && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      changes:
+        paths: *code-paths
+      variables:
+        HW_TIER: "none"
+    - if: '$CI_COMMIT_BRANCH && $CI_COMMIT_BRANCH != $CI_DEFAULT_BRANCH'
+      changes:
+        paths: *code-paths
+        compare_to: "refs/heads/main"
+      variables:
+        HW_TIER: "none"
 
 variables:
   BUILD_IMAGES:
@@ -118,6 +164,13 @@ variables:
     options:
       - "false"
       - "true"
+  HW_TIER:
+    value: "none"
+    description: "Hardware test tier: none = builds only, tiered = 7.1/8.1 full + other versions fast (stress suites skipped), full = all suites on all versions"
+    options:
+      - "none"
+      - "tiered"
+      - "full"
   L4T_TAG: "r36.4.0"
   L4T_SOC: "t234"
   L4T_TAG_JP5: "r35.4.1"
@@ -135,6 +188,12 @@ variables:
     - if: '$CI_COMMIT_TAG'
       when: never
     - if: '$BUILD_IMAGES == "true"'
+      when: never
+    # Docs-only MRs build nothing (ci:docs-only keeps the pipeline non-empty).
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes: *code-paths
+      when: on_success
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
       when: never
     - when: on_success
 .only-tag: &only-tag
@@ -155,14 +214,44 @@ default:
 # ffmpeg:jp6 / ffmpeg:jp5 clone, patch, configure, and build each FFmpeg
 # version via parallel:matrix on FFVER.
 # ---------------------------------------------------------------------------
+# Docs-only MRs: nothing to build or test. This keeps the MR pipeline
+# non-empty so the "pipeline must succeed" merge gate is satisfied.
+ci:docs-only:
+  stage: build
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+      changes: *code-paths
+      when: never
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+  script:
+    - echo "docs-only change - no build or hardware test needed"
+
+# ccache for compile jobs. It only takes effect once the builder image ships
+# ccache (the scripts check `command -v ccache`), and is a no-op before that.
+.ccache:
+  variables:
+    CCACHE_DIR: "${CI_PROJECT_DIR}/.ccache"
+    CCACHE_SLOPPINESS: "include_file_mtime,include_file_ctime,time_macros"
+    CCACHE_COMPILERCHECK: "content"
+    CCACHE_MAXSIZE: "500M"
+    CCACHE_COMPRESS: "1"
+  cache:
+    key: "ccache-${CI_JOB_NAME_SLUG}"
+    paths:
+      - .ccache
+
 nvmpi:jp6:
+  extends: .ccache
   stage: build
   <<: *not-on-tag
   script:
     - mkdir -p build && cd build
-    - cmake -DCMAKE_INSTALL_PREFIX="${NVMPI_PREFIX}" -DCMAKE_BUILD_TYPE=Release -DWITH_STUBS=ON ..
+    - CCACHE_ARGS=""
+    - if command -v ccache >/dev/null 2>&1; then CCACHE_ARGS="-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache"; fi
+    - cmake -DCMAKE_INSTALL_PREFIX="${NVMPI_PREFIX}" -DCMAKE_BUILD_TYPE=Release -DWITH_STUBS=ON ${CCACHE_ARGS} ..
     - make -j"$(nproc)"
     - make install
+    - if command -v ccache >/dev/null 2>&1; then ccache -s; fi
   artifacts:
     paths:
       - _nvmpi/
@@ -173,6 +262,7 @@ nvmpi:jp6:
 # and API symbols that exist on JP6 (kernel 5.15+) but not JP5. Stubs-only,
 # no FFmpeg, no hw tests. Covers all JP5 releases (5.0.2-5.1.6).
 nvmpi:jp5:
+  extends: .ccache
   stage: build
   <<: *not-on-tag
   image:
@@ -180,9 +270,12 @@ nvmpi:jp5:
     pull_policy: if-not-present
   script:
     - mkdir -p build && cd build
-    - cmake -DCMAKE_INSTALL_PREFIX="${NVMPI_PREFIX}" -DCMAKE_BUILD_TYPE=Release -DWITH_STUBS=ON ..
+    - CCACHE_ARGS=""
+    - if command -v ccache >/dev/null 2>&1; then CCACHE_ARGS="-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache"; fi
+    - cmake -DCMAKE_INSTALL_PREFIX="${NVMPI_PREFIX}" -DCMAKE_BUILD_TYPE=Release -DWITH_STUBS=ON ${CCACHE_ARGS} ..
     - make -j"$(nproc)"
     - make install
+    - if command -v ccache >/dev/null 2>&1; then ccache -s; fi
   artifacts:
     paths:
       - _nvmpi/
@@ -190,8 +283,17 @@ nvmpi:jp5:
     expire_in: 1 hour
 
 .ffmpeg-build: &ffmpeg-build
+  extends: .ccache
   stage: build
   <<: *not-on-tag
+  variables:
+    # Paths inside the cloned tree must hash identically across jobs.
+    CCACHE_BASEDIR: "/tmp/ffmpeg"
+    CCACHE_DIR: "${CI_PROJECT_DIR}/.ccache"
+    CCACHE_SLOPPINESS: "include_file_mtime,include_file_ctime,time_macros"
+    CCACHE_COMPILERCHECK: "content"
+    CCACHE_MAXSIZE: "500M"
+    CCACHE_COMPRESS: "1"
   script:
     - echo "=== ffmpeg ${FFVER} ==="
     - git clone --depth=1 -b "release/${FFVER}" https://git.ffmpeg.org/ffmpeg.git /tmp/ffmpeg
@@ -214,17 +316,22 @@ nvmpi:jp5:
       probe freetype2     --enable-libfreetype
       probe gnutls        --enable-gnutls
       echo "[i] optional flags:${OPT:- (none)}"
-    - >-
-      ./configure
-      --prefix="${FFMPEG_PREFIX}"
-      --enable-shared --disable-static --disable-doc
-      --enable-gpl --enable-nvmpi
-      --extra-cflags="-I${CI_PROJECT_DIR}/include"
-      --extra-ldflags="-L${CI_PROJECT_DIR}/build -L${CI_PROJECT_DIR}/stubs -Wl,-rpath-link,${CI_PROJECT_DIR}/stubs"
-      ${OPT}
+    - |
+      # Wrap gcc in ccache when the builder image ships it.
+      CCACHE_CC=""
+      if command -v ccache >/dev/null 2>&1; then CCACHE_CC="ccache "; fi
+      ./configure \
+        --prefix="${FFMPEG_PREFIX}" \
+        --enable-shared --disable-static --disable-doc \
+        --enable-gpl --enable-nvmpi \
+        --cc="${CCACHE_CC}gcc" \
+        --extra-cflags="-I${CI_PROJECT_DIR}/include" \
+        --extra-ldflags="-L${CI_PROJECT_DIR}/build -L${CI_PROJECT_DIR}/stubs -Wl,-rpath-link,${CI_PROJECT_DIR}/stubs" \
+        ${OPT}
     - make -j"$(nproc)"
     - make install
     - cp -a ${NVMPI_PREFIX}/lib/libnvmpi* ${FFMPEG_PREFIX}/lib/
+    - if command -v ccache >/dev/null 2>&1; then ccache -s; fi
   artifacts:
     paths:
       - _ffmpeg/
@@ -237,6 +344,7 @@ ffmpeg:jp6:
     matrix:
       - FFVER: ["6.0", "6.1", "7.0", "7.1", "8.0", "8.1"]
 
+# JP5 is a compile check only: oldest + newest FFmpeg cover the API range.
 ffmpeg:jp5:
   <<: *ffmpeg-build
   image:
@@ -245,13 +353,20 @@ ffmpeg:jp5:
   needs: ["nvmpi:jp5"]
   parallel:
     matrix:
-      - FFVER: ["6.0", "6.1", "7.0", "7.1", "8.0", "8.1"]
+      - FFVER: ["6.0", "8.1"]
 
 # ---------------------------------------------------------------------------
 # Stage: test — HW encode/decode on real Jetson hardware.
 #
-# One hw-test job per supported FFmpeg version, each reusing its version's build
-# artifact (installed ffmpeg + libnvmpi) — no rebuild on the Jetson runner.
+# Controlled by HW_TIER (see the workflow rules above):
+#   none   - no hw jobs (main push, plain branches)
+#   tiered - MR default. 7.1 and 8.1 run ALL suites (.hw-full); the other
+#            versions run the fast tier (.hw-fast) = everything except the
+#            stress suites listed in HW_SUITES_EXCLUDE.
+#   full   - everything, on every version (nightly / web / cross-project trigger)
+#
+# Each version reuses its build artifact (installed ffmpeg + libnvmpi), no
+# rebuild on the Jetson runner.
 #
 # The nvmpi FFmpeg wrapper compiles into a few DISTINCT builds by libavcodec
 # version (see "Wrapper code paths by FFmpeg version" in https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Development-Guide#wrapper-code-paths-by-ffmpeg-version):
@@ -259,15 +374,23 @@ ffmpeg:jp5:
 #   6.0,6.1,7.0,7.1 -> path C (FFCodec) — identical wrapper code
 #   8.0,8.1          -> path D (FFCodec + AV_PROFILE)
 #
-# 6.0–7.1 share wrapper code (path C) but are each hw-tested anyway, to also
-# cover FFmpeg ABI/runtime differences between those releases.
+# 7.1 (path C) and 8.1 (path D) carry the full suites. The other versions
+# share wrapper code with them and run the fast tier to cover FFmpeg
+# ABI/runtime differences between releases; HW_TIER=full runs them in full too.
+#
+# A job's timeout cannot vary per rule, so versions that run fast OR full have
+# two jobs: test:ffmpeg-<ver>:jp6 (fast, 10m) and
+# test:ffmpeg-<ver>:jp6:full (full, 30m).
 #
 # To add a hardware variant, add it to the matrix and register a runner with
 # tags: jetson, <variant>.
 # ---------------------------------------------------------------------------
-.hw-test: &hw-test
+
+# Stress/soak suites, skipped in the fast tier. Keep in sync with test/ names
+# (suite name = hw-<name>.sh minus prefix). New suites default to the fast tier.
+# Referenced by .hw-fast below.
+.hw-test:
   stage: test
-  <<: *not-on-tag
   image:
     name: "harbor.local/jetson/l4t-jetpack6:${L4T_TAG}"
     pull_policy: always
@@ -291,8 +414,63 @@ ffmpeg:jp5:
     - ldconfig || true
     - bash test/hw-all.sh
 
+# Rules. Each set: skip on tags and image-build pipelines, skip docs-only MRs
+# (no build jobs exist to need), then gate on HW_TIER.
+.hw-rules-full-any: &hw-rules-full-any   # runs whenever HW_TIER != none
+  - if: '$CI_COMMIT_TAG || $BUILD_IMAGES == "true" || $HW_TIER == "none"'
+    when: never
+  - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    changes: *code-paths
+  - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    when: never
+  - when: on_success
+.hw-rules-tiered: &hw-rules-tiered       # runs only when HW_TIER == tiered
+  - if: '$CI_COMMIT_TAG || $BUILD_IMAGES == "true" || $HW_TIER != "tiered"'
+    when: never
+  - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    changes: *code-paths
+  - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    when: never
+  - when: on_success
+.hw-rules-full: &hw-rules-full           # runs only when HW_TIER == full
+  - if: '$CI_COMMIT_TAG || $BUILD_IMAGES == "true" || $HW_TIER != "full"'
+    when: never
+  - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    changes: *code-paths
+  - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
+    when: never
+  - when: on_success
+
+# Full tier: all suites, 30 min (longest observed hw job ~17 min).
+.hw-full:
+  extends: .hw-test
+  timeout: 30m
+  rules: *hw-rules-full-any
+
+# Fast tier: stress suites excluded, 10 min.
+.hw-fast:
+  extends: .hw-test
+  timeout: 10m
+  variables:
+    HW_SUITES_EXCLUDE: "encoder-lifecycle encoder-thread-safety encoder-blocking decoder-teardown pthread-guard soak-decode decoder-blocking-wait encoder-nonblock"
+  rules: *hw-rules-tiered
+
+# Full twin of a fast job: same version, runs only at HW_TIER=full.
+.hw-full-twin:
+  extends: .hw-test
+  timeout: 30m
+  rules: *hw-rules-full
+
 test:ffmpeg-6.0:jp6:                         # path C
-  <<: *hw-test
+  extends: .hw-fast
+  needs:
+    - job: "ffmpeg:jp6"
+      parallel:
+        matrix:
+          - FFVER: "6.0"
+
+test:ffmpeg-6.0:jp6:full:                         # path C
+  extends: .hw-full-twin
   needs:
     - job: "ffmpeg:jp6"
       parallel:
@@ -300,7 +478,15 @@ test:ffmpeg-6.0:jp6:                         # path C
           - FFVER: "6.0"
 
 test:ffmpeg-6.1:jp6:                         # path C
-  <<: *hw-test
+  extends: .hw-fast
+  needs:
+    - job: "ffmpeg:jp6"
+      parallel:
+        matrix:
+          - FFVER: "6.1"
+
+test:ffmpeg-6.1:jp6:full:                         # path C
+  extends: .hw-full-twin
   needs:
     - job: "ffmpeg:jp6"
       parallel:
@@ -308,31 +494,47 @@ test:ffmpeg-6.1:jp6:                         # path C
           - FFVER: "6.1"
 
 test:ffmpeg-7.0:jp6:                         # path C
-  <<: *hw-test
+  extends: .hw-fast
   needs:
     - job: "ffmpeg:jp6"
       parallel:
         matrix:
           - FFVER: "7.0"
 
-test:ffmpeg-7.1:jp6:                         # path C
-  <<: *hw-test
+test:ffmpeg-7.0:jp6:full:                         # path C
+  extends: .hw-full-twin
   needs:
     - job: "ffmpeg:jp6"
       parallel:
         matrix:
-          - FFVER: "7.1"
+          - FFVER: "7.0"
 
 test:ffmpeg-8.0:jp6:                         # path D
-  <<: *hw-test
+  extends: .hw-fast
   needs:
     - job: "ffmpeg:jp6"
       parallel:
         matrix:
           - FFVER: "8.0"
 
+test:ffmpeg-8.0:jp6:full:                         # path D
+  extends: .hw-full-twin
+  needs:
+    - job: "ffmpeg:jp6"
+      parallel:
+        matrix:
+          - FFVER: "8.0"
+
+test:ffmpeg-7.1:jp6:                         # path C
+  extends: .hw-full
+  needs:
+    - job: "ffmpeg:jp6"
+      parallel:
+        matrix:
+          - FFVER: "7.1"
+
 test:ffmpeg-8.1:jp6:                         # path D
-  <<: *hw-test
+  extends: .hw-full
   needs:
     - job: "ffmpeg:jp6"
       parallel:
