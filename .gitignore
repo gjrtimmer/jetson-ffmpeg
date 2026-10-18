@@ -36,3 +36,4 @@ _ffmpeg/
 
 # Local working dir for specs/plans/design docs (not tracked)
 .work/
+.DS_Store
