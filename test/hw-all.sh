@@ -8,6 +8,8 @@
 # Usage:
 #   JETSON_VARIANT=orin-nx test/hw-all.sh           # all suites
 #   HW_SUITES="decoder-chunk encoder-gop" test/hw-all.sh   # subset
+#   HW_SUITES_EXCLUDE="soak-decode pthread-guard" test/hw-all.sh  # skip some
+#     (CI fast tier: stress suites are excluded, new suites run by default)
 #
 # CI log contract (what you see when something breaks):
 #   - PASSING suites are wrapped in collapsed GitLab sections (noise hidden).
@@ -67,6 +69,7 @@ section_end()   { [ -n "${GITLAB_CI:-}" ] && printf '\e[0Ksection_end:%s:%s\r\e[
 
 results="" fail=0
 for s in $SUITES; do
+  case " ${HW_SUITES_EXCLUDE:-} " in *" $s "*) echo "[i] skipping suite ${s} (HW_SUITES_EXCLUDE)"; continue ;; esac
   script="$(resolve_script "$s")"
   if [ -z "$script" ] || [ ! -f "$script" ]; then
     echo "[E] unknown suite: ${s} (no ${script})" >&2
