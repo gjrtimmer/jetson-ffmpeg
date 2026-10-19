@@ -36,7 +36,6 @@
 
 stages:
   - build
-  - test   # only the docker component's (disabled) check jobs; no hw job uses it
   - test:hw-fast
   - test:hw-full
   - dist
