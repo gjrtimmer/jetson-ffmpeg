@@ -2,72 +2,8 @@
 #
 # CI pipeline for jetson-ffmpeg (nvmpi library + ffmpeg integration).
 #
-# CI image builds use the docker component from the GitLab catalog:
-#   https://gitlab.timmertech.nl/templates/components/docker (arm64 template)
-# Buildkit cache is stored in Harbor via $HARBOR_REGISTRY_CACHE.
-
-include:
-  - component: gitlab.timmertech.nl/templates/components/docker/arm64@1.13.0
-    inputs:
-      name: "builder-jp6"
-      stage: build
-      dockerfile: ci/builder-jp6.Dockerfile
-      tag: "harbor.local/jetson/jetson-ffmpeg-builder:${L4T_TAG}"
-      tags: "--tag docker.io/${DOCKERHUB_USERNAME}/jetson-ffmpeg-builder:${L4T_TAG}"
-      args: "--build-arg=L4T_TAG=$L4T_TAG"
-      before:
-        - 'echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin'
-      cache: true
-      cache_tag: "builder-jp6"
-      check: false
-  - component: gitlab.timmertech.nl/templates/components/docker/arm64@1.13.0
-    inputs:
-      name: "l4t-jetpack6"
-      stage: build
-      dockerfile: ci/l4t-jetpack6.Dockerfile
-      tag: "harbor.local/jetson/l4t-jetpack6:${L4T_TAG}"
-      tags: "--tag docker.io/${DOCKERHUB_USERNAME}/l4t-jetpack6:${L4T_TAG}"
-      args: "--build-arg=L4T_TAG=$L4T_TAG"
-      before:
-        - 'echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin'
-      cache: false
-      check: false
-  - component: gitlab.timmertech.nl/templates/components/docker/arm64@1.13.0
-    inputs:
-      name: "l4t-jetpack5"
-      stage: build
-      dockerfile: ci/l4t-jetpack5.Dockerfile
-      tag: "harbor.local/jetson/l4t-jetpack5:${L4T_TAG_JP5}"
-      tags: "--tag docker.io/${DOCKERHUB_USERNAME}/l4t-jetpack5:${L4T_TAG_JP5}"
-      args: "--build-arg=L4T_TAG=$L4T_TAG_JP5"
-      before:
-        - 'echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin'
-      cache: false
-      check: false
-  - component: gitlab.timmertech.nl/templates/components/docker/arm64@1.13.0
-    inputs:
-      name: "builder-jp5"
-      stage: build
-      dockerfile: ci/builder-jp5.Dockerfile
-      tag: "harbor.local/jetson/jetson-ffmpeg-builder-jp5:${L4T_TAG_JP5}"
-      tags: "--tag docker.io/${DOCKERHUB_USERNAME}/jetson-ffmpeg-builder-jp5:${L4T_TAG_JP5}"
-      args: "--build-arg=L4T_TAG=$L4T_TAG_JP5"
-      before:
-        - 'echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin'
-      cache: true
-      cache_tag: "builder-jp5"
-      check: false
-  - component: gitlab.timmertech.nl/templates/components/docker/arm64@1.13.0
-    inputs:
-      name: "release-tools"
-      stage: build
-      dockerfile: ci/release-tools.Dockerfile
-      tag: "docker.io/${DOCKERHUB_USERNAME}/jetson-ffmpeg-release-tools:latest"
-      before:
-        - 'echo "$DOCKERHUB_TOKEN" | docker login -u "$DOCKERHUB_USERNAME" --password-stdin'
-      cache: true
-      cache_tag: "release-tools"
-      check: false
+# CI images (builders, hw runtime, release tools) are built and published by
+# timmertech/jetson-builder; this pipeline pins immutable tags (JETSON_BUILDER_SHA).
 #
 # Two kinds of pipeline:
 #
@@ -117,7 +53,6 @@ stages:
   - "ffmpeg/**/*"
   - "scripts/**/*"
   - "vendor/**/*"
-  - "ci/**/*"
   - ".gitlab-ci.yml"
   - "test/**/*.sh"
   - "test/**/*.c"
@@ -127,7 +62,7 @@ stages:
 #   tag                -> release pipeline (dist + release only)
 #   merge request      -> builds + tiered hw tests (7.1/8.1 full, rest fast)
 #   web/schedule/api   -> HW_TIER as chosen in the UI / schedule variable
-#                         (default none; nightly schedule sets full)
+#                         (default none; the weekly schedule sets full)
 #   pipeline/trigger   -> full (cross-project trigger, e.g. from jetson-nvmpi)
 #   branch w/ open MR  -> none (the MR pipeline covers it)
 #   main push          -> builds only (hw tests already ran in the MR)
@@ -158,12 +93,6 @@ workflow:
         HW_TIER: "none"
 
 variables:
-  BUILD_IMAGES:
-    value: "false"
-    description: "Build and push CI Docker images"
-    options:
-      - "false"
-      - "true"
   HW_TIER:
     value: "none"
     description: "Hardware test tier: none = builds only, tiered = 7.1/8.1 full + other versions fast (stress suites skipped), full = all suites on all versions"
@@ -176,9 +105,14 @@ variables:
   L4T_TAG_JP5: "r35.4.1"
   NVMPI_PREFIX: "${CI_PROJECT_DIR}/_nvmpi"
   FFMPEG_PREFIX: "${CI_PROJECT_DIR}/_ffmpeg"
-  BUILDER_IMAGE: "harbor.local/jetson/jetson-ffmpeg-builder:${L4T_TAG}"
-  BUILDER_IMAGE_JP5: "harbor.local/jetson/jetson-ffmpeg-builder-jp5:${L4T_TAG_JP5}"
-  RELEASE_IMAGE: "harbor.local/docker.io/${DOCKERHUB_USERNAME}/jetson-ffmpeg-release-tools:latest"
+  # Images are built by timmertech/jetson-builder. Immutable tags are
+  # <tag>-<sha8> of the jetson-builder commit that built them; bump
+  # JETSON_BUILDER_SHA to adopt new images (cached by if-not-present).
+  JETSON_BUILDER_SHA: "ffd27ba0"
+  BUILDER_IMAGE: "harbor.local/jetson/jetson-ffmpeg-builder:${L4T_TAG}-${JETSON_BUILDER_SHA}"
+  BUILDER_IMAGE_JP5: "harbor.local/jetson/jetson-ffmpeg-builder-jp5:${L4T_TAG_JP5}-${JETSON_BUILDER_SHA}"
+  RUNTIME_IMAGE: "harbor.local/jetson/l4t-jetpack6:${L4T_TAG}-${JETSON_BUILDER_SHA}"
+  RELEASE_IMAGE: "harbor.local/jetson/jetson-ffmpeg-release-tools:latest-${JETSON_BUILDER_SHA}"
 
 # Reusable pipeline rules:
 #   .not-on-tag — branch/MR work; skipped on tag pipelines
@@ -186,8 +120,6 @@ variables:
 .not-on-tag: &not-on-tag
   rules:
     - if: '$CI_COMMIT_TAG'
-      when: never
-    - if: '$BUILD_IMAGES == "true"'
       when: never
     # Docs-only MRs build nothing (ci:docs-only keeps the pipeline non-empty).
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
@@ -198,14 +130,12 @@ variables:
     - when: on_success
 .only-tag: &only-tag
   rules:
-    - if: '$BUILD_IMAGES == "true"'
-      when: never
     - if: '$CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+$/'
 
 default:
   image:
     name: "${BUILDER_IMAGE}"
-    pull_policy: always
+    pull_policy: if-not-present
 
 # ---------------------------------------------------------------------------
 # Stage: build — compile nvmpi (stubs), then patch/build each ffmpeg version
@@ -226,11 +156,11 @@ ci:docs-only:
   script:
     - echo "docs-only change - no build or hardware test needed"
 
-# ccache for compile jobs. It only takes effect once the builder image ships
-# ccache (the scripts check `command -v ccache`), and is a no-op before that.
+# ccache for compile jobs (guaranteed in the jetson-builder builder images).
 .ccache:
   variables:
     CCACHE_DIR: "${CI_PROJECT_DIR}/.ccache"
+    CCACHE_BASEDIR: "${CI_PROJECT_DIR}"
     CCACHE_SLOPPINESS: "include_file_mtime,include_file_ctime,time_macros"
     CCACHE_COMPILERCHECK: "content"
     CCACHE_MAXSIZE: "500M"
@@ -246,12 +176,10 @@ nvmpi:jp6:
   <<: *not-on-tag
   script:
     - mkdir -p build && cd build
-    - CCACHE_ARGS=""
-    - if command -v ccache >/dev/null 2>&1; then CCACHE_ARGS="-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache"; fi
-    - cmake -DCMAKE_INSTALL_PREFIX="${NVMPI_PREFIX}" -DCMAKE_BUILD_TYPE=Release -DWITH_STUBS=ON ${CCACHE_ARGS} ..
+    - cmake -DCMAKE_INSTALL_PREFIX="${NVMPI_PREFIX}" -DCMAKE_BUILD_TYPE=Release -DWITH_STUBS=ON -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache ..
     - make -j"$(nproc)"
     - make install
-    - if command -v ccache >/dev/null 2>&1; then ccache -s; fi
+    - ccache -s
   artifacts:
     paths:
       - _nvmpi/
@@ -270,12 +198,10 @@ nvmpi:jp5:
     pull_policy: if-not-present
   script:
     - mkdir -p build && cd build
-    - CCACHE_ARGS=""
-    - if command -v ccache >/dev/null 2>&1; then CCACHE_ARGS="-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache"; fi
-    - cmake -DCMAKE_INSTALL_PREFIX="${NVMPI_PREFIX}" -DCMAKE_BUILD_TYPE=Release -DWITH_STUBS=ON ${CCACHE_ARGS} ..
+    - cmake -DCMAKE_INSTALL_PREFIX="${NVMPI_PREFIX}" -DCMAKE_BUILD_TYPE=Release -DWITH_STUBS=ON -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache ..
     - make -j"$(nproc)"
     - make install
-    - if command -v ccache >/dev/null 2>&1; then ccache -s; fi
+    - ccache -s
   artifacts:
     paths:
       - _nvmpi/
@@ -289,11 +215,6 @@ nvmpi:jp5:
   variables:
     # Paths inside the cloned tree must hash identically across jobs.
     CCACHE_BASEDIR: "/tmp/ffmpeg"
-    CCACHE_DIR: "${CI_PROJECT_DIR}/.ccache"
-    CCACHE_SLOPPINESS: "include_file_mtime,include_file_ctime,time_macros"
-    CCACHE_COMPILERCHECK: "content"
-    CCACHE_MAXSIZE: "500M"
-    CCACHE_COMPRESS: "1"
   script:
     - echo "=== ffmpeg ${FFVER} ==="
     - git clone --depth=1 -b "release/${FFVER}" https://git.ffmpeg.org/ffmpeg.git /tmp/ffmpeg
@@ -317,21 +238,18 @@ nvmpi:jp5:
       probe gnutls        --enable-gnutls
       echo "[i] optional flags:${OPT:- (none)}"
     - |
-      # Wrap gcc in ccache when the builder image ships it.
-      CCACHE_CC=""
-      if command -v ccache >/dev/null 2>&1; then CCACHE_CC="ccache "; fi
       ./configure \
         --prefix="${FFMPEG_PREFIX}" \
         --enable-shared --disable-static --disable-doc \
         --enable-gpl --enable-nvmpi \
-        --cc="${CCACHE_CC}gcc" \
+        --cc="ccache gcc" \
         --extra-cflags="-I${CI_PROJECT_DIR}/include" \
         --extra-ldflags="-L${CI_PROJECT_DIR}/build -L${CI_PROJECT_DIR}/stubs -Wl,-rpath-link,${CI_PROJECT_DIR}/stubs" \
         ${OPT}
     - make -j"$(nproc)"
     - make install
     - cp -a ${NVMPI_PREFIX}/lib/libnvmpi* ${FFMPEG_PREFIX}/lib/
-    - if command -v ccache >/dev/null 2>&1; then ccache -s; fi
+    - ccache -s
   artifacts:
     paths:
       - _ffmpeg/
@@ -349,7 +267,7 @@ ffmpeg:jp5:
   <<: *ffmpeg-build
   image:
     name: "${BUILDER_IMAGE_JP5}"
-    pull_policy: always
+    pull_policy: if-not-present
   needs: ["nvmpi:jp5"]
   parallel:
     matrix:
@@ -363,7 +281,7 @@ ffmpeg:jp5:
 #   tiered - MR default. 7.1 and 8.1 run ALL suites (.hw-full); the other
 #            versions run the fast tier (.hw-fast) = everything except the
 #            stress suites listed in HW_SUITES_EXCLUDE.
-#   full   - everything, on every version (nightly / web / cross-project trigger)
+#   full   - everything, on every version (weekly schedule / web / cross-project trigger)
 #
 # Each version reuses its build artifact (installed ffmpeg + libnvmpi), no
 # rebuild on the Jetson runner.
@@ -392,8 +310,8 @@ ffmpeg:jp5:
 .hw-test:
   stage: test
   image:
-    name: "harbor.local/jetson/l4t-jetpack6:${L4T_TAG}"
-    pull_policy: always
+    name: "${RUNTIME_IMAGE}"
+    pull_policy: if-not-present
   tags: [jetson, "${JETSON_VARIANT}"]
   # Serialize all Jetson work (one job at a time) so per-version tests
   # don't thrash a single device.
@@ -414,10 +332,10 @@ ffmpeg:jp5:
     - ldconfig || true
     - bash test/hw-all.sh
 
-# Rules. Each set: skip on tags and image-build pipelines, skip docs-only MRs
+# Rules. Each set: skip on tags, skip docs-only MRs
 # (no build jobs exist to need), then gate on HW_TIER.
 .hw-rules-full-any: &hw-rules-full-any   # runs whenever HW_TIER != none
-  - if: '$CI_COMMIT_TAG || $BUILD_IMAGES == "true" || $HW_TIER == "none"'
+  - if: '$CI_COMMIT_TAG || $HW_TIER == "none"'
     when: never
   - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     changes: *code-paths
@@ -425,7 +343,7 @@ ffmpeg:jp5:
     when: never
   - when: on_success
 .hw-rules-tiered: &hw-rules-tiered       # runs only when HW_TIER == tiered
-  - if: '$CI_COMMIT_TAG || $BUILD_IMAGES == "true" || $HW_TIER != "tiered"'
+  - if: '$CI_COMMIT_TAG || $HW_TIER != "tiered"'
     when: never
   - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     changes: *code-paths
@@ -433,7 +351,7 @@ ffmpeg:jp5:
     when: never
   - when: on_success
 .hw-rules-full: &hw-rules-full           # runs only when HW_TIER == full
-  - if: '$CI_COMMIT_TAG || $BUILD_IMAGES == "true" || $HW_TIER != "full"'
+  - if: '$CI_COMMIT_TAG || $HW_TIER != "full"'
     when: never
   - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
     changes: *code-paths
@@ -616,7 +534,7 @@ dist:jp5:
   extends: .dist
   image:
     name: "${BUILDER_IMAGE_JP5}"
-    pull_policy: always
+    pull_policy: if-not-present
   variables:
     L4T_TAG: "${L4T_TAG_JP5}"
     L4T_SOC: "t194"
@@ -637,7 +555,7 @@ release:
   <<: *only-tag
   image:
     name: "${RELEASE_IMAGE}"
-    pull_policy: always
+    pull_policy: if-not-present
   needs:
     - job: "dist:jp6"
     - job: "dist:jp5"
@@ -659,66 +577,3 @@ release:
   script:
     - git fetch --tags --force || true
     - bash ./scripts/release.sh
-
-# ---------------------------------------------------------------------------
-# Docker image build overrides — rules for component-generated jobs.
-#
-# The docker component (included above) creates docker:builder-jp6,
-# docker:l4t-jetpack6, etc. We override their rules so images are ONLY
-# built when BUILD_IMAGES=true (pipeline UI dropdown or scheduled).
-# Dockerfile changes alone do NOT trigger builds — the images are large
-# and slow; rebuild explicitly when ready.
-#
-# Buildkit cache: enabled via component inputs; cache images stored in
-# $HARBOR_REGISTRY_CACHE/$CI_PROJECT_PATH:<cache_tag>.
-# Requires CI vars: DOCKER_AUTH_CONFIG, DOCKERHUB_USERNAME, DOCKERHUB_TOKEN.
-# ---------------------------------------------------------------------------
-docker:builder-jp6:
-  image:
-    name: "${DOCKER_HUB_PROXY}/docker:28.2.2-cli"
-    pull_policy: always
-  rules:
-    - if: '$CI_COMMIT_TAG'
-      when: never
-    - if: '$BUILD_IMAGES == "true"'
-    - when: never
-
-docker:l4t-jetpack6:
-  image:
-    name: "${DOCKER_HUB_PROXY}/docker:28.2.2-cli"
-    pull_policy: always
-  rules:
-    - if: '$CI_COMMIT_TAG'
-      when: never
-    - if: '$BUILD_IMAGES == "true"'
-    - when: never
-
-docker:l4t-jetpack5:
-  image:
-    name: "${DOCKER_HUB_PROXY}/docker:28.2.2-cli"
-    pull_policy: always
-  rules:
-    - if: '$CI_COMMIT_TAG'
-      when: never
-    - if: '$BUILD_IMAGES == "true"'
-    - when: never
-
-docker:builder-jp5:
-  image:
-    name: "${DOCKER_HUB_PROXY}/docker:28.2.2-cli"
-    pull_policy: always
-  rules:
-    - if: '$CI_COMMIT_TAG'
-      when: never
-    - if: '$BUILD_IMAGES == "true"'
-    - when: never
-
-docker:release-tools:
-  image:
-    name: "${DOCKER_HUB_PROXY}/docker:28.2.2-cli"
-    pull_policy: always
-  rules:
-    - if: '$CI_COMMIT_TAG'
-      when: never
-    - if: '$BUILD_IMAGES == "true"'
-    - when: never
