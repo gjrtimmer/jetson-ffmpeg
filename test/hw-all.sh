@@ -9,8 +9,8 @@
 # Usage:
 #   JETSON_VARIANT=orin-nx test/hw-all.sh           # all suites
 #   HW_SUITES="decoder-chunk encoder-gop" test/hw-all.sh   # subset
-#   HW_SUITES_EXCLUDE="soak-decode encoder-nonblock" test/hw-all.sh  # skip some
-#     (CI fast tier: stress suites are excluded, new suites run by default)
+#   HW_SUITES_EXCLUDE="soak-decode encoder-modes" test/hw-all.sh  # skip some
+#     (CI fast tier: only soak-decode is excluded, new suites run by default)
 #
 # CI log contract (what you see when something breaks):
 #   - PASSING suites are wrapped in collapsed GitLab sections (noise hidden).
