@@ -20,7 +20,7 @@ FFmpeg does not depend on this repo at runtime beyond `libnvmpi.so`; the integra
 - `test/` — per-feature hardware suites (`hw-*.sh`) run by `hw-all.sh` (auto-discovery; see `test/README.md`), `gen-samples.sh` (shared sample generators), and `smoke-all.sh` (full cross-version build + hw-all). FFmpeg sources are fetched by `scripts/clone-ffmpeg.sh`.
 - Prose documentation lives in the **[project wiki](https://github.com/gjrtimmer/jetson-ffmpeg/wiki)** (`jetson-ffmpeg.wiki.git`), not in-repo — the `docs/` folder has been retired. Script/alias reference: [Scripts and Commands](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Scripts-and-Commands).
 
-Supported FFmpeg versions: 4.2, 4.4, 6.0, 6.1, 7.0, 7.1, 8.0, 8.1 (libavcodec 58→62).
+Supported FFmpeg versions: 6.0, 6.1, 7.0, 7.1, 8.0, 8.1 (libavcodec 60→62). 4.2 and 4.4 are retired since v3.0.0 (last release: v2.10.0). To add one, use the `add-ffmpeg-version` skill.
 
 ## Build & test commands
 
@@ -586,10 +586,14 @@ default for all sessions in this repo — do not wait for the user to request it
   (MR merge → main pipeline green) must complete before starting the next.
   Do not overlap — one issue at a time unless the user explicitly says
   otherwise.
-- **Pipeline tiers (`HW_TIER`).** MR pipelines run `tiered` (all builds, all
-  fast hw suites on every version, stress suites on 7.1 + 8.1). A push to
-  `main` runs **builds only** (~15 min, `HW_TIER=none`): "main pipeline
-  green" after a merge means builds green, not hw. Docs-only changes create
+- **Pipeline tiers (`HW_TIER`).** MR pipelines run `tiered` (all builds, the
+  `test:stub` stage, all fast hw suites on every version, soak + stress
+  suites on 7.1 + 8.1). `test:stub` runs the mockable suites against the
+  nvmpi mock on plain K3s runners in parallel with the hw jobs; it is
+  additive (never replaces a hw run, never runs on tags) and a failure
+  cancels queued hw jobs (`auto_cancel`). A push to `main` runs **builds +
+  `test:stub` only** (`HW_TIER=none`): "main pipeline green" after a merge
+  means builds and mock tests green, not hw. Docs-only changes create
   no pipeline (MRs get a `ci:docs-only` job). The weekly schedule on `main`
   (Sunday 02:00) and web runs set `HW_TIER=full` (every suite × every version on the Orin).
   MRs are merged fast-forward (`merge_method=ff`): rebase the MR branch when
@@ -597,7 +601,10 @@ default for all sessions in this repo — do not wait for the user to request it
 - **Pre-tag gate = full-tier pipeline green on the tag's SHA.** Before
   tagging, confirm the latest weekly run (or a web run with `HW_TIER=full`) on
   that exact `main` SHA is `success`; if none exists, start one and wait. A
-  green post-merge main pipeline alone is NOT enough (builds only).
+  green post-merge main pipeline alone is NOT enough (builds + stub only).
+  The tag pipeline then enforces the full tier itself: `release:test:ffmpeg-*`
+  (every suite on the Orin, every version) gate `dist:*` and `release`, so a
+  red hw run means no release (#121).
 - **The Orin runner is shared with jetson-nvmpi.** `resource_group` only
   serializes within one project, so jetson-nvmpi `test:api` jobs and
   jetson-ffmpeg hw jobs can run on the Orin concurrently and hang the Tegra
