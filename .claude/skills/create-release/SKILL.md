@@ -146,6 +146,11 @@ glab api "projects/timmertech%2Fjetson-ffmpeg/pipelines?ref=main&per_page=10" \
 If no full-tier pipeline succeeded on HEAD, start one
 (`glab ci run -b main --variables HW_TIER:full`) and wait for it (600s polls).
 
+The tag pipeline enforces the same full tier itself (`release:test:ffmpeg-<ver>`
+jobs in the `release-test` stage; `dist:*` and `release` need all of them), so
+a red hardware run can never produce a release. Keep the pre-tag check anyway:
+it surfaces failures before a tag exists.
+
 If everything is green and no open MRs → skip to Phase 3.
 
 ---
