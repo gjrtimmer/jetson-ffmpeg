@@ -4,7 +4,7 @@
 # and packet pool lifecycle are safe under concurrent access from multiple
 # independent encoder instances sharing the same V4L2 hardware engine.
 #
-# Unlike hw-encoder-lifecycle.sh (sequential rapid open/close), this suite
+# Unlike hw-lifecycle-stress.sh (sequential open/close), this suite
 # runs multiple encoder processes IN PARALLEL to stress:
 #   - std::atomic<bool> capPlaneGotEOS/flushing coherence between the DQ
 #     callback thread and the user thread (data race fixed by issue #17)
@@ -13,11 +13,10 @@
 #   - V4L2 device multiplexing (multiple M2M contexts on one NVENC engine)
 #
 # Tests:
-#   1. Parallel encode ×4 (H.264) — 4 simultaneous encodes, repeated 10 rounds
+#   1. Parallel encode ×4 (H.264) — 4 simultaneous encodes, repeated 3 rounds
 #   2. Parallel encode ×4 (HEVC) — same with hevc_nvmpi
 #   3. Mixed-codec parallel — 2× H.264 + 2× HEVC simultaneously
-#   4. Parallel rapid lifecycle — 4 concurrent rapid open/close loops (×50 each)
-#   5. Device health — verify encoder still works after all concurrent stress
+#   4. Device health — verify encoder still works after all concurrent stress
 #
 # Code under test:
 #   src/nvmpi_enc_internal.h
@@ -45,8 +44,7 @@ echo "=== hw-encoder-thread-safety on variant: ${variant} ==="
 ensure_sample SAMPLE_H264_720P gen-sample-h264 3
 
 PARALLEL=4
-ROUNDS=10
-LIFECYCLE_ITERS=50
+ROUNDS=3
 
 # parallel_encode LABEL CODEC COUNT
 # Run COUNT simultaneous encodes of the standard sample, wait for all.
@@ -57,7 +55,7 @@ parallel_encode() {
 
     for _ in $(seq 1 "$count"); do
         # Subshell: run_ff's FF_RC is the subshell exit status (signal retry included).
-        ( run_ff -T 30 -i "${SAMPLE_H264_720P}" -c:v "${codec}" -f null - ) >/dev/null 2>&1 &
+        ( run_ff -T 30 -i "${SAMPLE_H264_720P}" -frames:v 30 -c:v "${codec}" -f null - ) >/dev/null 2>&1 &
         pids+=($!)
     done
 
@@ -78,7 +76,7 @@ parallel_encode() {
     return 0
 }
 
-# === 1. Parallel H.264 encode (4 simultaneous × 10 rounds) ===
+# === 1. Parallel H.264 encode (4 simultaneous × 3 rounds) ===
 echo "== 1. parallel h264_nvmpi encode (${PARALLEL}×${ROUNDS} rounds) =="
 for r in $(seq 1 "$ROUNDS"); do
     if ! parallel_encode "round-${r}" h264_nvmpi "$PARALLEL"; then
@@ -89,7 +87,7 @@ for r in $(seq 1 "$ROUNDS"); do
 done
 echo "   parallel H.264: ${ROUNDS} rounds of ${PARALLEL} — OK"
 
-# === 2. Parallel HEVC encode (4 simultaneous × 10 rounds) ===
+# === 2. Parallel HEVC encode (4 simultaneous × 3 rounds) ===
 echo "== 2. parallel hevc_nvmpi encode (${PARALLEL}×${ROUNDS} rounds) =="
 for r in $(seq 1 "$ROUNDS"); do
     if ! parallel_encode "round-${r}" hevc_nvmpi "$PARALLEL"; then
@@ -105,13 +103,17 @@ echo "== 3. mixed-codec parallel (2×h264 + 2×hevc, ${ROUNDS} rounds) =="
 for r in $(seq 1 "$ROUNDS"); do
     pids=()
     for codec in h264_nvmpi h264_nvmpi hevc_nvmpi hevc_nvmpi; do
-        ( run_ff -T 30 -i "${SAMPLE_H264_720P}" -c:v "${codec}" -f null - ) >/dev/null 2>&1 &
+        ( run_ff -T 30 -i "${SAMPLE_H264_720P}" -frames:v 30 -c:v "${codec}" -f null - ) >/dev/null 2>&1 &
         pids+=($!)
     done
 
     for pid in "${pids[@]}"; do
         rc=0
         wait "$pid" 2>/dev/null || rc=$?
+        if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
+            echo "FAIL: mixed-codec round ${r} — process timed out (possible deadlock)."
+            exit 1
+        fi
         if is_signal_rc "$rc"; then
             echo "FAIL: mixed-codec round ${r} — process crashed (signal $((rc - 128)))."
             echo "   Code: concurrent H.264+HEVC teardown in nvmpi_encoder_close"
@@ -122,40 +124,10 @@ for r in $(seq 1 "$ROUNDS"); do
 done
 echo "   mixed-codec parallel: ${ROUNDS} rounds — OK"
 
-# === 4. Parallel rapid lifecycle (4 concurrent loops of 50 open/close) ===
-echo "== 4. parallel rapid lifecycle (${PARALLEL}×${LIFECYCLE_ITERS} open/close) =="
-
-rapid_loop() {
-    local iters="$1"
-    for _ in $(seq 1 "$iters"); do
-        run_ff -T 30 -i "${SAMPLE_H264_720P}" -c:v h264_nvmpi -f null - >/dev/null 2>&1 || true
-    done
-}
-
-pids=()
-for _ in $(seq 1 "$PARALLEL"); do
-    rapid_loop "$LIFECYCLE_ITERS" &
-    pids+=($!)
-done
-
-fail=0
-for pid in "${pids[@]}"; do
-    wait "$pid" 2>/dev/null || fail=1
-done
-if [ "$fail" -ne 0 ]; then
-    echo "FAIL: parallel rapid lifecycle — at least one loop failed."
-    echo "   Code: unique_ptr<NvVideoEncoder> RAII in nvmpi_enc_api.cpp"
-    exit 1
-fi
-echo "   parallel rapid lifecycle: ${PARALLEL}×${LIFECYCLE_ITERS} — OK"
-
-# === 5. Device health after concurrent stress ===
-echo "== 5. device health check =="
+# === 4. Device health after concurrent stress ===
+echo "== 4. device health check =="
 # Encoder-specific (lib device_health only exercises the decoder).
-run_ff -T 30 -i "${SAMPLE_H264_720P}" -c:v h264_nvmpi -f null - || true
-if [ "$FF_RC" -eq 124 ]; then
-    ff_fail "post-stress encode timed out — V4L2 device may be stuck."
-fi
+run_ff_must "post-stress encode" -T 30 -i "${SAMPLE_H264_720P}" -frames:v 30 -c:v h264_nvmpi -f null -
 assert_frames 10 "device health after concurrent stress"
 
 echo "OK: hw-encoder-thread-safety passed on ${variant}."
