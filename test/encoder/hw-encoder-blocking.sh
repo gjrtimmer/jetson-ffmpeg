@@ -20,11 +20,11 @@ OUT=/tmp/nvmpi-out-blocking.mp4
 
 # Helper: encode and verify frame count
 encode_check() {
-  local enc="$1" flags="$2" extra="$3" label="$4" expect="$5"
+  local enc="$1" flags="$2" extra="$3" label="$4" expect="$5" secs="${6:-60}"
   local packets
 
   # shellcheck disable=SC2086
-  run_ff_must "${label} encode" -T 60 \
+  run_ff_must "${label} encode" -T "$secs" \
     -f lavfi -i testsrc2=s=1280x720:r=30 \
     -frames:v ${FRAMES} -c:v "$enc" -b:v 3M ${flags} ${extra} \
     "$OUT"
@@ -52,7 +52,9 @@ encode_check h264_nvmpi "" "" "h264 default" "$FRAMES"
 # --- custom wait_timeout ---
 
 echo "== h264_nvmpi: -flags low_delay -wait_timeout 1000 =="
-encode_check h264_nvmpi "-flags low_delay" "-wait_timeout 1000" "h264 low_delay+timeout=1000" "$FRAMES"
+# low_delay blocks up to wait_timeout per frame while the encoder is idle
+# (~1 s x 60 frames, see #103), so this call is legitimately slow: 240 s budget.
+encode_check h264_nvmpi "-flags low_delay" "-wait_timeout 1000" "h264 low_delay+timeout=1000" "$FRAMES" 240
 
 # --- early termination with low_delay (clean shutdown, no hang) ---
 
