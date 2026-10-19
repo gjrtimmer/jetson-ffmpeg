@@ -23,15 +23,13 @@ test/
 │   ├── hw-decoder-flush.sh
 │   ├── hw-decoder-lifecycle.sh
 │   ├── hw-decoder-mjpeg.sh
-│   ├── hw-decoder-pool.sh
-│   └── hw-decoder-teardown.sh
+│   └── hw-decoder-pool.sh
 ├── encoder/               # NVENC encoder suites
 │   ├── hw-encoder-blocking.sh
 │   ├── hw-encoder-gop.sh
 │   ├── hw-encoder-header.sh
 │   ├── hw-encoder-jpeg.sh
 │   ├── hw-encoder-level.sh
-│   ├── hw-encoder-lifecycle.sh
 │   ├── hw-encoder-pools.sh
 │   └── hw-encoder-thread-safety.sh
 ├── filter/                # VIC filter suites
@@ -40,7 +38,7 @@ test/
 │   └── hw-format-pixfmt.sh
 ├── integration/           # cross-subsystem and smoke suites
 │   ├── hw-smoke.sh
-│   ├── hw-pthread-guard.sh
+│   ├── hw-lifecycle-stress.sh
 │   ├── hw-rtp-sdp.sh
 │   └── hw-soak-decode.sh
 ├── perf/                  # performance / latency suites
@@ -59,7 +57,7 @@ test/
 | `encoder/` | NVENC encode paths: lifecycle, GOP, headers, levels, pools, blocking, JPEG, thread safety |
 | `filter/` | VIC hardware scale/CSC filter |
 | `format/` | Pixel format and container support |
-| `integration/` | Cross-subsystem smoke tests, RTP/SDP, soak tests, pthread guard |
+| `integration/` | Cross-subsystem smoke tests, RTP/SDP, soak tests, lifecycle stress (open/close + pthread guard) |
 | `perf/` | Performance benchmarks and latency measurements (non-fatal) |
 
 ## Running
