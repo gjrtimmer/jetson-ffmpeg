@@ -25,11 +25,11 @@ test/
 │   ├── hw-decoder-mjpeg.sh
 │   └── hw-decoder-pool.sh
 ├── encoder/               # NVENC encoder suites
-│   ├── hw-encoder-blocking.sh
 │   ├── hw-encoder-gop.sh
 │   ├── hw-encoder-header.sh
 │   ├── hw-encoder-jpeg.sh
 │   ├── hw-encoder-level.sh
+│   ├── hw-encoder-modes.sh
 │   ├── hw-encoder-pools.sh
 │   └── hw-encoder-thread-safety.sh
 ├── filter/                # VIC filter suites
@@ -43,7 +43,6 @@ test/
 │   └── hw-soak-decode.sh
 ├── perf/                  # performance / latency suites
 │   ├── hw-perf-bench.sh
-│   ├── hw-perf-blocking-wait.sh
 │   └── hw-perf-mode.sh
 ├── unit/                  # off-device unit tests (no Jetson required)
 │   └── test_bufpool.cpp
@@ -166,8 +165,8 @@ enables `external-sources`).
 
 ## Where these run
 
-- **GitLab CI** (`.gitlab-ci.yml`): `test:hw-fast:ffmpeg-<ver>` (stress/soak
-  suites excluded) and `test:hw-full:ffmpeg-<ver>` (all suites; 7.1 and 8.1 in
+- **GitLab CI** (`.gitlab-ci.yml`): `test:hw-fast:ffmpeg-<ver>` (only the soak
+  suite excluded) and `test:hw-full:ffmpeg-<ver>` (all suites; 7.1 and 8.1 in
   every MR, all versions in the weekly full run), each executing
   `test/hw-all.sh` on the Jetson runner matrix. Jobs `needs:` their build and
   start right after it; a failed job cancels the rest of the pipeline.
