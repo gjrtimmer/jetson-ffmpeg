@@ -28,15 +28,17 @@
 #
 # To add a new FFmpeg version:
 #   1. Add the version string to the FFVER matrix in ffmpeg:jp6 and ffmpeg:jp5
-#   2. Add a hw job pair for it: test:ffmpeg-<ver>:jp6 (extends .hw-fast) and
-#      test:ffmpeg-<ver>:jp6:full (extends .hw-full-twin), both with the
-#      matching needs reference (see the stage: test section)
+#   2. Add a hw job pair for it: test:hw-fast:ffmpeg-<ver> (extends .hw-fast)
+#      and test:hw-full:ffmpeg-<ver> (extends .hw-full-twin), both with the
+#      matching needs reference (see the test:hw-fast / test:hw-full stages)
 #   3. Add the version to the FFVER matrix in dist:jp6 and dist:jp5
 #      (ffmpeg:jp5 only builds the oldest + newest version as a compile check)
 
 stages:
   - build
-  - test
+  - test   # only the docker component's (disabled) check jobs; no hw job uses it
+  - test:hw-fast
+  - test:hw-full
   - dist
   - release
 
@@ -68,7 +70,12 @@ stages:
 #   main push          -> builds only (hw tests already ran in the MR)
 #   other branch push  -> builds only, and only if code changed vs main
 # Variables set here lose against UI/schedule/trigger variables.
+# auto_cancel: a failed job cancels every other pending/running job of the
+# pipeline, so a broken build never leaves the shared Orin churning through
+# doomed hardware jobs (GitLab >= 16.10).
 workflow:
+  auto_cancel:
+    on_job_failure: all
   rules:
     - if: '$CI_COMMIT_TAG'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
@@ -297,8 +304,10 @@ ffmpeg:jp5:
 # ABI/runtime differences between releases; HW_TIER=full runs them in full too.
 #
 # A job's timeout cannot vary per rule, so versions that run fast OR full have
-# two jobs: test:ffmpeg-<ver>:jp6 (fast, 10m) and
-# test:ffmpeg-<ver>:jp6:full (full, 30m).
+# two jobs: test:hw-fast:ffmpeg-<ver> (fast, 10m) and
+# test:hw-full:ffmpeg-<ver> (full, 30m). The tier is in the stage AND the job
+# name. Every test job `needs:` its own build job, so it starts the moment
+# that build finishes; the stages are visual grouping only.
 #
 # To add a hardware variant, add it to the matrix and register a runner with
 # tags: jetson, <variant>.
@@ -308,7 +317,6 @@ ffmpeg:jp5:
 # (suite name = hw-<name>.sh minus prefix). New suites default to the fast tier.
 # Referenced by .hw-fast below.
 .hw-test:
-  stage: test
   image:
     name: "${RUNTIME_IMAGE}"
     pull_policy: if-not-present
@@ -362,12 +370,14 @@ ffmpeg:jp5:
 # Full tier: all suites, 30 min (longest observed hw job ~17 min).
 .hw-full:
   extends: .hw-test
+  stage: test:hw-full
   timeout: 30m
   rules: *hw-rules-full-any
 
 # Fast tier: stress suites excluded, 10 min.
 .hw-fast:
   extends: .hw-test
+  stage: test:hw-fast
   timeout: 10m
   variables:
     # INVARIANT: the fast tier excludes ONLY these stress/soak suites. Every
@@ -381,10 +391,11 @@ ffmpeg:jp5:
 # Full twin of a fast job: same version, runs only at HW_TIER=full.
 .hw-full-twin:
   extends: .hw-test
+  stage: test:hw-full
   timeout: 30m
   rules: *hw-rules-full
 
-test:ffmpeg-6.0:jp6:                         # path C
+test:hw-fast:ffmpeg-6.0:                         # path C
   extends: .hw-fast
   needs:
     - job: "ffmpeg:jp6"
@@ -392,7 +403,7 @@ test:ffmpeg-6.0:jp6:                         # path C
         matrix:
           - FFVER: "6.0"
 
-test:ffmpeg-6.0:jp6:full:                         # path C
+test:hw-full:ffmpeg-6.0:                         # path C
   extends: .hw-full-twin
   needs:
     - job: "ffmpeg:jp6"
@@ -400,7 +411,7 @@ test:ffmpeg-6.0:jp6:full:                         # path C
         matrix:
           - FFVER: "6.0"
 
-test:ffmpeg-6.1:jp6:                         # path C
+test:hw-fast:ffmpeg-6.1:                         # path C
   extends: .hw-fast
   needs:
     - job: "ffmpeg:jp6"
@@ -408,7 +419,7 @@ test:ffmpeg-6.1:jp6:                         # path C
         matrix:
           - FFVER: "6.1"
 
-test:ffmpeg-6.1:jp6:full:                         # path C
+test:hw-full:ffmpeg-6.1:                         # path C
   extends: .hw-full-twin
   needs:
     - job: "ffmpeg:jp6"
@@ -416,7 +427,7 @@ test:ffmpeg-6.1:jp6:full:                         # path C
         matrix:
           - FFVER: "6.1"
 
-test:ffmpeg-7.0:jp6:                         # path C
+test:hw-fast:ffmpeg-7.0:                         # path C
   extends: .hw-fast
   needs:
     - job: "ffmpeg:jp6"
@@ -424,7 +435,7 @@ test:ffmpeg-7.0:jp6:                         # path C
         matrix:
           - FFVER: "7.0"
 
-test:ffmpeg-7.0:jp6:full:                         # path C
+test:hw-full:ffmpeg-7.0:                         # path C
   extends: .hw-full-twin
   needs:
     - job: "ffmpeg:jp6"
@@ -432,7 +443,7 @@ test:ffmpeg-7.0:jp6:full:                         # path C
         matrix:
           - FFVER: "7.0"
 
-test:ffmpeg-8.0:jp6:                         # path D
+test:hw-fast:ffmpeg-8.0:                         # path D
   extends: .hw-fast
   needs:
     - job: "ffmpeg:jp6"
@@ -440,7 +451,7 @@ test:ffmpeg-8.0:jp6:                         # path D
         matrix:
           - FFVER: "8.0"
 
-test:ffmpeg-8.0:jp6:full:                         # path D
+test:hw-full:ffmpeg-8.0:                         # path D
   extends: .hw-full-twin
   needs:
     - job: "ffmpeg:jp6"
@@ -448,7 +459,7 @@ test:ffmpeg-8.0:jp6:full:                         # path D
         matrix:
           - FFVER: "8.0"
 
-test:ffmpeg-7.1:jp6:                         # path C
+test:hw-full:ffmpeg-7.1:                         # path C
   extends: .hw-full
   needs:
     - job: "ffmpeg:jp6"
@@ -456,7 +467,7 @@ test:ffmpeg-7.1:jp6:                         # path C
         matrix:
           - FFVER: "7.1"
 
-test:ffmpeg-8.1:jp6:                         # path D
+test:hw-full:ffmpeg-8.1:                         # path D
   extends: .hw-full
   needs:
     - job: "ffmpeg:jp6"
