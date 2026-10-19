@@ -41,13 +41,9 @@ test/
 │   ├── hw-lifecycle-stress.sh
 │   ├── hw-rtp-sdp.sh
 │   └── hw-soak-decode.sh
-├── perf/                  # performance / latency suites
-│   ├── hw-perf-bench.sh
-│   └── hw-perf-mode.sh
-├── unit/                  # off-device unit tests (no Jetson required)
-│   └── test_bufpool.cpp
-└── api/                   # libnvmpi C API tests (no FFmpeg required)
-    └── test_api.c
+└── perf/                  # performance / latency suites
+    ├── hw-perf-bench.sh
+    └── hw-perf-mode.sh
 ```
 
 | Directory | What it covers |

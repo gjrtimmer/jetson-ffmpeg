@@ -6,12 +6,14 @@
 # -> runs every hardware suite via test/hw-all.sh. A pass/fail matrix is
 # printed at the end; the script exits non-zero if any version fails.
 #
-# This is the heaviest test in the repo: it builds libnvmpi and a full FFmpeg
-# for each version, and the hw stages REQUIRE a real Jetson (the nvmpi
+# This is the heaviest test in the repo: it builds a full FFmpeg for each
+# version, and the hw stages REQUIRE a real Jetson (the nvmpi
 # codecs have no software fallback).
 #
 # Prerequisites:
-#   - A real Jetson with the Multimedia API (for the hw stages).
+#   - A real Jetson with the Multimedia API (for the hw stages) and libnvmpi
+#     (jetson-nvmpi release: libnvmpi1 deb, or a tarball prefix via
+#     --nvmpi-prefix; see scripts/fetch-nvmpi.sh).
 #   - Build deps for FFmpeg incl. libx264 (the dev container installs these;
 #     in CI they are apt-installed). libx264 is needed because the hw suites
 #     generate their H.264 input with libx264. libx265 is optional — enabled
@@ -26,7 +28,7 @@
 #                 (default: $FFMPEG_SRC_DIR, else $HOME/ffmpeg-smoke)
 #   -j N          Parallel build jobs (default: nproc)
 #   -v "LIST"     Space-separated versions (default: full supported set)
-#   --no-nvmpi    Skip building/installing libnvmpi (assume already installed)
+#   --nvmpi-prefix DIR  Use the libnvmpi unpacked in DIR (default: the system one)
 #   -h, --help    Show this help
 #
 # Safe to run from any working directory.
@@ -38,14 +40,14 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 DEST="${FFMPEG_SRC_DIR:-$HOME/ffmpeg-smoke}"
 JOBS="$(nproc)"
 VERSIONS="6.0 6.1 7.0 7.1 8.0 8.1"
-BUILD_NVMPI=1
+NVMPI_PREFIX=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
         -d) DEST="$2"; shift ;;
         -j) JOBS="$2"; shift ;;
         -v) VERSIONS="$2"; shift ;;
-        --no-nvmpi) BUILD_NVMPI=0 ;;
+        --nvmpi-prefix) NVMPI_PREFIX="$2"; shift ;;
         -h|--help) sed -n '2,/^set /{/^set /d;s/^# \{0,1\}//;p}' "${BASH_SOURCE[0]}"; exit 0 ;;
         *) echo "[E] unknown option: $1" >&2; exit 1 ;;
     esac
@@ -53,13 +55,12 @@ while [ $# -gt 0 ]; do
 done
 export FFMPEG_SRC_DIR="$DEST"
 
-# libnvmpi must be installed so FFmpeg's pkg-config finds it and the built
-# binaries can link against it at runtime.
-if [ "$BUILD_NVMPI" -eq 1 ]; then
-    echo "[i] building + installing libnvmpi"
-    "${REPO_ROOT}/scripts/build.sh" --install -j "$JOBS"
-fi
-export LD_LIBRARY_PATH="/usr/local/lib:/usr/lib/aarch64-linux-gnu/tegra:${LD_LIBRARY_PATH:-}"
+# FFmpeg dlopens libnvmpi at runtime (it is built in jetson-nvmpi, not here):
+# the hw suites need the system libnvmpi1 or the --nvmpi-prefix one on the
+# library path.
+NVMPI_LIBS=""
+[ -n "$NVMPI_PREFIX" ] && NVMPI_LIBS="${NVMPI_PREFIX}/lib:"
+export LD_LIBRARY_PATH="${NVMPI_LIBS}/usr/local/lib:/usr/lib/aarch64-linux-gnu/tegra:${LD_LIBRARY_PATH:-}"
 
 # Ensure all required FFmpeg trees are cloned.
 # shellcheck disable=SC2086
