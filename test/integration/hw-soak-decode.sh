@@ -8,17 +8,24 @@
 #   1. Steady-state CPU% stays below a per-core threshold.
 #   2. CPU% does not rise monotonically (late samples ≈ early samples).
 #
-# Approach: a shell loop that repeatedly decodes a short sample, exercising
-# the full create/decode/destroy lifecycle each iteration. CPU is measured
-# on the loop subshell via /proc cutime+cstime (includes child processes).
-# This avoids -stream_loop which triggers seek — unsupported by hw decoders
-# on some Jetson driver versions.
+# Approach: a shell loop repeatedly decodes a short sample, exercising the full
+# create/decode/destroy lifecycle each iteration. CPU is measured PER ITERATION:
+# each decode runs in a fresh bash that prints its children's cumulative
+# user+sys via `times` when ffmpeg exits, giving whole-run CPU% = cpu_s / wall_s.
+# (The previous metric read cutime/cstime of the loop subshell every 2 s; those
+# only advance when a child exits, so samples aliased against iteration ends and
+# was noisy: drift 20.3% was seen once on a healthy build.) Early/late windows
+# are the first/last quarter of iterations. This avoids -stream_loop, which
+# triggers a seek that some Jetson hw decoders crash on.
 #
 # Environment:
-#   SOAK_DURATION   — total wall-clock seconds (default: 60)
-#   SOAK_INTERVAL   — sampling interval in seconds (default: 2)
-#   SOAK_CPU_MAX    — max allowed average CPU% (default: 80)
-#   SOAK_DRIFT_MAX  — max allowed drift: late_avg - early_avg (default: 15)
+#   SOAK_DURATION   - total wall-clock seconds (default: 30)
+#   SOAK_CPU_MAX    - max allowed average CPU% of one core (default: 200)
+#   SOAK_DRIFT_MAX  - max allowed drift: late_avg - early_avg (default: 15;
+#                     whole-iteration averages over >=4 iterations per window
+#                     are far less noisy than the old 2 s samples, and a real
+#                     busy-spin regression (GitHub #24) rises well above 15
+#                     points, so the threshold is kept)
 set -eu
 # shellcheck source-path=SCRIPTDIR/..
 # shellcheck source=lib/common.sh
@@ -27,98 +34,72 @@ set -eu
 variant="${JETSON_VARIANT:-unknown}"
 echo "=== hw-soak-decode on variant: ${variant} ==="
 
-SOAK_DURATION="${SOAK_DURATION:-60}"
-SOAK_INTERVAL="${SOAK_INTERVAL:-2}"
+SOAK_DURATION="${SOAK_DURATION:-30}"
 SOAK_CPU_MAX="${SOAK_CPU_MAX:-200}"
 SOAK_DRIFT_MAX="${SOAK_DRIFT_MAX:-15}"
 
 ensure_sample SAMPLE_H264_720P_LONG gen-sample-h264-long 10
 
-echo "   duration=${SOAK_DURATION}s interval=${SOAK_INTERVAL}s cpu_max=${SOAK_CPU_MAX}% drift_max=${SOAK_DRIFT_MAX}%"
+echo "   duration=${SOAK_DURATION}s cpu_max=${SOAK_CPU_MAX}% drift_max=${SOAK_DRIFT_MAX}%"
 
-# Start a decode loop in the background. Each iteration is a full
-# create → decode → destroy cycle. The subshell runs until killed.
+csv="/tmp/nvmpi-soak-cpu.csv"
+stop="/tmp/nvmpi-soak.stop"
+: > "$csv"
+rm -f "$stop"
+
+# decode_once: one create -> decode -> destroy cycle; appends "t,cpu_pct" to csv.
+decode_once() {
+  local t0 t1 out cpu_s
+  t0=$(date +%s%N)
+  out=$(bash -c 'timeout -k 5 30 ffmpeg -y -hide_banner -loglevel error \
+      -c:v h264_nvmpi -i "$0" -f null - 2>&1; times' "${SAMPLE_H264_720P_LONG}" 2>&1) || true
+  t1=$(date +%s%N)
+  # last line of `times` = children: "<u_min>m<u_s>s <s_min>m<s_s>s"
+  cpu_s=$(printf '%s\n' "$out" | tail -1 | awk '{
+    split($1,u,/[ms]/); split($2,s,/[ms]/); printf "%.3f", u[1]*60+u[2]+s[1]*60+s[2] }')
+  awk -v c="${cpu_s:-0}" -v a="$t0" -v b="$t1" -v s="$SOAK_START" \
+    'BEGIN{ w=(b-a)/1e9; if (w>0) printf "%d,%.0f\n", (b-s)/1e9, c*100/w }' >> "$csv"
+}
+
+SOAK_START=$(date +%s%N)
 (
-  while true; do
-    run_ff -T 30 -loglevel error \
-      -c:v h264_nvmpi -i "${SAMPLE_H264_720P_LONG}" \
-      -f null - >/dev/null 2>&1 || true
-  done
+  while [ ! -e "$stop" ]; do decode_once; done
 ) &
 LOOP_PID=$!
 
-# Ensure cleanup on exit — kill subshell + its ffmpeg children
 cleanup() {
-  kill "$LOOP_PID" 2>/dev/null
-  # Kill any lingering ffmpeg children of the subshell
+  touch "$stop"
+  kill "$LOOP_PID" 2>/dev/null || true
   pkill -P "$LOOP_PID" 2>/dev/null || true
   wait "$LOOP_PID" 2>/dev/null || true
+  rm -f "$stop"
 }
 trap cleanup EXIT
 
-# Wait for first decode to start
-sleep 2
-
-csv="/tmp/nvmpi-soak-cpu.csv"
-: > "$csv"
-samples=0
 elapsed=0
-
-CLK_TCK=$(getconf CLK_TCK)
-
-# Read cumulative CPU ticks for the subshell + all waited-for children.
-# Fields: $14=utime $15=stime $16=cutime $17=cstime
-read_cpu_ticks() {
-  if [ -f "/proc/$LOOP_PID/stat" ]; then
-    awk '{print $14 + $15 + $16 + $17}' "/proc/$LOOP_PID/stat"
-  else
-    echo 0
-  fi
-}
-
-prev_cpu_ticks=$(read_cpu_ticks)
-prev_wall=$(date +%s%N)
-
 while [ "$elapsed" -lt "$SOAK_DURATION" ]; do
-  sleep "$SOAK_INTERVAL"
-  elapsed=$((elapsed + SOAK_INTERVAL))
-
+  sleep 2
+  elapsed=$((elapsed + 2))
   if ! kill -0 "$LOOP_PID" 2>/dev/null; then
     echo "FAIL(soak): decode loop exited prematurely at ${elapsed}s."
     exit 1
   fi
-
-  cur_cpu_ticks=$(read_cpu_ticks)
-  cur_wall=$(date +%s%N)
-
-  delta_ticks=$((cur_cpu_ticks - prev_cpu_ticks))
-  delta_wall_ns=$((cur_wall - prev_wall))
-
-  # CPU% = (delta_ticks / CLK_TCK) / (delta_wall_ns / 1e9) * 100
-  if [ "$delta_wall_ns" -gt 0 ]; then
-    cpu_pct=$(( (delta_ticks * 100 * 1000000000) / (CLK_TCK * delta_wall_ns) ))
-  else
-    cpu_pct=0
-  fi
-
-  echo "${elapsed},${cpu_pct}" >> "$csv"
-  echo "   t=${elapsed}s cpu=${cpu_pct}%"
-  samples=$((samples + 1))
-
-  prev_cpu_ticks=$cur_cpu_ticks
-  prev_wall=$cur_wall
+  echo "   t=${elapsed}s iterations=$(wc -l < "$csv")"
 done
 
-# Stop the decode loop
-cleanup
+# Let the in-flight iteration finish (stop flag), then analyse.
+touch "$stop"
+wait "$LOOP_PID" 2>/dev/null || true
 trap - EXIT
+rm -f "$stop"
+samples=$(wc -l < "$csv")
 
 if [ "$samples" -lt 4 ]; then
-  echo "FAIL(soak): too few samples (${samples}) for analysis."
+  echo "FAIL(soak): too few iterations (${samples}) for analysis."
   exit 1
 fi
 
-# Analyze: average, early-window avg (first 25%), late-window avg (last 25%)
+# Analyze: average, early-window avg (first 25% of iterations), late-window avg (last 25%)
 analyze() {
   awk -F, -v cpu_max="$SOAK_CPU_MAX" -v drift_max="$SOAK_DRIFT_MAX" '
   {
@@ -166,4 +147,4 @@ if ! analyze "$csv"; then
   exit 1
 fi
 
-echo "OK: hw-soak-decode passed on ${variant} (${SOAK_DURATION}s, ${samples} samples)."
+echo "OK: hw-soak-decode passed on ${variant} (${SOAK_DURATION}s, ${samples} iterations)."

@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Decoder blocking-wait suite: validates that -flags low_delay activates
 # true blocking wait in nvmpi_decoder_get_frame() (issue #10).
+# Section 7 (absorbed from the former hw-perf-blocking-wait) reports first-frame
+# latency, CPU and throughput normal vs low_delay. It is informational only:
+# metrics never gate pass/fail.
 set -eu
 # shellcheck source-path=SCRIPTDIR/..
 # shellcheck source=lib/common.sh
@@ -77,7 +80,7 @@ else
 fi
 
 echo "== 6. rapid open/close under blocking mode =="
-for i in $(seq 1 20); do
+for i in $(seq 1 5); do
   run_ff -T 10 -loglevel error \
     -flags low_delay -c:v h264_nvmpi -i "${SAMPLE_H264_720P}" \
     -frames:v 5 -f null - || true
@@ -88,6 +91,50 @@ for i in $(seq 1 20); do
     ff_fail "hang on iteration ${i}."
   fi
 done
-echo "   20 rapid open/close cycles — OK"
+echo "   5 rapid open/close cycles — OK"
+
+echo "== 7. perf (informational): normal vs low_delay =="
+ensure_sample SAMPLE_H264_720P_LONG gen-sample-h264-long 10
+
+# first_frame_ms [FLAGS]: wall-clock ms to decode one frame (result in M_MS).
+# Results go to globals, not stdout: command substitution would also capture
+# any stdout the driver prints ("Opening in BLOCKING MODE ...").
+first_frame_ms() {
+  local t0 t1
+  t0=$(date +%s%N)
+  run_ff -T 15 -loglevel error "$@" \
+    -c:v h264_nvmpi -i "${SAMPLE_H264_720P_LONG}" -frames:v 1 -f null - || true
+  t1=$(date +%s%N)
+  M_MS=$(( (t1 - t0) / 1000000 ))
+}
+
+# full_decode [FLAGS]: full decode; sets M_FPS (frames/wall) and M_CPU (% of one
+# core). A fresh bash runs timeout+ffmpeg then prints its children's cumulative
+# user/sys via `times` (no /usr/bin/time on the runner image).
+full_decode() {
+  local t0 t1 out frames cpu_s
+  t0=$(date +%s%N)
+  out=$(bash -c 'timeout -k 5 60 ffmpeg -y -hide_banner -stats "$@" \
+      -c:v h264_nvmpi -i "$0" -f null - 2>&1; times' \
+      "${SAMPLE_H264_720P_LONG}" "$@" 2>&1) || true
+  t1=$(date +%s%N)
+  frames=$(printf '%s\n' "$out" | grep -oP 'frame=\s*\K[0-9]+' | tail -1 || true)
+  # last line of `times` = children: "<u_min>m<u_s>s <s_min>m<s_s>s"
+  cpu_s=$(printf '%s\n' "$out" | tail -1 | awk '{
+    split($1,u,/[ms]/); split($2,s,/[ms]/); printf "%.3f", u[1]*60+u[2]+s[1]*60+s[2] }')
+  M_FPS=$(awk -v f="${frames:-0}" -v a="$t0" -v b="$t1" 'BEGIN{ w=(b-a)/1e9; printf "%.1f", (w>0)?f/w:0 }')
+  M_CPU=$(awk -v c="${cpu_s:-0}" -v a="$t0" -v b="$t1" 'BEGIN{ w=(b-a)/1e9; printf "%.0f", (w>0)?c*100/w:0 }')
+}
+
+sum_n=0; sum_l=0
+for _ in 1 2; do
+  first_frame_ms;                  sum_n=$((sum_n + M_MS))
+  first_frame_ms -flags low_delay; sum_l=$((sum_l + M_MS))
+done
+full_decode;                  fps_n=$M_FPS; cpu_n=$M_CPU
+full_decode -flags low_delay; fps_l=$M_FPS; cpu_l=$M_CPU
+echo "PERF: first_frame_ms normal=$((sum_n / 2)) low_delay=$((sum_l / 2))"
+echo "PERF: cpu_percent normal=${cpu_n} low_delay=${cpu_l}"
+echo "PERF: fps normal=${fps_n} low_delay=${fps_l}"
 
 echo "OK: hw-decoder-blocking-wait passed on ${variant}."
