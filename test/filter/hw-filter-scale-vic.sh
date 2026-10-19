@@ -4,37 +4,28 @@
 #   decoder (DRM_PRIME) → scale_vic → encoder (DRM_PRIME)
 # Verifies output dimensions and that the filter is recognized by FFmpeg.
 set -eu
-# shellcheck source=test/gen-samples.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../gen-samples.sh"
+# shellcheck source-path=SCRIPTDIR/..
+# shellcheck source=lib/common.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/common.sh"
 
 variant="${JETSON_VARIANT:-unknown}"
 echo "=== hw-filter-scale-vic on variant: ${variant} ==="
 
-[ -s "${SAMPLE_H264_720P}" ] || gen-sample-h264 "${SAMPLE_H264_720P}" 3
+ensure_sample SAMPLE_H264_720P gen-sample-h264 3
 
 # vic_scale_case LABEL WIDTH HEIGHT
 vic_scale_case() {
   local label="$1" tgt_w="$2" tgt_h="$3"
   local tmpout="/tmp/nvmpi-scale-vic-${label}.mkv"
-  local rc=0 out w h
+  local w h
 
-  out=$(timeout --kill-after=5 60 ffmpeg -y -hide_banner -loglevel error \
+  # A timeout (hang) likely means a missing hw_frames_ctx or an NvBufSurfTransform deadlock.
+  echo "      Pipeline: h264_nvmpi -hwaccel nvmpi → scale_vic → h264_nvmpi"
+  echo "      Filter source: ffmpeg/dev/common/libavfilter/vf_scale_vic.c"
+  run_ff_must "(${label}) scale_vic ${tgt_w}:${tgt_h} pipeline" -T 60 -loglevel error \
     -hwaccel nvmpi -c:v h264_nvmpi -i "${SAMPLE_H264_720P}" \
     -vf "scale_vic=${tgt_w}:${tgt_h}" \
-    -c:v h264_nvmpi "$tmpout" 2>&1) || rc=$?
-  if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
-    echo "FAIL(${label}): pipeline hung (killed after timeout, rc=${rc})."
-    echo "      Likely cause: missing hw_frames_ctx or NvBufSurfTransform deadlock."
-    exit 1
-  fi
-  if [ "$rc" -ne 0 ]; then
-    echo "FAIL(${label}): scale_vic ${tgt_w}:${tgt_h} pipeline failed (rc=${rc})."
-    echo "      Pipeline: h264_nvmpi -hwaccel nvmpi → scale_vic → h264_nvmpi"
-    echo "      Filter source: ffmpeg/dev/common/libavfilter/vf_scale_vic.c"
-    echo "--- ffmpeg output (last 15 lines) ---"
-    echo "$out" | tail -15
-    exit 1
-  fi
+    -c:v h264_nvmpi "$tmpout"
 
   w=$(ffprobe -v error -select_streams v:0 \
     -show_entries stream=width -of default=nokey=1:nw=1 "$tmpout")
@@ -59,11 +50,12 @@ fi
 echo "   scale_vic filter registered"
 
 echo "== 2. diagnostic: 30s verbose run (uncaptured output) =="
-timeout --kill-after=5 30 ffmpeg -y -hide_banner -loglevel verbose \
+run_ff -T 30 -loglevel verbose \
     -hwaccel nvmpi -c:v h264_nvmpi -i "${SAMPLE_H264_720P}" \
     -vf "scale_vic=640:360" \
-    -c:v h264_nvmpi "/tmp/nvmpi-scale-vic-diag.mkv" 2>&1 || \
-    echo "DIAG: ffmpeg exit rc=$? (124=timeout, 137=killed)"
+    -c:v h264_nvmpi "/tmp/nvmpi-scale-vic-diag.mkv" || \
+    echo "DIAG: ffmpeg exit rc=${FF_RC} (124=timeout, 137=killed)"
+printf '%s\n' "$FF_OUT" | tail -50
 
 echo "== 3. downscale 1280x720 → 640x360 =="
 vic_scale_case down-640x360 640 360

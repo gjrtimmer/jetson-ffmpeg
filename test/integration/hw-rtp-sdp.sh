@@ -8,8 +8,9 @@
 # file exercises the exact same demuxer code path (rtpdec sprop parsing) as
 # RTSP, without needing an RTSP server.
 set -eu
-# shellcheck source=test/gen-samples.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../gen-samples.sh"
+# shellcheck source-path=SCRIPTDIR/..
+# shellcheck source=lib/common.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/common.sh"
 
 variant="${JETSON_VARIANT:-unknown}"
 echo "=== hw-rtp-sdp on variant: ${variant} ==="
@@ -36,18 +37,20 @@ rtp_case() {
     tail -10 "/tmp/rtp_pub_${name}.log" 2>/dev/null || echo "(no publisher log)"
     return 1
   fi
-  rc=0
-  # -k 5: SIGKILL a receiver that survives SIGTERM (e.g. wedged in decoder
-  # close), so a regression can never stall the whole job/runner.
-  timeout -k 5 60 ffmpeg -y -hide_banner -loglevel error \
+  # run_ff hard-kills (timeout -k) a receiver that survives SIGTERM (e.g.
+  # wedged in decoder close), so a regression can never stall the job/runner.
+  run_ff -T 60 -loglevel error \
     -protocol_whitelist file,udp,rtp -c:v "$dec" -i "$sdp" \
-    -frames:v 25 -f null - || rc=$?
+    -frames:v 25 -f null - || true
+  rc=$FF_RC
   kill "$pub" 2>/dev/null || true
   wait "$pub" 2>/dev/null || true
   pub=""
   if [ "$rc" -ne 0 ]; then
     echo "FAIL(${name}): ${dec} decoded <25 frames from RTP (rc=${rc}; 124 = 60 s timeout,"
     echo "      i.e. the decoder produced no frames — the Keylost#14 symptom)."
+    echo "--- receiver output (last 15 lines) ---"
+    printf '%s\n' "$FF_OUT" | tail -15
     echo "--- publisher log (last 10 lines) ---"
     tail -10 "/tmp/rtp_pub_${name}.log" 2>/dev/null || echo "(no publisher log)"
     return 1
@@ -55,7 +58,7 @@ rtp_case() {
   echo "   ${name}: 25 frames decoded"
 }
 
-[ -s "${SAMPLE_H264_720P}" ] || gen-sample-h264 "${SAMPLE_H264_720P}" 3
+ensure_sample SAMPLE_H264_720P gen-sample-h264 3
 
 echo "== 1. RTP decode, in-band SPS/PPS (control) =="
 # The explicit h264_mp4toannexb BSF injects SPS/PPS in-band at every IDR

@@ -10,6 +10,9 @@
 #   4. Early termination with non-blocking exits cleanly (no hang).
 #   5. Performance comparison: non-blocking should not be slower.
 set -eu
+# shellcheck source-path=SCRIPTDIR/..
+# shellcheck source=lib/common.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/common.sh"
 
 variant="${JETSON_VARIANT:-unknown}"
 echo "=== hw-encoder-nonblock on variant: ${variant} ==="
@@ -21,24 +24,17 @@ OUT_NOBLOCK=/tmp/nvmpi-out-nonblock-test.mp4
 # Helper: encode and return packet count (or fail)
 encode_check() {
   local enc="$1" flags="$2" outfile="$3" label="$4" expect="$5"
-  local rc=0
+  local packets
 
   # shellcheck disable=SC2086
-  ffmpeg -y -hide_banner -loglevel error \
+  run_ff_must "${label} encode" -T 60 \
     -f lavfi -i testsrc2=s=1280x720:r=30 \
     -frames:v ${FRAMES} -c:v "$enc" -b:v 3M ${flags} \
-    "$outfile" 2>&1 || rc=$?
-  if [ "$rc" -ne 0 ]; then
-    echo "FAIL: ${label} encode failed (rc=${rc})."
-    exit 1
-  fi
+    "$outfile"
 
-  local packets
-  packets=$(ffprobe -v error -count_packets -select_streams v:0 \
-    -show_entries stream=nb_read_packets -of default=nokey=1:nw=1 "$outfile")
+  packets=$(packet_count "$outfile")
   if [ "${packets:-0}" -ne "$expect" ]; then
-    echo "FAIL: ${label} — expected ${expect} packets, got ${packets:-0}."
-    exit 1
+    ff_fail "${label} — expected ${expect} packets, got ${packets:-0}."
   fi
   echo "   ${label}: ${packets}/${expect} packets OK"
 }
@@ -50,10 +46,10 @@ timed_encode() {
 
   start=$(date +%s%N)
   # shellcheck disable=SC2086
-  ffmpeg -y -hide_banner -loglevel error \
+  run_ff -T 60 \
     -f lavfi -i testsrc2=s=1280x720:r=30 \
     -frames:v ${FRAMES} -c:v "$enc" -b:v 3M ${flags} \
-    "$outfile" 2>&1 || true
+    "$outfile" || true
   end=$(date +%s%N)
 
   echo $(( (end - start) / 1000000 ))
@@ -84,19 +80,16 @@ encode_check h264_nvmpi "-nonblocking 1 -flags low_delay" "$OUT_NOBLOCK" \
 # --- Early termination with non-blocking (clean shutdown, no hang) ---
 
 echo "== h264_nvmpi: -nonblocking 1 -t 1 (early termination) =="
-timeout 30 ffmpeg -y -hide_banner -loglevel error \
+run_ff -T 30 \
   -f lavfi -i testsrc2=s=1280x720:r=30 \
   -t 1 -c:v h264_nvmpi -b:v 3M -nonblocking 1 \
-  "$OUT_NOBLOCK" 2>&1 || true
+  "$OUT_NOBLOCK" || true
 
-packets=$(ffprobe -v error -count_packets -select_streams v:0 \
-  -show_entries stream=nb_read_packets -of default=nokey=1:nw=1 \
-  "$OUT_NOBLOCK" 2>/dev/null || echo "0")
+packets=$(packet_count "$OUT_NOBLOCK")
 if [ "${packets:-0}" -gt 0 ]; then
   echo "   h264 early-term nonblocking: ${packets} packets, clean exit OK"
 else
-  echo "FAIL: h264 early-term nonblocking produced 0 packets or hung."
-  exit 1
+  ff_fail "h264 early-term nonblocking produced 0 packets or hung."
 fi
 
 # --- Performance comparison ---

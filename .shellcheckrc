@@ -1,0 +1,2 @@
+# Follow sourced files (test suites source test/lib/common.sh etc.).
+external-sources=true

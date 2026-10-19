@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Run every hw-* test suite on the ffmpeg found in PATH (real Jetson only).
 #
-# Suites are auto-discovered (test/hw-*.sh, this runner excluded) so adding a
-# new suite file requires no changes here. hw-smoke always runs first — when
-# basic transcode is broken, nothing else is worth reading.
+# Suites are auto-discovered (test/**/hw-*.sh, this runner excluded) so adding a
+# new suite file requires no changes here. hw-smoke always runs first, the rest
+# in sorted order (stable job logs). All shared input samples are generated once
+# up front (gen-all); suites do not regenerate them.
 #
 # Usage:
 #   JETSON_VARIANT=orin-nx test/hw-all.sh           # all suites
@@ -17,7 +18,11 @@
 #     copy-paste rerun hint. Suites are responsible for printing actionable
 #     evidence on FAIL (observed values, captured ffmpeg output, pointers to
 #     the code under test) — see test/README.md "Failure style".
-#   - The run ends with a per-suite result block, one suite per line.
+#   - The run ends with a per-suite result block (verdict + seconds), one suite
+#     per line, and lists any process stuck in D-state (driver hang).
+#   - A suite exceeding HW_SUITE_TIMEOUT is hard-killed (timeout -k) and the
+#     D-state processes are reported right then, so a driver-stuck hang is
+#     visible instead of silently eating the job timeout.
 set -eu
 
 # Serialize hardware access: only one hw-all instance at a time.
@@ -37,6 +42,7 @@ variant="${JETSON_VARIANT:-unknown}"
 # eating the entire CI job timeout. Default 600s (10 min) — no individual suite
 # should take longer; the longest (perf-bench) runs ~3 min on Orin Nano.
 SUITE_TIMEOUT="${HW_SUITE_TIMEOUT:-600}"
+KILL_GRACE="${HW_SUITE_KILL_GRACE:-10}"
 
 # Suites now live under component subdirectories (test/decoder/, test/encoder/,
 # test/filter/, test/perf/, test/format/, test/integration/) instead of flat in
@@ -48,7 +54,7 @@ discover() {
     s="$(basename "$f" .sh)"; s="${s#hw-}"
     case "$s" in all|smoke) continue ;; esac
     echo "$s"
-  done < <(find "${SCRIPT_DIR}" -name 'hw-*.sh' ! -name 'hw-all.sh')
+  done < <(find "${SCRIPT_DIR}" -name 'hw-*.sh' ! -name 'hw-all.sh' | sort)
 }
 SUITES="${HW_SUITES:-$(discover | tr '\n' ' ')}"
 
@@ -64,28 +70,48 @@ echo "ffmpeg under test: $(command -v ffmpeg)"
 ffmpeg -version 2>/dev/null | head -1
 echo "variant: ${variant} | suites: ${SUITES}"
 
+# d_state_report: processes in uninterruptible sleep (D) are stuck in the
+# kernel driver and cannot be killed; show them so a hang is attributable.
+d_state_report() {
+  local stuck
+  stuck="$(ps -eo pid,stat,etime,comm 2>/dev/null | awk '$2 ~ /^D/' || true)"
+  if [ -n "$stuck" ]; then
+    echo "[W] processes in D-state (uninterruptible, driver-stuck):"
+    printf '%s\n' "$stuck"
+  fi
+}
+
+# Generate all shared samples once per job (suites must not regenerate them).
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=gen-samples.sh
+. "${SCRIPT_DIR}/gen-samples.sh"
+gen-all
+
 section_start() { [ -n "${GITLAB_CI:-}" ] && printf '\e[0Ksection_start:%s:%s[collapsed=true]\r\e[0K' "$2" "$1" || true; }
 section_end()   { [ -n "${GITLAB_CI:-}" ] && printf '\e[0Ksection_end:%s:%s\r\e[0K' "$(date +%s)" "$1" || true; }
 
-results="" fail=0
+results="" fail=0 t_all="$(date +%s)"
 for s in $SUITES; do
   case " ${HW_SUITES_EXCLUDE:-} " in *" $s "*) echo "[i] skipping suite ${s} (HW_SUITES_EXCLUDE)"; continue ;; esac
   script="$(resolve_script "$s")"
   if [ -z "$script" ] || [ ! -f "$script" ]; then
     echo "[E] unknown suite: ${s} (no ${script})" >&2
-    results="${results}${s}:MISSING\n"
+    results="${results}${s}:MISSING:0\n"
     fail=1
     continue
   fi
   ts_before="$(date +%s)"
   rc=0
-  out="$(timeout --kill-after=10 "${SUITE_TIMEOUT}" bash "$script" 2>&1)" || rc=$?
+  secs=0
+  out="$(timeout --kill-after="${KILL_GRACE}" "${SUITE_TIMEOUT}" bash "$script" 2>&1)" || rc=$?
+  secs=$(( $(date +%s) - ts_before ))
   if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
     echo "######## suite: hw-${s} — TIMEOUT (${SUITE_TIMEOUT}s) ########"
     printf '%s\n' "$out"
     echo "######## suite hung — killed after ${SUITE_TIMEOUT}s ########"
     echo "[hint] rerun with longer timeout: HW_SUITE_TIMEOUT=900 HW_SUITES=\"${s}\" test/hw-all.sh"
-    results="${results}${s}:TIMEOUT\n"
+    d_state_report
+    results="${results}${s}:TIMEOUT:${secs}\n"
     fail=1
     continue
   fi
@@ -95,23 +121,26 @@ for s in $SUITES; do
     echo "######## suite: hw-${s} — PASS ########"
     printf '%s\n' "$out"
     section_end "hw_${s//-/_}"
-    results="${results}${s}:PASS\n"
+    results="${results}${s}:PASS:${secs}\n"
   else
     # Failing suite: full output stays visible — this is what you debug from.
     echo "######## suite: hw-${s} — FAIL (rc=${rc}) ########"
     printf '%s\n' "$out"
     echo "######## end of failing suite hw-${s} ########"
     echo "[hint] rerun just this suite: HW_SUITES=\"${s}\" test/hw-all.sh"
-    results="${results}${s}:FAIL\n"
+    d_state_report
+    results="${results}${s}:FAIL:${secs}\n"
     fail=1
   fi
 done
 
 echo ""
 echo "suite results (${variant}):"
-printf '%b' "$results" | while IFS=: read -r name verdict; do
-  printf '  %-18s %s\n' "$name" "$verdict"
+printf '%b' "$results" | while IFS=: read -r name verdict secs; do
+  printf '  %-26s %-8s %5ss\n' "$name" "$verdict" "$secs"
 done
+echo "total: $(( $(date +%s) - t_all ))s"
+d_state_report
 if [ "$fail" -ne 0 ]; then
   echo "FAIL: one or more hw suites failed on ${variant}."
   exit 1

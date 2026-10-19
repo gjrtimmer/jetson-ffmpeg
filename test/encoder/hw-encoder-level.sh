@@ -10,6 +10,9 @@
 #   2. Default level: encode without -level, verify ffprobe reports a sane
 #      non-zero level (hardware default, not garbage).
 set -eu
+# shellcheck source-path=SCRIPTDIR/..
+# shellcheck source=lib/common.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/common.sh"
 
 variant="${JETSON_VARIANT:-unknown}"
 echo "=== hw-encoder-level on variant: ${variant} ==="
@@ -23,18 +26,13 @@ OUT=/tmp/nvmpi-out-level.mp4
 #   expected_level: the level value ffprobe should report, or "any" for default
 encode_and_probe() {
   local enc="$1" level_flag="$2" expected="$3" label="$4"
-  local rc=0
 
   # Build the ffmpeg command — level_flag may be empty (default path)
   # shellcheck disable=SC2086
-  ffmpeg -y -hide_banner -loglevel error \
+  run_ff_must "${label} encode" -T 60 \
     -f lavfi -i testsrc2=s=1280x720:r=30 \
     -frames:v ${FRAMES} -c:v "$enc" -b:v 3M ${level_flag} \
-    "$OUT" 2>&1 || rc=$?
-  if [ "$rc" -ne 0 ]; then
-    echo "FAIL: ${label} encode failed (rc=${rc})."
-    exit 1
-  fi
+    "$OUT"
 
   # ffprobe reports level as an integer: H.264 level_idc (e.g. 41),
   # HEVC general_level_idc (e.g. 153 for 5.1).

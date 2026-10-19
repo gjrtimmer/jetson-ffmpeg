@@ -34,15 +34,15 @@
 #     - nvmpi_encode_close (drain loop OOM guard)
 # Issue: gjrtimmer/jetson-ffmpeg#17
 
-# shellcheck source=test/gen-samples.sh
 set -eu
-
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../gen-samples.sh"
+# shellcheck source-path=SCRIPTDIR/..
+# shellcheck source=lib/common.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/common.sh"
 
 variant="${JETSON_VARIANT:-unknown}"
 echo "=== hw-encoder-thread-safety on variant: ${variant} ==="
 
-[ -s "${SAMPLE_H264_720P}" ] || gen-sample-h264 "${SAMPLE_H264_720P}" 3
+ensure_sample SAMPLE_H264_720P gen-sample-h264 3
 
 PARALLEL=4
 ROUNDS=10
@@ -53,16 +53,16 @@ LIFECYCLE_ITERS=50
 # Returns 0 if all succeeded, 1 if any failed/crashed/timed out.
 parallel_encode() {
     local label="$1" codec="$2" count="$3"
-    local pids=() pid rc=0 i
+    local pids=() pid rc=0
 
-    for i in $(seq 1 "$count"); do
-        timeout -k 5 30 ffmpeg -y -hide_banner \
-            -i "${SAMPLE_H264_720P}" \
-            -c:v "${codec}" -f null - >/dev/null 2>&1 &
+    for _ in $(seq 1 "$count"); do
+        # Subshell: run_ff's FF_RC is the subshell exit status (signal retry included).
+        ( run_ff -T 30 -i "${SAMPLE_H264_720P}" -c:v "${codec}" -f null - ) >/dev/null 2>&1 &
         pids+=($!)
     done
 
     for pid in "${pids[@]}"; do
+        rc=0
         wait "$pid" 2>/dev/null || rc=$?
         if [ "$rc" -eq 124 ]; then
             echo "FAIL: ${label} — process ${pid} timed out (possible deadlock)."
@@ -105,14 +105,12 @@ echo "== 3. mixed-codec parallel (2×h264 + 2×hevc, ${ROUNDS} rounds) =="
 for r in $(seq 1 "$ROUNDS"); do
     pids=()
     for codec in h264_nvmpi h264_nvmpi hevc_nvmpi hevc_nvmpi; do
-        timeout -k 5 30 ffmpeg -y -hide_banner \
-            -i "${SAMPLE_H264_720P}" \
-            -c:v "${codec}" -f null - >/dev/null 2>&1 &
+        ( run_ff -T 30 -i "${SAMPLE_H264_720P}" -c:v "${codec}" -f null - ) >/dev/null 2>&1 &
         pids+=($!)
     done
 
-    rc=0
     for pid in "${pids[@]}"; do
+        rc=0
         wait "$pid" 2>/dev/null || rc=$?
         if is_signal_rc "$rc"; then
             echo "FAIL: mixed-codec round ${r} — process crashed (signal $((rc - 128)))."
@@ -130,9 +128,7 @@ echo "== 4. parallel rapid lifecycle (${PARALLEL}×${LIFECYCLE_ITERS} open/close
 rapid_loop() {
     local iters="$1"
     for _ in $(seq 1 "$iters"); do
-        timeout -k 5 30 ffmpeg -y -hide_banner \
-            -i "${SAMPLE_H264_720P}" \
-            -c:v h264_nvmpi -f null - >/dev/null 2>&1 || true
+        run_ff -T 30 -i "${SAMPLE_H264_720P}" -c:v h264_nvmpi -f null - >/dev/null 2>&1 || true
     done
 }
 
@@ -155,20 +151,11 @@ echo "   parallel rapid lifecycle: ${PARALLEL}×${LIFECYCLE_ITERS} — OK"
 
 # === 5. Device health after concurrent stress ===
 echo "== 5. device health check =="
-rc=0
-out=$(timeout -k 5 30 ffmpeg -y -hide_banner \
-    -i "${SAMPLE_H264_720P}" \
-    -c:v h264_nvmpi -f null - 2>&1) || rc=$?
-if [ "$rc" -eq 124 ]; then
-    echo "FAIL: post-stress encode timed out — V4L2 device may be stuck."
-    exit 1
+# Encoder-specific (lib device_health only exercises the decoder).
+run_ff -T 30 -i "${SAMPLE_H264_720P}" -c:v h264_nvmpi -f null - || true
+if [ "$FF_RC" -eq 124 ]; then
+    ff_fail "post-stress encode timed out — V4L2 device may be stuck."
 fi
-frames=$(echo "$out" | grep -oP 'frame=\s*\K[0-9]+' | tail -1)
-if [ -z "$frames" ] || [ "$frames" -lt 10 ]; then
-    echo "FAIL: post-stress encode produced ${frames:-0} frames (expected >= 10)."
-    echo "$out" | tail -15
-    exit 1
-fi
-echo "   device health: ${frames} frames after concurrent stress — OK"
+assert_frames 10 "device health after concurrent stress"
 
 echo "OK: hw-encoder-thread-safety passed on ${variant}."

@@ -11,8 +11,9 @@
 #   4K  HEVC   decode:  ~28 fps (off) → ~64  fps (on) ≈ 2.3x
 # Actual gains vary by Jetson variant, thermal state, and content complexity.
 set -eu
-# shellcheck source=test/gen-samples.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../gen-samples.sh"
+# shellcheck source-path=SCRIPTDIR/..
+# shellcheck source=lib/common.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/common.sh"
 
 variant="${JETSON_VARIANT:-unknown}"
 echo "=== hw-perf-bench on variant: ${variant} ==="
@@ -116,16 +117,16 @@ extract_fps() {
 bench_decode() {
   local label="$1" dec="$2" sample="$3" mp="$4"
   shift 4
-  local tmpout="/tmp/nvmpi-bench-dec-${label}.mkv"
   local stderr="/tmp/nvmpi-bench-dec-${label}.log"
 
   echo "   running: ${label} ..."
   start_hwstats "$label"
   # Decode to null output — measures pure NVDEC throughput without
   # CPU re-encode bottleneck (ffv1 would cap the pipeline at CPU speed).
-  ffmpeg -y -hide_banner -benchmark \
+  run_ff -T 120 -benchmark \
     -c:v "$dec" -max_perf "$mp" "$@" -i "$sample" \
-    -f null - 2>"$stderr" || true
+    -f null - || true
+  printf '%s\n' "$FF_OUT" > "$stderr"
   stop_hwstats "$label"
 
   local fps
@@ -143,9 +144,10 @@ bench_encode() {
 
   echo "   running: ${label} ..."
   start_hwstats "$label"
-  ffmpeg -y -hide_banner -benchmark \
+  run_ff -T 120 -benchmark \
     -f lavfi -i "testsrc2=s=1280x720:r=30" -t "$BENCH_DURATION" \
-    -c:v "$enc" -b:v 3M -max_perf "$mp" "$@" "$tmpout" 2>"$stderr" || true
+    -c:v "$enc" -b:v 3M -max_perf "$mp" "$@" "$tmpout" || true
+  printf '%s\n' "$FF_OUT" > "$stderr"
   stop_hwstats "$label"
 
   local fps
@@ -160,20 +162,27 @@ speedup() {
 }
 
 # --- generate benchmark sample ---
-echo "== Generating ${BENCH_DURATION}s 720p H.264 benchmark sample =="
-gen-sample-h264-long "${SAMPLE_H264_720P_LONG}" "$BENCH_DURATION"
+# The shared LONG sample is 10 s; only a custom duration needs its own file.
+if [ "$BENCH_DURATION" -eq 10 ]; then
+  ensure_sample SAMPLE_H264_720P_LONG gen-sample-h264-long 10
+  BENCH_SAMPLE="${SAMPLE_H264_720P_LONG}"
+else
+  echo "== Generating ${BENCH_DURATION}s 720p H.264 benchmark sample =="
+  BENCH_SAMPLE="/tmp/nvmpi-sample-h264-bench.mp4"
+  gen-sample-h264-long "${BENCH_SAMPLE}" "$BENCH_DURATION"
+fi
 
 # ============================================================
 # DECODE BENCHMARKS (sequential — one at a time)
 # ============================================================
 echo ""
 echo "== DECODE: H.264 720p — max_perf OFF vs ON =="
-bench_decode dec-h264-off h264_nvmpi "${SAMPLE_H264_720P_LONG}" 0
-bench_decode dec-h264-on  h264_nvmpi "${SAMPLE_H264_720P_LONG}" 1
+bench_decode dec-h264-off h264_nvmpi "${BENCH_SAMPLE}" 0
+bench_decode dec-h264-on  h264_nvmpi "${BENCH_SAMPLE}" 1
 
 echo ""
 echo "== DECODE: H.264 720p — disable_dpb=1 + max_perf=1 =="
-bench_decode dec-h264-dpb h264_nvmpi "${SAMPLE_H264_720P_LONG}" 1 -disable_dpb 1
+bench_decode dec-h264-dpb h264_nvmpi "${BENCH_SAMPLE}" 1 -disable_dpb 1
 
 # ============================================================
 # ENCODE BENCHMARKS (sequential — one at a time)

@@ -14,6 +14,9 @@
 #      ffprobe in PATH supports that entry (FFmpeg >= 6.0; 4.2/4.4 print
 #      nothing for it).
 set -eu
+# shellcheck source-path=SCRIPTDIR/..
+# shellcheck source=lib/common.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/common.sh"
 
 variant="${JETSON_VARIANT:-unknown}"
 echo "=== hw-encoder-header on variant: ${variant} ==="
@@ -21,30 +24,22 @@ echo "=== hw-encoder-header on variant: ${variant} ==="
 FRAMES=30
 for enc in h264_nvmpi hevc_nvmpi; do
   echo "== ${enc} +global_header -> mp4 =="
-  rc=0
-  out=$(ffmpeg -y -hide_banner \
+  # Extradata generation lives in ffmpeg/dev/common/libavcodec/nvmpi_enc.c
+  # (GLOBAL_HEADER throwaway-encoder NAL scan).
+  run_ff_must "${enc} +global_header encode/mux" -T 60 \
     -f lavfi -i testsrc2=s=1280x720:r=30 \
     -frames:v ${FRAMES} -c:v "$enc" -flags +global_header -b:v 3M \
-    /tmp/nvmpi-out-globalheader.mp4 2>&1) || rc=$?
-  if [ "$rc" -ne 0 ]; then
-    echo "FAIL: ${enc} +global_header encode/mux failed (rc=${rc})."
-    echo "      Extradata generation lives in ffmpeg/dev/common/libavcodec/nvmpi_enc.c"
-    echo "      (GLOBAL_HEADER throwaway-encoder NAL scan)."
-    echo "--- ffmpeg output (last 15 lines) ---"
-    echo "$out" | tail -15
-    exit 1
-  fi
+    /tmp/nvmpi-out-globalheader.mp4
 
   # Roundtrip via the demuxer + software decoder: proves avcC/hvcC (built
   # from extradata) is present and sane — works on every FFmpeg version.
-  packets=$(ffprobe -v error -count_packets -select_streams v:0 \
-    -show_entries stream=nb_read_packets -of default=nokey=1:nw=1 \
-    /tmp/nvmpi-out-globalheader.mp4)
+  packets=$(packet_count /tmp/nvmpi-out-globalheader.mp4)
   if [ "${packets:-0}" -ne "${FRAMES}" ]; then
     echo "FAIL: ${enc} mp4 roundtrip returned ${packets:-0}/${FRAMES} packets —"
     echo "      extradata missing or unusable (avcC/hvcC not built)."
     echo "--- sw-decode check ---"
-    ffmpeg -y -hide_banner -i /tmp/nvmpi-out-globalheader.mp4 -f null - 2>&1 | tail -10
+    run_ff -T 30 -i /tmp/nvmpi-out-globalheader.mp4 -f null - || true
+    printf '%s\n' "$FF_OUT" | tail -10
     echo "--- stream info ---"
     ffprobe -v error -select_streams v:0 -show_streams /tmp/nvmpi-out-globalheader.mp4 2>&1 | head -20
     exit 1

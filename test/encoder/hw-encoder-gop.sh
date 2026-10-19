@@ -4,12 +4,15 @@
 # Keylost/jetson-ffmpeg#26): the flag must come from V4L2 KeyFrame metadata,
 # at the configured GOP cadence — never on every packet.
 set -eu
+# shellcheck source-path=SCRIPTDIR/..
+# shellcheck source=lib/common.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/common.sh"
 
 variant="${JETSON_VARIANT:-unknown}"
 echo "=== hw-encoder-gop on variant: ${variant} ==="
 
 echo "== keyframe cadence: 90 frames at g=30 =="
-ffmpeg -y -hide_banner -loglevel error \
+run_ff_must "gop encode" -T 60 -loglevel error \
   -f lavfi -i testsrc2=s=1280x720:r=30 -t 3 \
   -c:v h264_nvmpi -g 30 -b:v 3M /tmp/out_gop.mp4
 total=$(ffprobe -v error -select_streams v:0 -show_entries packet=flags \

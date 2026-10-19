@@ -3,32 +3,26 @@
 # resize_expr -> param.resized) triggers libnvmpi's hardware scaler (VIC on
 # Jetson). The decoded output must have exactly the requested dimensions.
 set -eu
-# shellcheck source=test/gen-samples.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../gen-samples.sh"
+# shellcheck source-path=SCRIPTDIR/..
+# shellcheck source=lib/common.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/common.sh"
 
 variant="${JETSON_VARIANT:-unknown}"
 echo "=== hw-decoder-downscale on variant: ${variant} ==="
 
-[ -s "${SAMPLE_H264_720P}" ] || gen-sample-h264 "${SAMPLE_H264_720P}" 3
+ensure_sample SAMPLE_H264_720P gen-sample-h264 3
 
 # downscale_case LABEL RESIZE_EXPR EXPECTED_W EXPECTED_H
 downscale_case() {
   local label="$1" resize="$2" exp_w="$3" exp_h="$4"
   local tmpout="/tmp/nvmpi-dec-downscale-${label}.mkv"
-  local rc=0 out w h
+  local w h
 
-  out=$(ffmpeg -y -hide_banner -loglevel error \
+  # resize_expr is parsed in nvmpi_init_decoder (ffmpeg/dev/common/libavcodec/
+  # nvmpi_dec.c) and forwarded to libnvmpi as param.resized (src/nvmpi_dec.cpp).
+  run_ff_must "${label}: h264_nvmpi decode with -resize ${resize}" -T 60 -loglevel error \
     -resize:v "$resize" -c:v h264_nvmpi -i "${SAMPLE_H264_720P}" \
-    -c:v ffv1 "$tmpout" 2>&1) || rc=$?
-  if [ "$rc" -ne 0 ]; then
-    echo "FAIL(${label}): h264_nvmpi decode with -resize ${resize} failed (rc=${rc})."
-    echo "      resize_expr parsed in nvmpi_init_decoder"
-    echo "      (ffmpeg/dev/common/libavcodec/nvmpi_dec.c),"
-    echo "      forwarded to libnvmpi as param.resized (src/nvmpi_dec.cpp)."
-    echo "--- ffmpeg output (last 15 lines) ---"
-    echo "$out" | tail -15
-    exit 1
-  fi
+    -c:v ffv1 "$tmpout"
 
   w=$(ffprobe -v error -select_streams v:0 \
     -show_entries stream=width -of default=nokey=1:nw=1 "$tmpout")

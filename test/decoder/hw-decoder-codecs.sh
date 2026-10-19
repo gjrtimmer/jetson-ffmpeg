@@ -8,22 +8,12 @@
 # frame counts are verified against the input. VP8/VP9 require libvpx for
 # sample generation and are SKIPped (not FAILed) when absent.
 set -eu
-# shellcheck source=test/gen-samples.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../gen-samples.sh"
+# shellcheck source-path=SCRIPTDIR/..
+# shellcheck source=lib/common.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/common.sh"
 
 variant="${JETSON_VARIANT:-unknown}"
 echo "=== hw-decoder-codecs on variant: ${variant} ==="
-
-# has_sw_encoder NAME — true when the software encoder is compiled into ffmpeg
-has_sw_encoder() {
-  ffmpeg -hide_banner -encoders 2>/dev/null | awk '{print $2}' | grep -qx "$1"
-}
-
-# input_frames FILE — count video packets in a container
-input_frames() {
-  ffprobe -v error -count_packets -select_streams v:0 \
-    -show_entries stream=nb_read_packets -of default=nokey=1:nw=1 "$1"
-}
 
 # decode_case LABEL NVMPI_DECODER SAMPLE
 #   Decodes SAMPLE with the nvmpi hardware decoder, re-encodes through ffv1
@@ -31,28 +21,20 @@ input_frames() {
 decode_case() {
   local label="$1" dec="$2" sample="$3"
   local tmpout="/tmp/nvmpi-dec-${label}.mkv"
-  local rc=0 out expected actual
+  local expected actual
 
-  expected=$(input_frames "$sample")
+  expected=$(packet_count "$sample")
   if [ "${expected:-0}" -lt 1 ]; then
     echo "FAIL(${label}): input sample has 0 packets — gen-sample broken?"
     exit 1
   fi
 
-  out=$(ffmpeg -y -hide_banner -loglevel error \
-    -c:v "$dec" -i "$sample" \
-    -c:v ffv1 "$tmpout" 2>&1) || rc=$?
-  if [ "$rc" -ne 0 ]; then
-    echo "FAIL(${label}): ${dec} decode failed (rc=${rc})."
-    echo "      Codec-type mapping: nvmpi_get_codingtype in"
-    echo "      ffmpeg/dev/common/libavcodec/nvmpi_dec.c."
-    echo "      V4L2 decode pipeline: src/nvmpi_dec.cpp."
-    echo "--- ffmpeg output (last 15 lines) ---"
-    echo "$out" | tail -15
-    exit 1
-  fi
+  echo "   (codec-type mapping: nvmpi_get_codingtype in ffmpeg/dev/common/libavcodec/nvmpi_dec.c;"
+  echo "    V4L2 decode pipeline: src/nvmpi_dec.cpp)"
+  run_ff_must "${label}: ${dec} decode" -T 60 -loglevel error \
+    -c:v "$dec" -i "$sample" -c:v ffv1 "$tmpout"
 
-  actual=$(input_frames "$tmpout")
+  actual=$(packet_count "$tmpout")
   # The V4L2 decode pipeline has internal buffering depth (~1 GOP); the
   # last few frames may not be flushed at end-of-stream (tracked in #27).
   # 75% threshold proves the codec path works while tolerating pipeline
@@ -70,16 +52,16 @@ decode_case() {
 skipped=0
 
 echo "== 1. MPEG-2 decode (mpeg2_nvmpi) =="
-gen-sample-mpeg2 "${SAMPLE_MPEG2_720P}" 3
+ensure_sample SAMPLE_MPEG2_720P gen-sample-mpeg2 3
 decode_case mpeg2 mpeg2_nvmpi "${SAMPLE_MPEG2_720P}"
 
 echo "== 2. MPEG-4 decode (mpeg4_nvmpi) =="
-gen-sample-mpeg4 "${SAMPLE_MPEG4_720P}" 3
+ensure_sample SAMPLE_MPEG4_720P gen-sample-mpeg4 3
 decode_case mpeg4 mpeg4_nvmpi "${SAMPLE_MPEG4_720P}"
 
 echo "== 3. VP8 decode (vp8_nvmpi) =="
-if has_sw_encoder libvpx; then
-  gen-sample-vp8 "${SAMPLE_VP8_720P}" 3
+if has_codec enc libvpx; then
+  ensure_sample SAMPLE_VP8_720P gen-sample-vp8 3
   decode_case vp8 vp8_nvmpi "${SAMPLE_VP8_720P}"
 else
   echo "   SKIP: libvpx not available for sample generation"
@@ -87,8 +69,8 @@ else
 fi
 
 echo "== 4. VP9 decode (vp9_nvmpi) =="
-if has_sw_encoder libvpx-vp9; then
-  gen-sample-vp9 "${SAMPLE_VP9_720P}" 3
+if has_codec enc libvpx-vp9; then
+  ensure_sample SAMPLE_VP9_720P gen-sample-vp9 3
   decode_case vp9 vp9_nvmpi "${SAMPLE_VP9_720P}"
 else
   echo "   SKIP: libvpx-vp9 not available for sample generation"

@@ -1,50 +1,13 @@
 # shellcheck shell=bash
-# Input-sample paths, generators, and shared test helpers for the hw-* suites.
-# Source, don't execute:
-#   . "$(dirname "${BASH_SOURCE[0]}")/gen-samples.sh"
+# Input-sample paths and generators for the hw-* suites. Normally sourced via
+# test/lib/common.sh (which also provides run_ff and friends); `gen-all`
+# generates every sample once per job (called by hw-all.sh) so suites never
+# regenerate shared inputs. Source, don't execute.
 #
 # Conventions:
 #   - one specific sample path per case: /tmp/nvmpi-sample-{type}.mp4
 #     (never reuse a generic name for a different kind of content)
 #   - generators are named gen-sample-{name-or-type}
-
-# ---------------------------------------------------------------------------
-# Signal detection and retry helpers
-#
-# The Tegra V4L2 driver has stochastic segfaults on rapid device open/close
-# (especially HEVC). A single signal-kill does NOT prove a code bug — only
-# a *confirmed* signal-kill (crash on retry after cooldown) does. These
-# helpers give every signal-killed invocation one retry before failing.
-#
-# POSIX: a process killed by signal N exits with rc = 128 + N.
-# Valid signal range: standard POSIX signals 1–31 → rc 129–159.
-# Real-time signals (34–64 → rc 162–192) are excluded — the Tegra V4L2
-# driver uses them internally for thread communication and they leak out
-# as process kills on error paths without indicating a code bug.
-# ---------------------------------------------------------------------------
-
-# is_signal_rc RC
-# Returns 0 (true) if RC falls in the standard signal-kill range (129–159).
-is_signal_rc() { [ "$1" -ge 129 ] && [ "$1" -le 159 ]; }
-
-# run_with_signal_retry CMD...
-# Run CMD; on signal-kill, wait 200 ms and retry once (output suppressed).
-# Returns: 0 = success, 1 = non-signal error, 2 = confirmed signal-kill.
-# Use for loops where only pass/fail matters. For tests that need captured
-# output (frame counts, error messages), use is_signal_rc directly.
-run_with_signal_retry() {
-  local rc=0
-  "$@" 2>/dev/null || rc=$?
-  if [ "$rc" -eq 0 ]; then return 0; fi
-  if ! is_signal_rc "$rc"; then return 1; fi
-  # First signal-kill — could be a transient driver flake. Retry once.
-  sleep 0.2
-  rc=0
-  "$@" 2>/dev/null || rc=$?
-  if [ "$rc" -eq 0 ]; then return 0; fi
-  if is_signal_rc "$rc"; then return 2; fi
-  return 1
-}
 
 # shellcheck disable=SC2034  # consumed by the sourcing hw-* suites
 SAMPLE_H264_720P="/tmp/nvmpi-sample-h264-720p.mp4"
@@ -82,6 +45,10 @@ SAMPLE_VP8_720P="/tmp/nvmpi-sample-vp8-720p.mkv"
 SAMPLE_VP9_720P="/tmp/nvmpi-sample-vp9-720p.mkv"
 
 # shellcheck disable=SC2034
+SAMPLE_H264_SEEK="/tmp/nvmpi-sample-h264-seek.mp4"       # 5 s, g=30 (seek/flush/lifecycle)
+# shellcheck disable=SC2034
+SAMPLE_H264_SHORT="/tmp/nvmpi-sample-h264-short.mp4"     # 0.3 s (EOS drain)
+# shellcheck disable=SC2034
 SAMPLE_H264_720P_LONG="/tmp/nvmpi-sample-h264-720p-long.mp4"
 # shellcheck disable=SC2034
 SAMPLE_HEVC_720P="/tmp/nvmpi-sample-hevc-720p.mp4"
@@ -101,7 +68,7 @@ gen-sample-h264-long() {
 gen-sample-hevc() {
   ffmpeg -y -hide_banner -loglevel error \
     -f lavfi -i testsrc2=s=1280x720:r=30 -t "${2:-3}" \
-    -c:v libx265 "$1"
+    -c:v libx265 -preset ultrafast "$1"
 }
 
 # 10-bit (Main10, yuv420p10le) software-encoded HEVC sample — input for the
@@ -111,7 +78,7 @@ gen-sample-hevc() {
 gen-sample-hevc10() {
   ffmpeg -y -hide_banner -loglevel error \
     -f lavfi -i testsrc2=s=1280x720:r=30 -t "${2:-3}" \
-    -c:v libx265 -pix_fmt yuv420p10le "$1"
+    -c:v libx265 -preset ultrafast -pix_fmt yuv420p10le "$1"
 }
 
 # Short software-encoded MPEG-2 sample (B-frames disabled for exact frame count).
@@ -165,4 +132,51 @@ gen-sample-mjpeg-480p() {
   ffmpeg -y -hide_banner -loglevel error \
     -f lavfi -i testsrc2=s=854x480:r=30 -t "${2:-2}" \
     -c:v mjpeg -q:v 5 "$1"
+}
+
+# 5 s all-keyframe-every-30 H.264 sample for seek tests.
+gen-sample-h264-seek() {
+  ffmpeg -y -hide_banner -loglevel error \
+    -f lavfi -i testsrc2=s=1280x720:r=30 -t "${2:-5}" \
+    -c:v libx264 -preset fast -g 30 "$1"
+}
+
+# 0.3 s H.264 sample: exercises EOS drain with minimal data.
+gen-sample-h264-short() {
+  ffmpeg -y -hide_banner -loglevel error \
+    -f lavfi -i testsrc2=s=1280x720:r=30 -t "${2:-0.3}" \
+    -c:v libx264 "$1"
+}
+
+# has_sw_encoder NAME: true when the software encoder is compiled into ffmpeg
+# (needed to generate samples; the nvmpi codecs under test never fall back).
+has_sw_encoder() {
+  ffmpeg -hide_banner -encoders 2>/dev/null | awk '{print $2}' | grep -qx "$1"
+}
+
+# gen-all: generate every shared sample once (forced, so stale files from an
+# earlier job on the same host never leak in). Samples needing an optional sw
+# encoder (libx265, libvpx*) are skipped when it is missing; suites that use
+# them already SKIP in that case. Prints one line per sample for the job log.
+gen-all() {
+  local t0 n=0
+  t0=$(date +%s)
+  _gen() { local fn="gen-$1"; shift; "$fn" "$@" && n=$((n + 1)) || echo "[W] ${fn} failed"; }
+  _gen sample-h264 "${SAMPLE_H264_720P}" 3
+  _gen sample-h264-long "${SAMPLE_H264_720P_LONG}" 10
+  _gen sample-h264-seek "${SAMPLE_H264_SEEK}" 5
+  _gen sample-h264-short "${SAMPLE_H264_SHORT}" 0.3
+  _gen sample-oversized "${SAMPLE_H264_OVERSIZED}" 1
+  _gen sample-mpeg2 "${SAMPLE_MPEG2_720P}" 3
+  _gen sample-mpeg4 "${SAMPLE_MPEG4_720P}" 3
+  _gen sample-mjpeg "${SAMPLE_MJPEG_720P}" 3
+  _gen sample-mjpeg-480p "${SAMPLE_MJPEG_480P}" 2
+  if has_sw_encoder libx265; then
+    _gen sample-hevc "${SAMPLE_HEVC_720P}" 5
+    _gen sample-hevc10 "${SAMPLE_HEVC10_720P}" 3
+  fi
+  has_sw_encoder libvpx && _gen sample-vp8 "${SAMPLE_VP8_720P}" 3
+  has_sw_encoder libvpx-vp9 && _gen sample-vp9 "${SAMPLE_VP9_720P}" 3
+  unset -f _gen
+  echo "gen-all: ${n} samples in $(( $(date +%s) - t0 ))s"
 }

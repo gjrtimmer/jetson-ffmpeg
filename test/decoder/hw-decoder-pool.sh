@@ -5,36 +5,23 @@
 # starvation; a pool too large wastes DMA memory. Both extremes must decode
 # without deadlock, crash, or frame loss.
 set -eu
-# shellcheck source=test/gen-samples.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../gen-samples.sh"
+# shellcheck source-path=SCRIPTDIR/..
+# shellcheck source=lib/common.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/common.sh"
 
 variant="${JETSON_VARIANT:-unknown}"
 echo "=== hw-decoder-pool on variant: ${variant} ==="
 
-[ -s "${SAMPLE_H264_720P}" ] || gen-sample-h264 "${SAMPLE_H264_720P}" 3
+ensure_sample SAMPLE_H264_720P gen-sample-h264 3
 
 # pool_decode LABEL POOL_SIZE
 pool_decode() {
   local label="$1" pool="$2"
-  local rc=0 out
-  out=$(timeout -k 5 30 ffmpeg -y -hide_banner -loglevel error \
-    -frame_pool_size:v "$pool" -c:v h264_nvmpi -i "${SAMPLE_H264_720P}" \
-    -f null - 2>&1) || rc=$?
-  if [ "$rc" -eq 124 ]; then
-    echo "FAIL(${label}): decode with frame_pool_size=${pool} timed out (30 s)."
-    echo "      Possible deadlock in NVMPI_bufPool (src/NVMPI_bufPool.hpp)"
-    echo "      when pool depth = ${pool}."
-    exit 1
-  fi
-  if [ "$rc" -ne 0 ]; then
-    echo "FAIL(${label}): decode with frame_pool_size=${pool} failed (rc=${rc})."
-    echo "      frame_pool_size validated in nvmpi_init_decoder"
-    echo "      (ffmpeg/dev/common/libavcodec/nvmpi_dec.c), pool managed by"
-    echo "      NVMPI_bufPool (src/NVMPI_bufPool.hpp)."
-    echo "--- ffmpeg output (last 15 lines) ---"
-    echo "$out" | tail -15
-    exit 1
-  fi
+  # frame_pool_size is validated in nvmpi_init_decoder (ffmpeg/dev/common/
+  # libavcodec/nvmpi_dec.c); the pool is NVMPI_bufPool (src/NVMPI_bufPool.hpp).
+  # A timeout here points at a possible deadlock at pool depth ${pool}.
+  run_ff_must "(${label}) decode with frame_pool_size=${pool}" -T 30 -loglevel error \
+    -frame_pool_size:v "$pool" -c:v h264_nvmpi -i "${SAMPLE_H264_720P}" -f null -
   echo "   ${label}: decode OK with frame_pool_size=${pool}"
 }
 

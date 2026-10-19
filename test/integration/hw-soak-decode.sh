@@ -20,8 +20,9 @@
 #   SOAK_CPU_MAX    — max allowed average CPU% (default: 80)
 #   SOAK_DRIFT_MAX  — max allowed drift: late_avg - early_avg (default: 15)
 set -eu
-# shellcheck source=test/gen-samples.sh
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../gen-samples.sh"
+# shellcheck source-path=SCRIPTDIR/..
+# shellcheck source=lib/common.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/common.sh"
 
 variant="${JETSON_VARIANT:-unknown}"
 echo "=== hw-soak-decode on variant: ${variant} ==="
@@ -31,7 +32,7 @@ SOAK_INTERVAL="${SOAK_INTERVAL:-2}"
 SOAK_CPU_MAX="${SOAK_CPU_MAX:-200}"
 SOAK_DRIFT_MAX="${SOAK_DRIFT_MAX:-15}"
 
-[ -s "${SAMPLE_H264_720P_LONG}" ] || gen-sample-h264-long "${SAMPLE_H264_720P_LONG}" 10
+ensure_sample SAMPLE_H264_720P_LONG gen-sample-h264-long 10
 
 echo "   duration=${SOAK_DURATION}s interval=${SOAK_INTERVAL}s cpu_max=${SOAK_CPU_MAX}% drift_max=${SOAK_DRIFT_MAX}%"
 
@@ -39,9 +40,9 @@ echo "   duration=${SOAK_DURATION}s interval=${SOAK_INTERVAL}s cpu_max=${SOAK_CP
 # create → decode → destroy cycle. The subshell runs until killed.
 (
   while true; do
-    ffmpeg -hide_banner -loglevel error \
+    run_ff -T 30 -loglevel error \
       -c:v h264_nvmpi -i "${SAMPLE_H264_720P_LONG}" \
-      -f null - 2>/dev/null || true
+      -f null - >/dev/null 2>&1 || true
   done
 ) &
 LOOP_PID=$!

@@ -18,32 +18,26 @@
 #
 # Fix:   src/nvmpi_dec.cpp (teardown reorder, fd sentinel, session lifecycle)
 # Issue: gjrtimmer/jetson-ffmpeg#8
-# shellcheck source=test/gen-samples.sh
 set -eu
-
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../gen-samples.sh"
+# shellcheck source-path=SCRIPTDIR/..
+# shellcheck source=lib/common.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/common.sh"
 
 variant="${JETSON_VARIANT:-unknown}"
 echo "=== hw-decoder-teardown on variant: ${variant} ==="
 
 ITERATIONS=200
 
-[ -s "${SAMPLE_H264_720P}" ] || gen-sample-h264 "${SAMPLE_H264_720P}" 3
-
-# run_iteration is now run_with_signal_retry from gen-samples.sh
-run_iteration() { run_with_signal_retry "$@"; }
+ensure_sample SAMPLE_H264_720P gen-sample-h264 3
 
 # === 1. Rapid full-decode open/close (H.264) ===
 echo "== 1. rapid full-decode open/close x${ITERATIONS} (h264_nvmpi) =="
 
 for i in $(seq 1 $ITERATIONS); do
-  if ! run_iteration ffmpeg -y -hide_banner -c:v h264_nvmpi \
-       -i "$SAMPLE_H264_720P" -frames:v 5 -f null /dev/null; then
-    echo "FAIL: full-decode teardown iteration ${i}/${ITERATIONS} crashed."
-    echo "  The decoder close path is not draining V4L2 planes before"
-    echo "  destroying DMA buffers. Check nvmpi_decoder_close() order."
-    exit 1
-  fi
+  # On failure: the decoder close path may not drain V4L2 planes before
+  # destroying DMA buffers. Check nvmpi_decoder_close() order.
+  run_ff_must "full-decode teardown iter ${i}/${ITERATIONS}" -T 30 -c:v h264_nvmpi \
+    -i "$SAMPLE_H264_720P" -frames:v 5 -f null -
   sleep 0.02
 done
 echo "  ${ITERATIONS} iterations clean."
@@ -52,13 +46,10 @@ echo "  ${ITERATIONS} iterations clean."
 echo "== 2. close-during-decode x${ITERATIONS} (h264_nvmpi) =="
 
 for i in $(seq 1 $ITERATIONS); do
-  if ! run_iteration ffmpeg -y -hide_banner -c:v h264_nvmpi \
-       -i "$SAMPLE_H264_720P" -frames:v 1 -f null /dev/null; then
-    echo "FAIL: close-during-decode iteration ${i}/${ITERATIONS} crashed."
-    echo "  Early close (before all frames consumed) triggers teardown"
-    echo "  while the capture thread may still hold V4L2 buffers."
-    exit 1
-  fi
+  # On failure: early close (before all frames consumed) triggers teardown
+  # while the capture thread may still hold V4L2 buffers.
+  run_ff_must "close-during-decode iter ${i}/${ITERATIONS}" -T 30 -c:v h264_nvmpi \
+    -i "$SAMPLE_H264_720P" -frames:v 1 -f null -
   sleep 0.02
 done
 echo "  ${ITERATIONS} iterations clean."
@@ -75,20 +66,14 @@ TRUNCATED="/tmp/nvmpi-sample-truncated.mp4"
 dd if="$SAMPLE_H264_720P" of="$TRUNCATED" bs=1024 count=8 2>/dev/null
 
 for i in $(seq 1 50); do
-  rc=0
-  ffmpeg -y -hide_banner -c:v h264_nvmpi \
-       -i "$TRUNCATED" -f null /dev/null 2>/dev/null || rc=$?
-  if is_signal_rc "$rc"; then
-    sleep 0.2
-    rc=0
-    ffmpeg -y -hide_banner -c:v h264_nvmpi \
-         -i "$TRUNCATED" -f null /dev/null 2>/dev/null || rc=$?
-    if is_signal_rc "$rc"; then
-      echo "FAIL: error-path close iteration ${i}/50 crashed (signal $((rc-128)))."
-      echo "  Truncated-stream decode should error cleanly, not crash."
-      echo "  Check isInError() exit path in dec_capture_loop_fcn."
-      exit 1
-    fi
+  run_ff -T 30 -c:v h264_nvmpi -i "$TRUNCATED" -f null - || true
+  if is_signal_rc "$FF_RC"; then
+    echo "  Truncated-stream decode should error cleanly, not crash."
+    echo "  Check isInError() exit path in dec_capture_loop_fcn."
+    ff_fail "error-path close iteration ${i}/50 crashed (signal $((FF_RC - 128)))."
+  fi
+  if [ "$FF_RC" -eq 124 ]; then
+    ff_fail "error-path close iteration ${i}/50 hung."
   fi
   sleep 0.02
 done
@@ -108,13 +93,9 @@ echo "== 4. device health check =="
 # green and red pipeline reproduced this.
 sleep 1
 
-if ! run_iteration ffmpeg -y -hide_banner -loglevel error -c:v h264_nvmpi \
-     -i "$SAMPLE_H264_720P" -frames:v 10 -f null /dev/null; then
-  echo "FAIL: V4L2 device unusable after teardown stress test."
-  echo "  The decoder may have leaked DMA buffers or left the device"
-  echo "  in a broken state. Check fd cleanup in deinitDecoderCapturePlane."
-  exit 1
-fi
+# On failure the decoder may have leaked DMA buffers or left the device in a
+# broken state. Check fd cleanup in deinitDecoderCapturePlane.
+device_health "V4L2 device after teardown stress test"
 echo "  device healthy."
 
 echo "OK: hw-decoder-teardown passed on ${variant}."

@@ -13,15 +13,15 @@
 # Feature: #11 (closed) — configurable pool sizes
 # Issue:   gjrtimmer/jetson-ffmpeg#27
 
-# shellcheck source=test/gen-samples.sh
 set -eu
-
-. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../gen-samples.sh"
+# shellcheck source-path=SCRIPTDIR/..
+# shellcheck source=lib/common.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../lib/common.sh"
 
 variant="${JETSON_VARIANT:-unknown}"
 echo "=== hw-encoder-pools on variant: ${variant} ==="
 
-[ -s "${SAMPLE_H264_720P}" ] || gen-sample-h264 "${SAMPLE_H264_720P}" 3
+ensure_sample SAMPLE_H264_720P gen-sample-h264 3
 
 # pool_encode LABEL CODEC POOL_SIZE
 # Encode the standard H.264 720p sample with the given encoder and pool size.
@@ -30,43 +30,20 @@ pool_encode() {
     local label="$1" codec="$2" pool_size="$3"
     echo "== ${label}: ${codec} packet_pool_size=${pool_size} =="
 
-    local rc=0
-    local out
-    out=$(timeout -k 5 30 ffmpeg -y -hide_banner \
-      -i "${SAMPLE_H264_720P}" \
+    run_ff -T 30 -i "${SAMPLE_H264_720P}" \
       -c:v "${codec}" -packet_pool_size "${pool_size}" \
-      -f null - 2>&1) || rc=$?
+      -f null - || true
 
-    if [ "$rc" -eq 124 ]; then
-        echo "FAIL: ${label} timed out — possible deadlock at pool_size=${pool_size}."
+    if [ "$FF_RC" -eq 124 ]; then
         echo "   Code: nvmpienc_initPktPool / ff_nvmpi_receive_packet in nvmpi_enc.c"
-        echo "$out" | tail -15
-        exit 1
+        ff_fail "${label} timed out — possible deadlock at pool_size=${pool_size}."
     fi
-    if is_signal_rc "$rc"; then
-        echo "  warn: ${label} signal $((rc - 128)), retrying after 200 ms..."
-        sleep 0.2
-        rc=0
-        out=$(timeout -k 5 30 ffmpeg -y -hide_banner \
-          -i "${SAMPLE_H264_720P}" \
-          -c:v "${codec}" -packet_pool_size "${pool_size}" \
-          -f null - 2>&1) || rc=$?
-        if is_signal_rc "$rc"; then
-            echo "FAIL: ${label} confirmed crash (signal $((rc - 128))) at pool_size=${pool_size}."
-            echo "   Code: nvmpienc_initPktPool / nvmpienc_deinitPktPool in nvmpi_enc.c"
-            echo "$out" | tail -15
-            exit 1
-        fi
+    if is_signal_rc "$FF_RC"; then
+        echo "   Code: nvmpienc_initPktPool / nvmpienc_deinitPktPool in nvmpi_enc.c"
+        ff_fail "${label} confirmed crash (signal $((FF_RC - 128))) at pool_size=${pool_size}."
     fi
 
-    local frames
-    frames=$(echo "$out" | grep -oP 'frame=\s*\K[0-9]+' | tail -1)
-    if [ -z "$frames" ] || [ "$frames" -lt 10 ]; then
-        echo "FAIL: ${label} produced ${frames:-0} frames (expected >= 10)."
-        echo "$out" | tail -15
-        exit 1
-    fi
-    echo "   ${label}: ${frames} frames — OK"
+    assert_frames 10 "${label}"
 }
 
 # === 1. H.264 default pool (10) ===
