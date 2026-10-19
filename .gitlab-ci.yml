@@ -8,8 +8,10 @@
 # Two kinds of pipeline:
 #
 #   Branch / MR pipelines (NOT a tag, deduplicated — see workflow:rules):
-#     build   - compile nvmpi library (stubs) + patch/build each ffmpeg version
-#     test    - all HW test suites (test/hw-all.sh) on each Jetson variant
+#     build      - compile nvmpi library (stubs) + patch/build each ffmpeg version
+#     test:stub  - mockable suites against the nvmpi mock on plain K3s runners
+#     test:hw-fast / test:hw-full - hw suites (test/hw-all.sh) on the Jetson
+#                  runner, per HW_TIER (see workflow:rules below)
 #
 #   Tag pipelines (v<X.Y.Z>):  -> see https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Release-Process
 #     build        - nvmpi:jp6 + ffmpeg:jp6 (the artifacts the release gate tests)
@@ -30,13 +32,17 @@
 #   1. Register a project runner with tags: jetson, <variant>
 #   2. Add an entry to the shared .hw-full/.hw-fast parallel matrix with JETSON_VARIANT
 #
-# To add a new FFmpeg version:
-#   1. Add the version string to the FFVER matrix in ffmpeg:jp6 and ffmpeg:jp5
-#   2. Add a hw job pair for it: test:hw-fast:ffmpeg-<ver> (extends .hw-fast)
-#      and test:hw-full:ffmpeg-<ver> (extends .hw-full-twin), both with the
-#      matching needs reference (see the test:hw-fast / test:hw-full stages)
-#   3. Add the version to the FFVER matrix in dist:jp6 and dist:jp5
-#      (ffmpeg:jp5 only builds the oldest + newest version as a compile check)
+# To add a new FFmpeg version (full checklist: .claude/skills/add-ffmpeg-version):
+#   1. Add the version string to the FFVER matrix in ffmpeg:jp6, dist:jp6 and
+#      dist:jp5 (ffmpeg:jp5 is a compile check of the oldest + newest only)
+#   2. Add test:stub:ffmpeg-<ver> (extends .stub-test), test:hw-fast:ffmpeg-<ver>
+#      (extends .hw-fast) and test:hw-full:ffmpeg-<ver> (extends .hw-full-twin),
+#      each with a needs: on its own ffmpeg:jp6 matrix entry. If it becomes the
+#      full-tier carrier of its wrapper path, use .hw-full for it instead and
+#      demote the previous carrier to a fast job + .hw-full-twin twin
+#   3. Add release:test:ffmpeg-<ver> (extends test:hw-full:ffmpeg-<ver> and
+#      .release-gate-job) and list it in .release-gate and in release: needs
+#   HW_SUITES_EXCLUDE and MOCK_SUITES (test/hw-all.sh) stay untouched.
 
 stages:
   - build
@@ -373,10 +379,10 @@ nvmpi-mock:jp6:
 # The nvmpi FFmpeg wrapper compiles into a few DISTINCT builds by libavcodec
 # version (see "Wrapper code paths by FFmpeg version" in https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Development-Guide#wrapper-code-paths-by-ffmpeg-version):
 #
-#   6.0,6.1,7.0,7.1 -> path C (FFCodec) — identical wrapper code
-#   8.0,8.1          -> path D (FFCodec + AV_PROFILE)
+#   6.0,6.1,7.0,7.1 -> path A (FFCodec) — identical wrapper code
+#   8.0,8.1          -> path B (FFCodec + AV_PROFILE)
 #
-# 7.1 (path C) and 8.1 (path D) carry the full suites. The other versions
+# 7.1 (path A) and 8.1 (path B) carry the full suites. The other versions
 # share wrapper code with them and run the fast tier to cover FFmpeg
 # ABI/runtime differences between releases; HW_TIER=full runs them in full too.
 #
@@ -473,7 +479,7 @@ nvmpi-mock:jp6:
   timeout: 30m
   rules: *hw-rules-full
 
-test:stub:ffmpeg-6.0:                            # path C
+test:stub:ffmpeg-6.0:                            # path A
   extends: .stub-test
   needs:
     - job: "ffmpeg:jp6"
@@ -482,7 +488,7 @@ test:stub:ffmpeg-6.0:                            # path C
           - FFVER: "6.0"
     - job: "nvmpi-mock:jp6"
 
-test:stub:ffmpeg-6.1:                            # path C
+test:stub:ffmpeg-6.1:                            # path A
   extends: .stub-test
   needs:
     - job: "ffmpeg:jp6"
@@ -491,7 +497,7 @@ test:stub:ffmpeg-6.1:                            # path C
           - FFVER: "6.1"
     - job: "nvmpi-mock:jp6"
 
-test:stub:ffmpeg-7.0:                            # path C
+test:stub:ffmpeg-7.0:                            # path A
   extends: .stub-test
   needs:
     - job: "ffmpeg:jp6"
@@ -500,7 +506,7 @@ test:stub:ffmpeg-7.0:                            # path C
           - FFVER: "7.0"
     - job: "nvmpi-mock:jp6"
 
-test:stub:ffmpeg-7.1:                            # path C
+test:stub:ffmpeg-7.1:                            # path A
   extends: .stub-test
   needs:
     - job: "ffmpeg:jp6"
@@ -509,7 +515,7 @@ test:stub:ffmpeg-7.1:                            # path C
           - FFVER: "7.1"
     - job: "nvmpi-mock:jp6"
 
-test:stub:ffmpeg-8.0:                            # path D
+test:stub:ffmpeg-8.0:                            # path B
   extends: .stub-test
   needs:
     - job: "ffmpeg:jp6"
@@ -518,7 +524,7 @@ test:stub:ffmpeg-8.0:                            # path D
           - FFVER: "8.0"
     - job: "nvmpi-mock:jp6"
 
-test:stub:ffmpeg-8.1:                            # path D
+test:stub:ffmpeg-8.1:                            # path B
   extends: .stub-test
   needs:
     - job: "ffmpeg:jp6"
@@ -527,7 +533,7 @@ test:stub:ffmpeg-8.1:                            # path D
           - FFVER: "8.1"
     - job: "nvmpi-mock:jp6"
 
-test:hw-fast:ffmpeg-6.0:                         # path C
+test:hw-fast:ffmpeg-6.0:                         # path A
   extends: .hw-fast
   needs:
     - job: "ffmpeg:jp6"
@@ -535,7 +541,7 @@ test:hw-fast:ffmpeg-6.0:                         # path C
         matrix:
           - FFVER: "6.0"
 
-test:hw-full:ffmpeg-6.0:                         # path C
+test:hw-full:ffmpeg-6.0:                         # path A
   extends: .hw-full-twin
   needs:
     - job: "ffmpeg:jp6"
@@ -543,7 +549,7 @@ test:hw-full:ffmpeg-6.0:                         # path C
         matrix:
           - FFVER: "6.0"
 
-test:hw-fast:ffmpeg-6.1:                         # path C
+test:hw-fast:ffmpeg-6.1:                         # path A
   extends: .hw-fast
   needs:
     - job: "ffmpeg:jp6"
@@ -551,7 +557,7 @@ test:hw-fast:ffmpeg-6.1:                         # path C
         matrix:
           - FFVER: "6.1"
 
-test:hw-full:ffmpeg-6.1:                         # path C
+test:hw-full:ffmpeg-6.1:                         # path A
   extends: .hw-full-twin
   needs:
     - job: "ffmpeg:jp6"
@@ -559,7 +565,7 @@ test:hw-full:ffmpeg-6.1:                         # path C
         matrix:
           - FFVER: "6.1"
 
-test:hw-fast:ffmpeg-7.0:                         # path C
+test:hw-fast:ffmpeg-7.0:                         # path A
   extends: .hw-fast
   needs:
     - job: "ffmpeg:jp6"
@@ -567,7 +573,7 @@ test:hw-fast:ffmpeg-7.0:                         # path C
         matrix:
           - FFVER: "7.0"
 
-test:hw-full:ffmpeg-7.0:                         # path C
+test:hw-full:ffmpeg-7.0:                         # path A
   extends: .hw-full-twin
   needs:
     - job: "ffmpeg:jp6"
@@ -575,7 +581,7 @@ test:hw-full:ffmpeg-7.0:                         # path C
         matrix:
           - FFVER: "7.0"
 
-test:hw-fast:ffmpeg-8.0:                         # path D
+test:hw-fast:ffmpeg-8.0:                         # path B
   extends: .hw-fast
   needs:
     - job: "ffmpeg:jp6"
@@ -583,7 +589,7 @@ test:hw-fast:ffmpeg-8.0:                         # path D
         matrix:
           - FFVER: "8.0"
 
-test:hw-full:ffmpeg-8.0:                         # path D
+test:hw-full:ffmpeg-8.0:                         # path B
   extends: .hw-full-twin
   needs:
     - job: "ffmpeg:jp6"
@@ -591,7 +597,7 @@ test:hw-full:ffmpeg-8.0:                         # path D
         matrix:
           - FFVER: "8.0"
 
-test:hw-full:ffmpeg-7.1:                         # path C
+test:hw-full:ffmpeg-7.1:                         # path A
   extends: .hw-full
   needs:
     - job: "ffmpeg:jp6"
@@ -599,7 +605,7 @@ test:hw-full:ffmpeg-7.1:                         # path C
         matrix:
           - FFVER: "7.1"
 
-test:hw-full:ffmpeg-8.1:                         # path D
+test:hw-full:ffmpeg-8.1:                         # path B
   extends: .hw-full
   needs:
     - job: "ffmpeg:jp6"
