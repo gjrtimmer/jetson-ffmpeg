@@ -28,7 +28,7 @@ deliberately no `test` alias (it would shadow the shell builtin).
 
 ```bash
 # libnvmpi comes from a jetson-nvmpi release: libnvmpi1 deb, or a tarball prefix
-./scripts/fetch-nvmpi.sh --version 4.0.1 --dest ~/nvmpi   # public GitHub release, no token; --source gitlab needs GITLAB_TOKEN
+./scripts/fetch-nvmpi.sh --version 4.0.2 --dest ~/nvmpi   # public GitHub release, no token; --source gitlab needs GITLAB_TOKEN
 # Patch + build a full FFmpeg <ver> with nvmpi (alias: build)
 ./scripts/build.sh --ffmpeg 7.1 [--nvmpi-prefix ~/nvmpi] [--install]
 
