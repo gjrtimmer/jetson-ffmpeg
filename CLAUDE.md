@@ -495,10 +495,12 @@ anything substantial.
 **Audit CI trigger rules holistically.** When editing `.gitlab-ci.yml`, review
 `rules:` for ALL jobs — not just those directly modified. Check for unintended
 auto-triggers, missing variable gates, and `changes:paths` rules that fire
-when renamed/new files land on the default branch. Lesson: docker image build
-jobs had `changes:paths` rules that bypassed the `BUILD_IMAGES` variable gate,
-causing hour-long builds to auto-trigger on every main push that touched a
-Dockerfile.
+when renamed/new files land on the default branch. Lesson: image build jobs
+once had `changes:paths` rules that bypassed their variable gate, causing
+hour-long builds on every main push that touched a Dockerfile. CI images are
+no longer built here: they come from the separate `timmertech/jetson-builder`
+repo and are pinned as immutable tags via `JETSON_BUILDER_SHA` in
+`.gitlab-ci.yml` (bump it to adopt new images).
 
 ## Output style
 
