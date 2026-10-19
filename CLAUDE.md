@@ -588,12 +588,12 @@ default for all sessions in this repo — do not wait for the user to request it
   fast hw suites on every version, stress suites on 7.1 + 8.1). A push to
   `main` runs **builds only** (~15 min, `HW_TIER=none`): "main pipeline
   green" after a merge means builds green, not hw. Docs-only changes create
-  no pipeline (MRs get a `ci:docs-only` job). The nightly schedule on `main`
-  and web runs set `HW_TIER=full` (every suite × every version on the Orin).
+  no pipeline (MRs get a `ci:docs-only` job). The weekly schedule on `main`
+  (Sunday 02:00) and web runs set `HW_TIER=full` (every suite × every version on the Orin).
   MRs are merged fast-forward (`merge_method=ff`): rebase the MR branch when
   main moved, then wait for its new head pipeline.
 - **Pre-tag gate = full-tier pipeline green on the tag's SHA.** Before
-  tagging, confirm the latest nightly (or a web run with `HW_TIER=full`) on
+  tagging, confirm the latest weekly run (or a web run with `HW_TIER=full`) on
   that exact `main` SHA is `success`; if none exists, start one and wait. A
   green post-merge main pipeline alone is NOT enough (builds only).
 - **The Orin runner is shared with jetson-nvmpi.** `resource_group` only

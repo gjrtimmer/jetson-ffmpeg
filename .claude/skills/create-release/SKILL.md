@@ -135,7 +135,7 @@ If the latest main pipeline is NOT `success`:
 2. Proceed to **Phase 2: Wait for Pipelines**.
 
 The main pipeline after a merge runs builds only (`HW_TIER=none`). The
-**pre-tag gate** is a full-tier pipeline (`HW_TIER=full`: nightly schedule or a
+**pre-tag gate** is a full-tier pipeline (`HW_TIER=full`: weekly schedule or a
 web run) that is `success` on the exact `main` HEAD SHA to be tagged. Check:
 
 ```bash
