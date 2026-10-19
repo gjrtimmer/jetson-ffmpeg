@@ -2,11 +2,11 @@
 name: bug-hunter
 description: >-
   Use when searching for bugs, defects, or correctness issues in the nvmpi
-  codebase — libnvmpi (C++), FFmpeg wrappers (C), VIC filter, or any
-  file under src/, ffmpeg/dev/, include/. Covers resource lifecycle, error
+  FFmpeg integration — FFmpeg wrappers (C), VIC filter, or any file under
+  ffmpeg/dev/ (libnvmpi C++ now lives in the jetson-nvmpi repo). Covers resource lifecycle, error
   paths, threading, V4L2 contracts, FFmpeg API misuse, version-guard gaps,
   integer overflow, and NULL-safety. Invoke with /bug-hunter [path|--scope].
-argument-hint: "[path | --scope libnvmpi|ffmpeg|vic|all]"
+argument-hint: "[path | --scope ffmpeg|vic|all]"
 ---
 
 # Bug Hunter — Adversarial Code Defect Analysis
@@ -43,9 +43,8 @@ Determine target files. If user gave a path, use it. Otherwise select by
 
 | Scope | Files |
 |-------|-------|
-| `libnvmpi` | `src/*.cpp`, `include/*.h`, `include/*.hpp` |
 | `ffmpeg` | `ffmpeg/dev/common/libavcodec/nvmpi_*.c` |
-| `vic` | `ffmpeg/dev/common/libavfilter/vf_scale_vic.c`, `src/nvmpi_vic*.cpp` |
+| `vic` | `ffmpeg/dev/common/libavfilter/vf_scale_vic*.c` |
 | `all` (default) | All of the above |
 
 Skip: generated patches (`ffmpeg/patches/`), test scripts, build scripts,
@@ -76,7 +75,7 @@ challenge every finding. Five real bugs beat twenty false positives.
 [
   {
     "id": "H1",
-    "file": "src/nvmpi_dec_api.cpp",
+    "file": "ffmpeg/dev/common/libavcodec/nvmpi_dec.c",
     "line": 739,
     "category": "teardown-ordering",
     "severity": "HIGH",
@@ -225,9 +224,8 @@ Write report to `.work/bug-hunter-report-YYYY-MM-DD.md`.
 
 | Agent | Model | Task | Files |
 |-------|-------|------|-------|
-| Hunter-libnvmpi | sonnet | Checklist 1-4, 7-8 on src/ + include/ | `src/*.cpp`, `include/*.h`, `include/*.hpp` |
 | Hunter-ffmpeg | sonnet | Checklist 1-2, 5-6, 7-8 on FFmpeg wrappers | `ffmpeg/dev/common/libavcodec/nvmpi_*.c` |
-| Hunter-vic | sonnet | Checklist 1-2, 4, 7-8 on VIC filter | `vf_scale_vic.c`, `src/nvmpi_vic*.cpp` |
+| Hunter-vic | sonnet | Checklist 1-2, 4, 7-8 on VIC filter | `vf_scale_vic*.c` |
 | Skeptic | sonnet | Verify all findings, reject false positives | All files cited in findings |
 
 Dispatch Hunters in parallel. Skeptic runs after all Hunters complete.

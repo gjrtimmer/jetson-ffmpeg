@@ -1,6 +1,7 @@
 # yaml-language-server: $schema=https://gitlab.com/gitlab-org/gitlab/-/raw/master/app/assets/javascripts/editor/schema/ci.json
 #
-# CI pipeline for jetson-ffmpeg (nvmpi library + ffmpeg integration).
+# CI pipeline for jetson-ffmpeg (FFmpeg nvmpi integration; libnvmpi comes from
+# timmertech/jetson-nvmpi releases, pinned by NVMPI_VERSION below).
 #
 # CI images (builders, hw runtime, release tools) are built and published by
 # timmertech/jetson-builder; this pipeline pins immutable tags (JETSON_BUILDER_SHA).
@@ -8,19 +9,19 @@
 # Two kinds of pipeline:
 #
 #   Branch / MR pipelines (NOT a tag, deduplicated — see workflow:rules):
-#     build      - compile nvmpi library (stubs) + patch/build each ffmpeg version
+#     build      - fetch the pinned libnvmpi package + patch/build each ffmpeg version
 #     test:stub  - mockable suites against the nvmpi mock on plain K3s runners
 #     test:hw-fast / test:hw-full - hw suites (test/hw-all.sh) on the Jetson
 #                  runner, per HW_TIER (see workflow:rules below)
 #
 #   Tag pipelines (v<X.Y.Z>):  -> see https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Release-Process
-#     build        - nvmpi:jp6 + ffmpeg:jp6 (the artifacts the release gate tests)
+#     build        - nvmpi:fetch:jp6 + ffmpeg:jp6 (the artifacts the release gate tests)
 #     release-test - RELEASE GATE: full tier (HW_TIER=full, every suite) on real
 #                    Jetson hardware for every FFmpeg version; dist and release
 #                    `needs` all of it, so any failure = red pipeline, no release
-#     dist    - build REAL libnvmpi + ffmpeg per version in a plain container
-#               (the stub builds above are NOT runnable, so releases rebuild
-#               against the real tegra libs, pulled from NVIDIA's apt repo)
+#     dist    - build ffmpeg per version in a plain container and bundle the
+#               released libnvmpi package (the same NVMPI_VERSION the release
+#               gate tested; FFmpeg only dlopens libnvmpi, no tegra libs needed)
 #     release - changelog (git-cliff) -> GitLab Release with package assets,
 #               and mirror to GitHub (if GITHUB_REPO/GITHUB_TOKEN are set)
 #
@@ -57,15 +58,8 @@ stages:
 # Docs-only changes (README, CHANGELOG, CLAUDE.md, wiki-ish files) skip it.
 # ANCHOR LIST: when a new top-level code directory is added, add it here.
 .code-paths: &code-paths
-  - "src/**/*"
-  - "include/**/*"
-  - "stubs/**/*"
-  - "cmake/**/*"
-  - "CMakeLists.txt"
-  - "nvmpi.pc.in"
   - "ffmpeg/**/*"
   - "scripts/**/*"
-  - "vendor/**/*"
   - ".gitlab-ci.yml"
   - "test/**/*.sh"
   - "test/**/*.c"
@@ -118,8 +112,12 @@ variables:
       - "none"
       - "tiered"
       - "full"
+  # jetson-nvmpi release (GitLab project 515, generic package registry) every
+  # job uses: the build/test artifacts, the nvmpi mock (git tag v<version>) and
+  # the dist bundles. To bump: set the new version, check the release has both
+  # jetson-nvmpi_<ver>_l4t<tag>_aarch64.tar.gz files, run an MR pipeline.
+  NVMPI_VERSION: "4.0.0"
   L4T_TAG: "r36.4.0"
-  L4T_SOC: "t234"
   L4T_TAG_JP5: "r35.4.1"
   NVMPI_PREFIX: "${CI_PROJECT_DIR}/_nvmpi"
   FFMPEG_PREFIX: "${CI_PROJECT_DIR}/_ffmpeg"
@@ -156,11 +154,16 @@ default:
     pull_policy: if-not-present
 
 # ---------------------------------------------------------------------------
-# Stage: build — compile nvmpi (stubs), then patch/build each ffmpeg version
+# Stage: build — fetch the pinned libnvmpi package, then patch/build each
+# ffmpeg version
 #
-# nvmpi:jp6 / nvmpi:jp5 compile libnvmpi against stubs.
+# nvmpi:fetch:jp6 / nvmpi:fetch:jp5 download and verify the released
+# jetson-nvmpi tarball for the JetPack generation (the real libnvmpi, linked
+# against the Multimedia API; this project's job token is on the jetson-nvmpi
+# allowlist) and expose it as _nvmpi/.
 # ffmpeg:jp6 / ffmpeg:jp5 clone, patch, configure, and build each FFmpeg
-# version via parallel:matrix on FFVER.
+# version via parallel:matrix on FFVER. FFmpeg dlopens libnvmpi, so the build
+# itself needs neither its headers nor its libraries.
 # ---------------------------------------------------------------------------
 # Docs-only MRs: nothing to build or test. This keeps the MR pipeline
 # non-empty so the "pipeline must succeed" merge gate is satisfied.
@@ -194,42 +197,31 @@ ci:docs-only:
     - if: '$CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+$/'
     - !reference [.not-on-tag, rules]
 
-nvmpi:jp6:
-  extends: .ccache
+nvmpi:fetch:jp6:
   stage: build
   rules: !reference [.jp6-build-rules, rules]
   script:
-    - mkdir -p build && cd build
-    - cmake -DCMAKE_INSTALL_PREFIX="${NVMPI_PREFIX}" -DCMAKE_BUILD_TYPE=Release -DWITH_STUBS=ON -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache ..
-    - make -j"$(nproc)"
-    - make install
-    - ccache -s
+    - bash ./scripts/fetch-nvmpi.sh --version "${NVMPI_VERSION}" --l4t "${L4T_TAG}" --dest "${NVMPI_PREFIX}"
   artifacts:
     paths:
       - _nvmpi/
-      - build/
     expire_in: 1 hour
 
-# JetPack 5.x (kernel 5.10) compile-test — catches V4L2 header constants
-# and API symbols that exist on JP6 (kernel 5.15+) but not JP5. Stubs-only,
-# no FFmpeg, no hw tests. Covers all JP5 releases (5.0.2-5.1.6).
-nvmpi:jp5:
-  extends: .ccache
+# JetPack 5.x (kernel 5.10) package: FFmpeg compile check against the JP5
+# toolchain image, no hw tests. Covers all JP5 releases (5.0.2-5.1.6).
+nvmpi:fetch:jp5:
   stage: build
   <<: *not-on-tag
   image:
     name: "${BUILDER_IMAGE_JP5}"
     pull_policy: if-not-present
+  variables:
+    L4T_TAG: "${L4T_TAG_JP5}"
   script:
-    - mkdir -p build && cd build
-    - cmake -DCMAKE_INSTALL_PREFIX="${NVMPI_PREFIX}" -DCMAKE_BUILD_TYPE=Release -DWITH_STUBS=ON -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache ..
-    - make -j"$(nproc)"
-    - make install
-    - ccache -s
+    - bash ./scripts/fetch-nvmpi.sh --version "${NVMPI_VERSION}" --l4t "${L4T_TAG}" --dest "${NVMPI_PREFIX}"
   artifacts:
     paths:
       - _nvmpi/
-      - build/
     expire_in: 1 hour
 
 .ffmpeg-build: &ffmpeg-build
@@ -244,7 +236,6 @@ nvmpi:jp5:
     - git clone --depth=1 -b "release/${FFVER}" https://git.ffmpeg.org/ffmpeg.git /tmp/ffmpeg
     - bash ./scripts/ffpatch.sh /tmp/ffmpeg
     - cd /tmp/ffmpeg
-    - export PKG_CONFIG_PATH="${NVMPI_PREFIX}/lib/pkgconfig:${NVMPI_PREFIX}/share/pkgconfig"
     - |
       # Probe optional codec/protocol libraries — enable whatever is available.
       # Core test target is nvmpi; optional libs are best-effort in patch builds.
@@ -267,8 +258,6 @@ nvmpi:jp5:
         --enable-shared --disable-static --disable-doc \
         --enable-gpl --enable-nvmpi \
         --cc="ccache gcc" \
-        --extra-cflags="-I${CI_PROJECT_DIR}/include" \
-        --extra-ldflags="-L${CI_PROJECT_DIR}/build -L${CI_PROJECT_DIR}/stubs -Wl,-rpath-link,${CI_PROJECT_DIR}/stubs" \
         ${OPT}
     - make -j"$(nproc)"
     - make install
@@ -282,7 +271,7 @@ nvmpi:jp5:
 ffmpeg:jp6:
   <<: *ffmpeg-build
   rules: !reference [.jp6-build-rules, rules]
-  needs: ["nvmpi:jp6"]
+  needs: ["nvmpi:fetch:jp6"]
   parallel:
     matrix:
       - FFVER: ["6.0", "6.1", "7.0", "7.1", "8.0", "8.1"]
@@ -293,22 +282,23 @@ ffmpeg:jp5:
   image:
     name: "${BUILDER_IMAGE_JP5}"
     pull_policy: if-not-present
-  needs: ["nvmpi:jp5"]
+  needs: ["nvmpi:fetch:jp5"]
   parallel:
     matrix:
       - FFVER: ["6.0", "8.1"]
 
 # Behavioural Jetson mock (jetson-nvmpi mock/): drop-in libnvv4l2 /
 # libnvbufsurface / libnvbufsurftransform carrying the REAL sonames. Built from
-# a pinned commit of the public jetson-nvmpi mirror (no token, no job-token
-# allowlist, immutable by sha). Bump NVMPI_MOCK_REF to adopt mock changes.
+# the v${NVMPI_VERSION} tag of the public jetson-nvmpi mirror (no token, no
+# job-token allowlist), so mock and the released libnvmpi come from the same
+# source. The tag is the single pin: bumping NVMPI_VERSION bumps both.
 nvmpi-mock:jp6:
   stage: build
   <<: *not-on-tag
   needs: []
   variables:
     NVMPI_MOCK_REPO: "https://github.com/gjrtimmer/jetson-nvmpi.git"
-    NVMPI_MOCK_REF: "920ff33a0f0b2d606e65ccccb16b0c752ca4fc1b"
+    NVMPI_MOCK_REF: "v${NVMPI_VERSION}"
   script:
     - git init -q /tmp/nvmpi-mock-src
     - git -C /tmp/nvmpi-mock-src fetch -q --depth=1 "${NVMPI_MOCK_REPO}" "${NVMPI_MOCK_REF}"
@@ -318,6 +308,8 @@ nvmpi-mock:jp6:
     - mkdir -p _mock
     - cp -a /tmp/nvmpi-mock-build/mock/. _mock/
     - cp /tmp/nvmpi-mock-src/scripts/mock-dev-nodes.sh _mock/
+    # libnvjpeg is not mocked; the released libnvmpi links it, so the stub does.
+    - cp /tmp/nvmpi-mock-src/stubs/libnvjpeg.so _mock/
     - ls -l _mock
   artifacts:
     paths:
@@ -350,9 +342,9 @@ nvmpi-mock:jp6:
   script:
     - echo "=== stub test (${CI_JOB_NAME}) against the nvmpi mock ==="
     - export PATH="${FFMPEG_PREFIX}/bin:${PATH}"
-    # Mock first (real sonames); stubs/ only supplies libnvjpeg, which the mock
-    # does not replace. No Tegra libs exist on this runner.
-    - export LD_LIBRARY_PATH="${CI_PROJECT_DIR}/_mock:${FFMPEG_PREFIX}/lib:${CI_PROJECT_DIR}/stubs"
+    # Mock first (real sonames; _mock/ also carries the libnvjpeg stub). The
+    # libnvmpi in _ffmpeg/lib is the released one. No Tegra libs on this runner.
+    - export LD_LIBRARY_PATH="${CI_PROJECT_DIR}/_mock:${FFMPEG_PREFIX}/lib"
     - bash _mock/mock-dev-nodes.sh
     # Proof the mock (not the stubs) is what libnvmpi loads.
     - ldd "${FFMPEG_PREFIX}/lib/libnvmpi.so" | tee /tmp/ldd.txt
@@ -373,7 +365,7 @@ nvmpi-mock:jp6:
 #            stress suites listed in HW_SUITES_EXCLUDE.
 #   full   - everything, on every version (weekly schedule / web / cross-project trigger)
 #
-# Each version reuses its build artifact (installed ffmpeg + libnvmpi), no
+# Each version reuses its build artifact (installed ffmpeg + released libnvmpi), no
 # rebuild on the Jetson runner.
 #
 # The nvmpi FFmpeg wrapper compiles into a few DISTINCT builds by libavcodec
@@ -668,35 +660,20 @@ release:test:ffmpeg-8.1:
   extends: ["test:hw-full:ffmpeg-8.1", ".release-gate-job"]
 
 # ---------------------------------------------------------------------------
-# Stage: dist — build REAL libnvmpi + ffmpeg per version and tar each one
-# (tag pipelines only). The build stages above link stubs and are NOT
-# runnable; releases must rebuild against the real Multimedia API.
+# Stage: dist — build ffmpeg per version, bundle the released libnvmpi and tar
+# each one (tag pipelines only).
 #
 # This is a plain container build on any (arm64) runner — NO Jetson hardware
-# is needed: nothing encodes/decodes here. The real tegra userspace libraries
-# (libnvv4l2, libnvjpeg, libnvbufsurface, libnvbufsurftransform) are installed
-# from NVIDIA's jetson apt repo; the touch file skips nvidia-l4t-core's
-# "must run on an NVIDIA Tegra platform" preinstall check inside containers.
-# --no-stubs makes build.sh hard-fail if those libs are missing, so a release
-# can never silently ship stub-linked (non-runnable) tarballs.
+# is needed: nothing encodes/decodes here, and FFmpeg only dlopens libnvmpi, so
+# no tegra libraries are needed either. libnvmpi is the jetson-nvmpi package of
+# NVMPI_VERSION (the one the release gate tested), unpacked into the install
+# prefix before the build so package.sh bundles it.
 # Produces dist/jetson-ffmpeg_<ver>_ffmpeg<ff>_l4t<tag>_aarch64.tar.gz.
 # ---------------------------------------------------------------------------
 .dist:
   stage: dist
   <<: *only-tag
   needs: !reference [.release-gate, needs]
-  before_script:
-    - mkdir -p /opt/nvidia/l4t-packages && touch /opt/nvidia/l4t-packages/.nv-l4t-disable-boot-fw-update-in-preinstall
-    - |
-      if ! grep -rqs "repo.download.nvidia.com/jetson/${L4T_SOC}" /etc/apt/sources.list /etc/apt/sources.list.d/; then
-        wget -qO /etc/apt/trusted.gpg.d/jetson-ota-public.asc https://repo.download.nvidia.com/jetson/jetson-ota-public.asc
-        echo "deb https://repo.download.nvidia.com/jetson/${L4T_SOC} ${L4T_TAG%.*} main" > /etc/apt/sources.list.d/nvidia-l4t-${L4T_SOC}.list
-      fi
-    - apt-get update -qq
-    - >-
-      apt-get install -y -qq --no-install-recommends
-      nvidia-l4t-multimedia nvidia-l4t-multimedia-utils
-    - ldconfig
   script:
     - export VERSION="${CI_COMMIT_TAG#v}"
     - PFX="${CI_PROJECT_DIR}/_pkg"
@@ -714,10 +691,11 @@ release:test:ffmpeg-8.1:
       probe freetype2     --enable-libfreetype
       probe gnutls        --enable-gnutls
       echo "[i] optional flags:${OPT:- (none)}"
+    - bash ./scripts/fetch-nvmpi.sh --version "${NVMPI_VERSION}" --l4t "${L4T_TAG}" --dest "${PFX}"
     - >-
-      bash ./scripts/build.sh --no-stubs --no-libx264 --no-libx265
+      bash ./scripts/build.sh --no-libx264 --no-libx265
       --ffmpeg "${FFVER}" --install
-      --prefix "${PFX}" --ffmpeg-prefix "${PFX}" -j"$(nproc)"
+      --nvmpi-prefix "${PFX}" --ffmpeg-prefix "${PFX}" -j"$(nproc)"
       --ffmpeg-args "--enable-shared --disable-static --enable-gpl ${OPT}"
     - test -f "${PFX}/lib/libnvmpi.so"
     - >-
@@ -741,7 +719,6 @@ dist:jp5:
     pull_policy: if-not-present
   variables:
     L4T_TAG: "${L4T_TAG_JP5}"
-    L4T_SOC: "t194"
   parallel:
     matrix:
       - FFVER: ["6.0", "6.1", "7.0", "7.1", "8.0", "8.1"]

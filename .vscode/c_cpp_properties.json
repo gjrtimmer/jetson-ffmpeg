@@ -3,17 +3,12 @@
         {
             "name": "Jetson",
             "includePath": [
-                "${workspaceFolder}/include",
-                "${workspaceFolder}/src",
-                "${workspaceFolder}/stubs",
                 "/usr/src/jetson_multimedia_api/include",
                 "/usr/src/jetson_multimedia_api/include/libjpeg-8b",
                 "/usr/src/jetson_multimedia_api/samples/common/classes",
                 "/usr/local/cuda/include"
             ],
-            "defines": [
-                "WITH_NVUTILS"
-            ],
+            "defines": [],
             "compilerPath": "/usr/bin/g++",
             "cStandard": "c11",
             "cppStandard": "c++11",

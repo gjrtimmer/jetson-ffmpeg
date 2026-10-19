@@ -5,7 +5,8 @@ own location, so it can be run from any working directory.
 
 | Script | Purpose |
 |--------|---------|
-| [`build.sh`](build.sh) | Build / install the libnvmpi library (auto-detects real Jetson libs vs `stubs/`). |
+| [`build.sh`](build.sh) | Patch and build a full FFmpeg with nvmpi (`--ffmpeg VER`); libnvmpi comes from jetson-nvmpi (`--nvmpi-prefix`). |
+| [`fetch-nvmpi.sh`](fetch-nvmpi.sh) | Download + verify a released jetson-nvmpi package (libnvmpi) into a prefix. |
 | [`ffpatch.sh`](ffpatch.sh) | Patch a vanilla FFmpeg source tree with nvmpi codec support. |
 
 Patch-development scripts live next to the data they operate on, under

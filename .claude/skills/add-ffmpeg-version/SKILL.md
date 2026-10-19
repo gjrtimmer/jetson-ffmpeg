@@ -83,8 +83,9 @@ guards: `./scripts/build.sh --ffmpeg <ver>`.
 ## 5. Local hardware loop
 
 ```bash
-./scripts/build.sh --install
-./scripts/build.sh --ffmpeg <ver>
+# libnvmpi: libnvmpi1 deb from a jetson-nvmpi release, or
+# scripts/fetch-nvmpi.sh --version <NVMPI_VERSION> --dest ~/nvmpi + --nvmpi-prefix
+./scripts/build.sh --ffmpeg <ver> [--nvmpi-prefix ~/nvmpi]
 export PATH="/home/vscode/ffmpeg-build/ffmpeg<ver>:$PATH"
 ls test/hw-*.sh                                  # verify suite names first
 HW_SUITES="<suite>" JETSON_VARIANT=orin-nano ./test/hw-all.sh

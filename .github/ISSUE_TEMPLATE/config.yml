@@ -1,5 +1,8 @@
 blank_issues_enabled: false
 contact_links:
+  - name: libnvmpi (jetson-nvmpi)
+    url: https://github.com/gjrtimmer/jetson-nvmpi/issues
+    about: Issues in the libnvmpi library itself (decoder/encoder core)
   - name: Upstream (Keylost/jetson-ffmpeg)
     url: https://github.com/Keylost/jetson-ffmpeg/issues
     about: Issues specific to the upstream project

@@ -20,7 +20,7 @@ alias grep='grep --color=auto'
 # The dev container always mounts the repository at /workspace; the underlying
 # scripts resolve their own paths, so these run correctly from any directory.
 export JETSON_FFMPEG_ROOT="/workspace"
-alias build='"${JETSON_FFMPEG_ROOT}/scripts/build.sh"'           # build libnvmpi
+alias build='"${JETSON_FFMPEG_ROOT}/scripts/build.sh"'           # build FFmpeg with nvmpi (libnvmpi comes from jetson-nvmpi)
 alias ffpatch='"${JETSON_FFMPEG_ROOT}/scripts/ffpatch.sh"'       # patch an ffmpeg tree
 alias update-patch='"${JETSON_FFMPEG_ROOT}/ffmpeg/dev/update_patch.sh"'  # regenerate patches
 alias try-build='"${JETSON_FFMPEG_ROOT}/ffmpeg/dev/try_build.sh"'        # build-validate all versions

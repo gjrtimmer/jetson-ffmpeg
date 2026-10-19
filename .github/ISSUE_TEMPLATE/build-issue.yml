@@ -15,7 +15,7 @@ body:
       label: Description
       description: What are you trying to build and what fails?
       placeholder: |
-        e.g. "Building libnvmpi with build.sh --install fails with undeclared V4L2 symbol"
+        e.g. "Building FFmpeg with build.sh --ffmpeg 7.1 fails in configure"
         or "FFmpeg 7.1 configure passes but compilation fails in nvmpi_enc.c"
     validations:
       required: true
@@ -33,7 +33,7 @@ body:
     id: error-output
     attributes:
       label: Error output
-      description: Full build error output (compiler errors, cmake errors, configure errors)
+      description: Full build error output (compiler errors, configure errors)
       render: text
     validations:
       required: true
@@ -102,7 +102,7 @@ body:
     attributes:
       label: Build target
       options:
-        - nvmpi library (CMake / build.sh)
+        - build.sh (FFmpeg build wrapper)
         - ffpatch.sh (patching)
         - ffmpeg configure
         - ffmpeg compilation
@@ -133,4 +133,4 @@ body:
     id: additional
     attributes:
       label: Additional context
-      description: CMake flags used, environment details, patches applied, etc.
+      description: configure flags used, environment details, patches applied, etc.

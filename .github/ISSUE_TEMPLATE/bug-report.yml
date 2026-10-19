@@ -92,7 +92,7 @@ body:
       label: Build method
       options:
         - ffpatch.sh (patched ffmpeg source)
-        - CMake (nvmpi library only)
+        - build.sh (patched ffmpeg build)
         - Docker / container
         - Pre-built package
     validations:

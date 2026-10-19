@@ -103,7 +103,7 @@ commands: [
   { label: "running-pipelines", command: "glab ci list --status running 2>&1 | head -20" },
   { label: "pending-pipelines", command: "glab ci list --status pending 2>&1 | head -20" },
   { label: "main-pipeline", command: "glab api 'projects/timmertech%2Fjetson-ffmpeg/pipelines?ref=main&per_page=1' 2>&1 | jq '.[0] | {id, status, sha}'" },
-  { label: "current-version", command: "grep -oP 'VERSION \\K[0-9]+\\.[0-9]+\\.[0-9]+' CMakeLists.txt" },
+  { label: "current-version", command: "git describe --tags --abbrev=0 --match 'v[0-9]*'" },
   { label: "changelog-head", command: "head -5 CHANGELOG.md" }
 ]
 queries: ["auth status", "open merge requests", "pipeline status", "existing tag"]
@@ -117,7 +117,7 @@ queries: ["auth status", "open merge requests", "pipeline status", "existing tag
 | gh auth | Authenticated | STOP — ask user to `gh auth login` |
 | Working tree | Clean (`git status --porcelain` empty) | STOP — ask user to commit/stash |
 | Tag not taken | `git tag -l` returns empty | STOP — tag exists, ask user if retraction intended |
-| Version sanity | New version > current version in CMakeLists.txt | STOP — version would be a downgrade |
+| Version sanity | New version > latest `v*` tag | STOP — version would be a downgrade |
 
 ### Open MRs check
 
@@ -226,13 +226,12 @@ Check that no unintended commits snuck in. The scope is:
 
 ## Phase 4: Create Release Artifacts
 
-### 4a. Bump version in CMakeLists.txt
+### 4a. Version source
 
-Read CMakeLists.txt, edit the `project(nvmpi VERSION ...)` line:
-
-```cmake
-project(nvmpi VERSION X.Y.Z DESCRIPTION "nvidia multimedia api")
-```
+The version is the tag itself; there is no version file to bump (libnvmpi's
+CMake version moved to jetson-nvmpi). The libnvmpi release bundled into the
+archives is `NVMPI_VERSION` in `.gitlab-ci.yml`: confirm it is the intended
+jetson-nvmpi release before tagging.
 
 ### 4b. Regenerate CHANGELOG.md
 
@@ -248,7 +247,7 @@ Then manually prepend to CHANGELOG.md with proper header.
 
 ### 4c. Review changes
 
-Show diff of CMakeLists.txt and CHANGELOG.md. If user is connected, get
+Show diff of CHANGELOG.md. If user is connected, get
 confirmation. If autonomous (walk-away mode), proceed — the version was
 specified upfront.
 
@@ -259,7 +258,7 @@ specified upfront.
 ### 5a. Commit
 
 ```bash
-git add CMakeLists.txt CHANGELOG.md
+git add CHANGELOG.md
 git commit -m "$(cat <<'EOF'
 docs: update CHANGELOG for vX.Y.Z release
 EOF
@@ -295,7 +294,7 @@ The tag push triggers the release pipeline (`dist` + `release` stages).
 
 ## Phase 6: Monitor Release Pipeline
 
-The tag pipeline builds real libnvmpi + each FFmpeg version, uploads archives
+The tag pipeline builds each FFmpeg version, bundles the released libnvmpi, uploads archives
 to S3 and GitLab Package Registry, creates the GitLab Release.
 
 ### 6a. Get pipeline ID
@@ -368,7 +367,7 @@ Create on invocation:
 4. Wait for MRs to merge (if any) — monitor pipelines
 5. Wait for main pipeline green AND a full-tier (`HW_TIER=full`) pipeline green on the HEAD SHA
 6. Validate release scope — list commits since last tag
-7. Bump version in CMakeLists.txt
+7. Confirm `NVMPI_VERSION` (bundled libnvmpi release)
 8. Regenerate CHANGELOG.md with git-cliff
 9. Commit: `docs: update CHANGELOG for vX.Y.Z release`
 10. Push main with `-o ci.skip`

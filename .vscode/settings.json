@@ -23,9 +23,6 @@
     "[cpp]": {
         "editor.tabSize": 4
     },
-    "[cmake]": {
-        "editor.tabSize": 4
-    },
     "[shellscript]": {
         "editor.tabSize": 4
     },

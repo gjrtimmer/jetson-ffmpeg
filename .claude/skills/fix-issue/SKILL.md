@@ -89,7 +89,7 @@ upstream/fork references for Phase 6.
 
 Spawn investigation subagent with:
 - Issue title + body (from Phase 0 artifact)
-- Label-derived search areas (area:decoder → `src/nvmpi_dec.cpp`, etc.)
+- Label-derived search areas (area:decoder → `ffmpeg/dev/common/libavcodec/nvmpi_dec.c`, etc.; libnvmpi code lives in jetson-nvmpi)
 - Task: find root cause, list affected files:lines, related tests
 
 Subagent uses semble search + ctx tools internally. Returns ONLY:
@@ -150,7 +150,6 @@ gh issue comment NR -R gjrtimmer/jetson-ffmpeg --body "Work started on branch \`
 Compile-time check — no hw needed, runs anywhere:
 
 ```bash
-./scripts/build.sh --stubs
 ./ffmpeg/dev/try_build.sh
 ```
 
@@ -162,7 +161,7 @@ All FFmpeg versions in the matrix must compile. Use `ctx_batch_execute` for outp
 
 Run on Jetson hardware (devcontainer has `--runtime=nvidia`, Orin GPU live).
 
-`smoke-all.sh` builds libnvmpi, then for each of the 7 FFmpeg versions:
+`smoke-all.sh` (needs libnvmpi installed or `--nvmpi-prefix`), then for each of the 6 FFmpeg versions:
 patches+builds FFmpeg, and runs `hw-all.sh` (which auto-discovers all
 `test/hw-*.sh` suites). ~30 min total.
 
@@ -321,7 +320,7 @@ Create on invocation:
 5. Post "work started" comment on issue
 6. Implement fix
 7. Write/update tests
-8. Build verify — build.sh --stubs + try_build.sh N/N compile
+8. Build verify — try_build.sh N/N compile
 9. Full hw matrix — smoke-all.sh N/N (builds FFmpeg + hw-all), post results on issue
 10. Commit with `Fixes #NR` footer
 11. Post resolution/evidence comment on issue

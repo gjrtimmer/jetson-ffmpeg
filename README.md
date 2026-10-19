@@ -1,13 +1,11 @@
 # jetson-ffmpeg
 
-> **libnvmpi has moved to its own repository:
+> **libnvmpi lives in its own repository:
 > [jetson-nvmpi](https://github.com/gjrtimmer/jetson-nvmpi)** (history and tags
-> preserved). This repository is becoming the FFmpeg integration only: patches,
-> `ffpatch.sh`, and the hardware test suites. The in-tree copy of libnvmpi
-> (`src/`, `include/`, `stubs/`, `CMakeLists.txt`) stays here until the switch
-> lands ([#108](https://github.com/gjrtimmer/jetson-ffmpeg/issues/108)); after
-> that, builds fetch a pinned jetson-nvmpi release. New libnvmpi fixes and
-> issues go to jetson-nvmpi.
+> preserved). This repository is the FFmpeg integration only: patches,
+> `ffpatch.sh`, and the hardware test suites. FFmpeg loads libnvmpi at runtime,
+> so you install a released jetson-nvmpi package (`libnvmpi1` deb) next to
+> the patched FFmpeg. libnvmpi fixes and issues go to jetson-nvmpi.
 
 Hardware-accelerated video encoding and decoding for NVIDIA Jetson, fully
 integrated into FFmpeg.
@@ -16,8 +14,9 @@ Every NVIDIA Jetson module ships dedicated silicon for video encoding and
 decoding, but a stock FFmpeg build cannot use it. **jetson-ffmpeg** bridges
 that gap with two components:
 
-- **libnvmpi** — a lightweight shared library that wraps NVIDIA's Jetson
-  Multimedia API (V4L2/NvBuffer) behind a simple C interface.
+- **libnvmpi** (from [jetson-nvmpi](https://github.com/gjrtimmer/jetson-nvmpi))
+  — a lightweight shared library that wraps NVIDIA's Jetson Multimedia API
+  (V4L2/NvBuffer) behind a simple C interface.
 - **FFmpeg patches** — register native `*_nvmpi` decoders and encoders in
   FFmpeg that drive the hardware through libnvmpi.
 
@@ -57,12 +56,12 @@ the list of tested FFmpeg releases.
 ## Quick Start
 
 ```bash
-# 1. Build and install libnvmpi
-git clone https://github.com/Keylost/jetson-ffmpeg.git
-cd jetson-ffmpeg
-./scripts/build.sh --install        # or: mkdir build && cd build && cmake .. && make && sudo make install && sudo ldconfig
+# 1. Install libnvmpi from a jetson-nvmpi release (pick the package set that
+#    matches your JetPack: ~jp6 for JetPack 6, ~jp5 for JetPack 5)
+sudo apt install ./libnvmpi1_<version>~jp6_arm64.deb
 
-# 2. Patch and build FFmpeg
+# 2. Patch and build FFmpeg (needs no libnvmpi headers: it is loaded at runtime)
+git clone https://github.com/gjrtimmer/jetson-ffmpeg.git
 git clone git://source.ffmpeg.org/ffmpeg.git -b release/7.1 --depth=1
 cd jetson-ffmpeg
 ./scripts/ffpatch.sh ../ffmpeg
@@ -72,8 +71,13 @@ make
 sudo make install
 ```
 
-For full build instructions, CMake options, cross-compilation, and usage
-examples see the **[Build and Install](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Build-and-Install)**
+No deb? `scripts/fetch-nvmpi.sh --version <ver> --dest <dir>` unpacks the release
+tarball into a prefix, and `scripts/build.sh --ffmpeg 7.1 --nvmpi-prefix <dir>`
+builds against it. The version CI tests against is `NVMPI_VERSION` in
+`.gitlab-ci.yml`.
+
+For full build instructions and usage examples see the
+**[Build and Install](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Build-and-Install)**
 wiki page.
 
 ## Documentation
