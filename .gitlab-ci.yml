@@ -112,11 +112,16 @@ variables:
       - "none"
       - "tiered"
       - "full"
-  # jetson-nvmpi release (GitLab project 515, generic package registry) every
-  # job uses: the build/test artifacts, the nvmpi mock (git tag v<version>) and
-  # the dist bundles. To bump: set the new version, check the release has both
-  # jetson-nvmpi_<ver>_l4t<tag>_aarch64.tar.gz files, run an MR pipeline.
-  NVMPI_VERSION: "4.0.0"
+  # jetson-nvmpi release every job uses: the build/test artifacts and the dist
+  # bundles. scripts/fetch-nvmpi.sh picks the source: in CI the GitLab package
+  # registry first (job token, same network as the runners), the public GitHub
+  # release asset as fallback. To bump: set the new version, check the release
+  # has both jetson-nvmpi_<ver>_l4t<tag>_aarch64.tar.gz files, run an MR pipeline.
+  NVMPI_VERSION: "4.0.1"
+  # jetson-nvmpi git ref the nvmpi mock is built from: a tag or commit SHA of
+  # the public mirror. Defaults to the release tag; pin a SHA to take mock
+  # fixes that are not released yet, independent of NVMPI_VERSION.
+  NVMPI_MOCK_REF: "v${NVMPI_VERSION}"
   L4T_TAG: "r36.4.0"
   L4T_TAG_JP5: "r35.4.1"
   NVMPI_PREFIX: "${CI_PROJECT_DIR}/_nvmpi"
@@ -289,16 +294,16 @@ ffmpeg:jp5:
 
 # Behavioural Jetson mock (jetson-nvmpi mock/): drop-in libnvv4l2 /
 # libnvbufsurface / libnvbufsurftransform carrying the REAL sonames. Built from
-# the v${NVMPI_VERSION} tag of the public jetson-nvmpi mirror (no token, no
-# job-token allowlist), so mock and the released libnvmpi come from the same
-# source. The tag is the single pin: bumping NVMPI_VERSION bumps both.
+# NVMPI_MOCK_REF (default: the v${NVMPI_VERSION} tag) of the public
+# jetson-nvmpi mirror (no token, no job-token allowlist). By default mock and
+# the released libnvmpi come from the same source; set NVMPI_MOCK_REF to a
+# commit SHA to take an unreleased mock fix without a new release.
 nvmpi-mock:jp6:
   stage: build
   <<: *not-on-tag
   needs: []
   variables:
     NVMPI_MOCK_REPO: "https://github.com/gjrtimmer/jetson-nvmpi.git"
-    NVMPI_MOCK_REF: "v${NVMPI_VERSION}"
   script:
     - git init -q /tmp/nvmpi-mock-src
     - git -C /tmp/nvmpi-mock-src fetch -q --depth=1 "${NVMPI_MOCK_REPO}" "${NVMPI_MOCK_REF}"
