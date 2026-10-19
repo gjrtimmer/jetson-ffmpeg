@@ -11,8 +11,10 @@
 #   2. Custom -wait_timeout with low_delay works.
 #   3. Early termination (-t 1) exits cleanly with low_delay and with
 #      -nonblocking 1 (no hang, >0 packets).
-# Output goes to mkv (packet count read back with ffprobe). The mp4/global_header
-# path is guarded by hw-encoder-header, not here.
+# Output goes to mp4 (packet count read back with ffprobe), as the replaced
+# suites did. mkv is NOT equivalent: the matroska muxer refuses the header
+# ("Could not write header") for h264 with -flags low_delay on Orin NX, so
+# mkv would turn this suite into an extradata test; hw-encoder-header owns that.
 set -eu
 # shellcheck source-path=SCRIPTDIR/..
 # shellcheck source=lib/common.sh
@@ -22,7 +24,7 @@ variant="${JETSON_VARIANT:-unknown}"
 echo "=== hw-encoder-modes on variant: ${variant} ==="
 
 FRAMES=15
-OUT=/tmp/nvmpi-out-modes.mkv
+OUT=/tmp/nvmpi-out-modes.mp4
 trap 'rm -f "$OUT"' EXIT
 
 # encode_check ENC FLAGS EXTRA LABEL [SECS]: encode FRAMES frames, assert packet count.
