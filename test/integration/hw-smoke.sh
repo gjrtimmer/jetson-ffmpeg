@@ -28,14 +28,18 @@ echo "== 2. H.264 test sample (software) =="
 ensure_sample SAMPLE_H264_720P gen-sample-h264 3
 
 echo "== 3. HW transcode: h264_nvmpi decode -> hevc_nvmpi encode =="
-run_ff_must "h264_nvmpi -> hevc_nvmpi transcode" -T 60 \
-  -c:v h264_nvmpi -i "${SAMPLE_H264_720P}" \
-  -c:v hevc_nvmpi -b:v 3M /tmp/out.mkv
+if is_mock; then
+  mock_skip "mock HEVC encode output is not a valid stream"
+else
+  run_ff_must "h264_nvmpi -> hevc_nvmpi transcode" -T 60 \
+    -c:v h264_nvmpi -i "${SAMPLE_H264_720P}" \
+    -c:v hevc_nvmpi -b:v 3M /tmp/out.mkv
 
-codec=$(ffprobe -v error -select_streams v:0 \
-  -show_entries stream=codec_name -of default=nokey=1:nw=1 /tmp/out.mkv)
-echo "   output codec = ${codec}"
-[ "$codec" = "hevc" ] || { echo "FAIL: expected hevc, got ${codec}"; exit 1; }
+  codec=$(ffprobe -v error -select_streams v:0 \
+    -show_entries stream=codec_name -of default=nokey=1:nw=1 /tmp/out.mkv)
+  echo "   output codec = ${codec}"
+  [ "$codec" = "hevc" ] || { echo "FAIL: expected hevc, got ${codec}"; exit 1; }
+fi
 
 echo "== 4. HW transcode: h264_nvmpi decode -> h264_nvmpi encode =="
 run_ff_must "h264_nvmpi -> h264_nvmpi transcode" -T 60 \

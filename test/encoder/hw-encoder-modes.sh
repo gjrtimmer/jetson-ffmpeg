@@ -71,8 +71,13 @@ encode_check h264_nvmpi "-nonblocking 1" "" "h264 nonblocking/default"
 encode_check h264_nvmpi "-nonblocking 1 -flags low_delay" "" "h264 nonblocking/low_delay"
 
 echo "== hevc: blocking/low_delay, nonblocking =="
-encode_check hevc_nvmpi "-flags low_delay" "" "hevc blocking/low_delay"
-encode_check hevc_nvmpi "-nonblocking 1" "" "hevc nonblocking/default"
+if is_mock; then
+  # The mp4 muxer cannot take the mock's canned HEVC parameter sets.
+  mock_skip "mp4 packet count needs muxable HEVC extradata"
+else
+  encode_check hevc_nvmpi "-flags low_delay" "" "hevc blocking/low_delay"
+  encode_check hevc_nvmpi "-nonblocking 1" "" "hevc nonblocking/default"
+fi
 
 echo "== h264: low_delay + -wait_timeout 1000 =="
 # low_delay blocks up to wait_timeout per frame while the encoder is idle

@@ -77,6 +77,11 @@ rtp_case oob_h264 h264_nvmpi /tmp/rtp_oob_h264.sdp \
     -bsf:v 'h264_mp4toannexb,filter_units=remove_types=7|8' \
     -f rtp rtp://127.0.0.1:15006 -sdp_file /tmp/rtp_oob_h264.sdp || exit 1
 
+if is_mock; then
+  mock_skip "section 3 (SDP needs muxable HEVC extradata)"
+  echo "OK: hw-rtp-sdp passed on ${variant} (mock)."
+  exit 0
+fi
 echo "== 3. RTP decode, out-of-band VPS/SPS/PPS (hevc) =="
 # hevc_nvmpi with +global_header puts the parameter sets in extradata (-> SDP
 # sprop) and disables in-band insertion; filter_units strips VPS(32)/SPS(33)/

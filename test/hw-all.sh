@@ -12,6 +12,12 @@
 #   HW_SUITES_EXCLUDE="soak-decode encoder-modes" test/hw-all.sh  # skip some
 #     (CI fast tier: only soak-decode is excluded, new suites run by default)
 #
+# Mock mode (CI test:stub, no Jetson): NVMPI_MOCK=1 runs only the mockable
+# suites (MOCK_SUITES below) unless HW_SUITES is given. See test/README.md
+# "Mock (stub) runs". The mock is ADDITIVE: every suite below also runs on the
+# Orin, and a green mock run never substitutes for a hardware run.
+#   NVMPI_MOCK=1 test/hw-all.sh
+#
 # CI log contract (what you see when something breaks):
 #   - PASSING suites are wrapped in collapsed GitLab sections (noise hidden).
 #   - A FAILING suite's full output is printed UNCOLLAPSED, followed by a
@@ -56,6 +62,21 @@ discover() {
     echo "$s"
   done < <(find "${SCRIPT_DIR}" -name 'hw-*.sh' ! -name 'hw-all.sh' | sort)
 }
+# Suites that give meaningful results on the mock (opt-in: a new suite is NOT
+# mockable until listed here). Excluded, with the reason:
+#   decoder-mjpeg, encoder-jpeg   NvJPEG is not mocked (link-time stub only)
+#   encoder-level                 the mock encoder emits a canned SPS (level 4.0)
+#   soak-decode, perf-bench,
+#   perf-mode                     timing/throughput numbers need the engines
+MOCK_SUITES="smoke decoder-blocking-wait decoder-chunk decoder-codecs
+  decoder-downscale decoder-flush decoder-lifecycle decoder-pool encoder-gop
+  encoder-header encoder-modes encoder-pools encoder-thread-safety
+  filter-scale-vic format-pixfmt lifecycle-stress rtp-sdp"
+if [ "${NVMPI_MOCK:-0}" = "1" ]; then
+  : "${HW_SUITES:=${MOCK_SUITES}}"
+  SUITE_TIMEOUT="${HW_SUITE_TIMEOUT:-120}"
+  echo "[i] NVMPI_MOCK=1: running against the nvmpi mock (no Jetson hardware)"
+fi
 SUITES="${HW_SUITES:-$(discover | tr '\n' ' ')}"
 
 # Suite name -> script path. Suites can live in any subdirectory now, so
