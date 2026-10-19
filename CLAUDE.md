@@ -4,19 +4,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-**jetson-ffmpeg** enables hardware-accelerated H.264/HEVC/MPEG2/MPEG4/VP8/VP9 video encode/decode on NVIDIA Jetson via FFmpeg. It is built from **two distinct layers** that ship and build separately:
+**jetson-ffmpeg** enables hardware-accelerated H.264/HEVC/MPEG2/MPEG4/VP8/VP9 video encode/decode on NVIDIA Jetson via FFmpeg. This repo is the **FFmpeg integration only** (`ffmpeg/dev/`, `ffmpeg/patches/`): codec source files (`AVCodec`/`FFCodec` wrappers) that call libnvmpi through `dlopen` and get *patched into* a vanilla FFmpeg tree, then compiled as part of FFmpeg.
 
-1. **libnvmpi** (`src/`, `include/`, `CMakeLists.txt`) — a standalone C-API shared library that wraps NVIDIA's V4L2/NvBuffer multimedia API. Installed system-wide as `libnvmpi.so`.
-2. **FFmpeg integration** (`ffmpeg/dev/`, `ffmpeg/patches/`) — codec source files (`AVCodec`/`FFCodec` wrappers) that call libnvmpi and get *patched into* a vanilla FFmpeg tree, then compiled as part of FFmpeg.
+**libnvmpi lives in its own repo, `timmertech/jetson-nvmpi`** (GitHub mirror `gjrtimmer/jetson-nvmpi`; issues on GitHub, MRs on GitLab). It is a standalone C-API shared library wrapping NVIDIA's V4L2/NvBuffer multimedia API. This repo consumes a **released** jetson-nvmpi package, pinned once as `NVMPI_VERSION` in `.gitlab-ci.yml` (generic package registry tarballs per JetPack; debs `libnvmpi1`/`libnvmpi-dev` for installs). libnvmpi code, its unit/API tests, stubs, mock, CMake build and driver-level fixes go to jetson-nvmpi, not here. To adopt a new libnvmpi: bump `NVMPI_VERSION`, run an MR pipeline.
 
-FFmpeg does not depend on this repo at runtime beyond `libnvmpi.so`; the integration layer is delivered as patches users apply to their own FFmpeg checkout.
+FFmpeg needs neither libnvmpi headers nor libraries at build time (`-ldl` only); at runtime it dlopens `libnvmpi.so.1`, then `libnvmpi.so`; the integration layer is delivered as patches users apply to their own FFmpeg checkout.
 
 ## Repository layout
 
-- `src/`, `include/`, `CMakeLists.txt`, `stubs/` — the libnvmpi library.
 - `ffmpeg/dev/` — FFmpeg patch *development* tree: shared codec sources (`common/`), per-version overlays (`4.2/`, `4.4/`, `6.0/`), and the patch-generation scripts (`update_patch.sh`, `copy_files.sh`, `try_build.sh`).
 - `ffmpeg/patches/` — generated `ffmpeg<ver>_nvmpi.patch` files (artifacts; never hand-edit).
-- `scripts/` — operator scripts: `build.sh` (build libnvmpi) and `ffpatch.sh` (runtime FFmpeg patcher). All scripts resolve the repo root from their own location, so they run from any working directory.
+- `scripts/` — operator scripts: `build.sh` (patch + build FFmpeg; `--nvmpi-prefix` for a libnvmpi outside the system paths), `fetch-nvmpi.sh` (download a released jetson-nvmpi package into a prefix) and `ffpatch.sh` (runtime FFmpeg patcher). All scripts resolve the repo root from their own location, so they run from any working directory.
 - `test/` — per-feature hardware suites (`hw-*.sh`) run by `hw-all.sh` (auto-discovery; see `test/README.md`), `gen-samples.sh` (shared sample generators), and `smoke-all.sh` (full cross-version build + hw-all). FFmpeg sources are fetched by `scripts/clone-ffmpeg.sh`.
 - Prose documentation lives in the **[project wiki](https://github.com/gjrtimmer/jetson-ffmpeg/wiki)** (`jetson-ffmpeg.wiki.git`), not in-repo — the `docs/` folder has been retired. Script/alias reference: [Scripts and Commands](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Scripts-and-Commands).
 
@@ -29,13 +27,10 @@ In the dev container these are also exposed as aliases (`build`, `ffpatch`,
 deliberately no `test` alias (it would shadow the shell builtin).
 
 ```bash
-# Build libnvmpi (auto-detects real Jetson libs vs stubs/; --install to install)
-./scripts/build.sh                 # alias: build
-./scripts/build.sh --stubs         # force stubs build (off-Jetson / CI)
-./scripts/build.sh --install       # build then sudo make install + ldconfig
-./scripts/build.sh --ffmpeg 7.1    # also build a full FFmpeg <ver> with nvmpi
-# Equivalent raw CMake build:
-mkdir build && cd build && cmake .. && make -j$(nproc) && sudo make install && sudo ldconfig
+# libnvmpi comes from a jetson-nvmpi release: libnvmpi1 deb, or a tarball prefix
+./scripts/fetch-nvmpi.sh --version 4.0.0 --dest ~/nvmpi   # needs a GitLab token (GITLAB_TOKEN)
+# Patch + build a full FFmpeg <ver> with nvmpi (alias: build)
+./scripts/build.sh --ffmpeg 7.1 [--nvmpi-prefix ~/nvmpi] [--install]
 
 # Patch a vanilla FFmpeg tree (auto-detects version, idempotent)
 ./scripts/ffpatch.sh /path/to/ffmpeg
@@ -51,7 +46,7 @@ cd /path/to/ffmpeg && ./configure --enable-nvmpi && make
 JETSON_VARIANT=orin-nano ./test/hw-all.sh
 HW_SUITES="decoder-chunk encoder-gop" ./test/hw-all.sh   # subset of suites
 
-# Full cross-version smoke test: build libnvmpi, then patch+build+hw-test EVERY version
+# Full cross-version smoke test: patch+build+hw-test EVERY version (libnvmpi installed or --nvmpi-prefix)
 ./test/smoke-all.sh                          # all 7 versions
 ./test/smoke-all.sh -v "4.2 6.0 8.0"         # subset
 ```
@@ -65,17 +60,16 @@ waiting for the full CI pipeline (~2h10m). The devcontainer runs on JP6
 (R36.4.7, Orin Nano) — local tests validate JP6 behavior directly.
 
 ```bash
-# 1. Build + install libnvmpi (~30s)
-./scripts/build.sh --install
+# 1. Install libnvmpi once (libnvmpi1 deb or fetch-nvmpi.sh prefix)
 
 # 2. Build ONE FFmpeg version (~2 min)
-./scripts/build.sh --ffmpeg 7.1
+./scripts/build.sh --ffmpeg 7.1 [--nvmpi-prefix ~/nvmpi]
 
 # 3. Test ONE suite (~1 min)
 export PATH="/home/vscode/ffmpeg-build/ffmpeg7.1:$PATH"
 HW_SUITES="filter-scale-vic" JETSON_VARIANT=orin-nano ./test/hw-all.sh
 
-# 4. Fix → repeat steps 1-3 until green (~5 min per cycle)
+# 4. Fix → repeat steps 2-3 until green (~5 min per cycle)
 # 5. Push to CI pipeline for full version matrix validation
 ```
 
@@ -139,8 +133,7 @@ HTTP 405 both when no pipeline exists AND when the pipeline exists but is still
 `head_pipeline.status` is `running` (not just non-null) before enabling
 auto-merge.
 
-**Never `rm -rf build`** — use `./scripts/build.sh --clean`; the build
-directory may be shared with a concurrent build. CI compiles libnvmpi + patches/builds all seven FFmpeg versions against `stubs/` on non-Jetson runners, and hw-tests each version on self-hosted Jetson runners. **GitLab** (`.gitlab-ci.yml`) is the active pipeline; **GitHub Actions** (`.github/workflows/ci.yml`) is manual-only (`workflow_dispatch`) because it needs self-hosted Jetson runners + arm64 containers.
+CI fetches the pinned jetson-nvmpi release (`NVMPI_VERSION`), patches/builds the FFmpeg versions on non-Jetson runners, runs the mockable suites against the nvmpi mock (`test:stub`), and hw-tests each version on self-hosted Jetson runners against the real released libnvmpi. **GitLab** (`.gitlab-ci.yml`) is the active pipeline; **GitHub Actions** (`.github/workflows/ci.yml`) is manual-only (`workflow_dispatch`) because it needs self-hosted Jetson runners + arm64 containers.
 
 **Never run `smoke-all.sh` or `hw-all.sh` while a CI pipeline is running hw
 tests on the same Jetson.** The Tegra V4L2 driver segfaults on device access
@@ -167,19 +160,13 @@ Two patching mechanisms exist and must stay in sync:
 The codebase supports a wide matrix without per-call `#ifdef` sprawl by concentrating version logic in a few places:
 
 - **FFmpeg API drift** (4.2 → 8.0+): handled with `LIBAVCODEC_VERSION_MAJOR/MINOR` preprocessor guards inside `ffmpeg/dev/common/libavcodec/nvmpi_{enc,dec}.c`. Key breakpoints: `AVCodec`→`FFCodec` (v60), new encode API `receive_packet` (`NVMPI_FF_NEW_API`), `FF_PROFILE_*`→`AV_PROFILE_*` (v62.11). The `allcodecs.c` overlay differs between <60 (`extern AVCodec`) and ≥60 (`extern const FFCodec`) — this is why version overlays exist. **Prefer `#ifndef SYMBOL` feature detection over `MAJOR >= X && MINOR >= Y` version arithmetic** — MINOR resets to 0 on MAJOR bumps, breaking compound guards (e.g. `>=62 && >=11` fails at MAJOR=63, MINOR=0). Direct symbol presence checks (`#ifndef FF_PROFILE_UNKNOWN`) are immune to this.
-- **JetPack buffer API drift**: legacy `nvbuf_utils` vs newer `NvBufSurface`/NvUtils (JetPack 5+). `CMakeLists.txt` auto-detects by probing for `nvbufsurface.h`; if present it defines `-DWITH_NVUTILS` and links the surface libs. `include/nvUtils2NvBuf.h` is a compile-time shim that maps legacy `NvBuffer*` names to `NvBufSurf*` so the rest of `src/` stays API-agnostic.
+- **JetPack buffer API drift** (legacy `nvbuf_utils` vs `NvBufSurface`/NvUtils, `-DWITH_NVUTILS`, the `nvUtils2NvBuf.h` shim) is handled inside libnvmpi: see jetson-nvmpi. The FFmpeg layer only sees the stable `nvmpi.h` API via `dynlink_nvmpi.h`.
 
 When adding a new FFmpeg version or handling a new API change, see the step-by-step guide in the [Development Guide](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Development-Guide#adding-support-for-a-new-ffmpeg-version) ("Adding Support for a New FFmpeg Version") — it must touch overlays, the common codec files, `scripts/ffpatch.sh` anchors, `update_patch.sh`, and `try_build.sh` together.
 
-## libnvmpi internals (`src/`)
+## libnvmpi internals (moved)
 
-- `nvmpi_dec.cpp` / `nvmpi_enc.cpp` — V4L2 decode/encode pipelines exposed through the C API in `include/nvmpi.h` (`nvmpi_create_*`, `put`/`get`, `close`).
-- `NVMPI_bufPool.hpp` — thread-safe producer/consumer pool used for both decoded-frame and encoded-packet buffers.
-- `nvmpi_frame_buffer.{hpp,cpp}` — DMA buffer alloc/destroy, abstracting NvUtils vs nvbuf_utils.
-
-**Source file naming convention:** All libnvmpi codec source files follow the pattern `nvmpi_{dec,enc}_{codec}.*`, with `_internal` appended for private headers. Examples: `nvmpi_dec_jpeg.cpp`, `nvmpi_enc_jpeg_internal.h`, `nvmpi_dec_api.cpp`. FFmpeg wrapper files in `ffmpeg/dev/common/libavcodec/` follow the same pattern: `nvmpi_enc_jpeg.c`. This convention applies to all new codec files — never use `nvmpi_{codec}{dec,enc}` or other orderings.
-
-The CMake build also pulls NVIDIA sample classes (`NvVideoDecoder`, `NvVideoEncoder`, etc.) from `${JETSON_MULTIMEDIA_API_DIR}/samples/common/classes` — these are not vendored in this repo and must exist on the build host (or via the devcontainer mounts).
+The library sources (`src/`, `include/`, `stubs/`, CMake build) moved to `timmertech/jetson-nvmpi`; see its CLAUDE.md for internals (pipelines, buffer pool, frame buffers, source-file naming `nvmpi_{dec,enc}_{codec}.*`, NVIDIA sample-class dependency). FFmpeg wrapper files in `ffmpeg/dev/common/libavcodec/` keep the same naming pattern (`nvmpi_enc_jpeg.c`); never use `nvmpi_{codec}{dec,enc}` or other orderings.
 
 **Known Tegra V4L2 driver pitfalls (verified on Orin):**
 
@@ -329,22 +316,20 @@ All media bytes entering `nvmpi_decoder_put_packet`, `nvmpi_encoder_put_frame`, 
 
 ### 5. Known gaps — address on contact
 
-These are existing issues found in the codebase. When touching code near them, fix or at minimum do not worsen:
+These are existing issues in the FFmpeg wrappers. When touching code near them, fix or at minimum do not worsen. (The libnvmpi-side gaps — plain `bool` EOS/flushing flags in `nvmpi_dec.cpp`/`nvmpi_enc.cpp`, the `TEST_ERROR` macro that does not return — moved to jetson-nvmpi.)
 
 | Location | Gap | Risk |
 |----------|-----|------|
 | `nvmpi_enc.c:161-169` (`nvmpienc_initPktPool`) | No rollback on mid-loop allocation failure; existing TODO | Packet memory leak on partial init failure |
 | `nvmpi_enc.c:280-282` (extradata encoder creation) | Return value of `nvmpi_create_encoder` unchecked; TODO comment present | NULL deref if encoder creation fails during extradata extraction |
 | `nvmpi_enc.c:387` (main encoder creation) | Same unchecked return; TODO comment present | NULL deref on encoder creation failure |
-| `nvmpi_dec.cpp:71`, `nvmpi_enc.cpp:89-90` | EOS/flushing flags are plain `bool`, not `std::atomic<bool>` | Data race between main thread and capture/DQ thread (undefined behavior per C++ standard; works in practice on ARM due to aligned-word atomicity, but not guaranteed) |
-| `nvmpi_dec.cpp:43-47` (`TEST_ERROR` macro) | Logs error but does not return or set error code | Execution continues after allocation failure; downstream code may deref invalid buffer |
 
 ### 6. Code delivery style
 
 - Minimal, clean, scannable code. No unnecessary abstraction layers.
 - Avoid modern high-level C++ abstractions that add runtime overhead (exceptions, RTTI, `std::shared_ptr` where raw ownership is clear) unless they demonstrably improve safety without measurable cost.
 - Prefer `static inline` helpers over macros when type safety matters.
-- Match existing code style: 4-space tabs in C++ (`src/`), FFmpeg style (4-space indent, no tabs) in `ffmpeg/dev/`.
+- Match existing code style: FFmpeg style (4-space indent, no tabs) in `ffmpeg/dev/`.
 - All new code must compile cleanly across the full FFmpeg version matrix (4.2–8.0) and both JetPack buffer API generations.
 
 ## Branch naming convention
@@ -783,7 +768,7 @@ the clone/page-naming/push commands. Keep `README.md` documentation links
 pointing at the wiki, and add a matching FAQ entry when a change resolves a
 recurring user question.
 
-- [Build and Install](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Build-and-Install) — full build/install, CMake options, verification.
+- [Build and Install](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Build-and-Install) — full build/install (libnvmpi from jetson-nvmpi releases), verification.
 - [Scripts and Commands](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Scripts-and-Commands) — every script, command, and dev-container alias.
 - [Release Process](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Release-Process) — tag-driven release process (GitLab + GitHub releases, per-version archives).
 - [Development Guide](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Development-Guide) — architecture deep-dive, patch system, adding FFmpeg versions, codec registration reference, troubleshooting.
