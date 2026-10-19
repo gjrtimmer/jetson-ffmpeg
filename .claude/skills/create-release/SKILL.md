@@ -134,6 +134,18 @@ If the latest main pipeline is NOT `success`:
 1. Report its status.
 2. Proceed to **Phase 2: Wait for Pipelines**.
 
+The main pipeline after a merge runs builds only (`HW_TIER=none`). The
+**pre-tag gate** is a full-tier pipeline (`HW_TIER=full`: nightly schedule or a
+web run) that is `success` on the exact `main` HEAD SHA to be tagged. Check:
+
+```bash
+glab api "projects/timmertech%2Fjetson-ffmpeg/pipelines?ref=main&per_page=10" \
+  | jq '.[] | {id, status, source, sha}'
+```
+
+If no full-tier pipeline succeeded on HEAD, start one
+(`glab ci run -b main --variables HW_TIER:full`) and wait for it (600s polls).
+
 If everything is green and no open MRs → skip to Phase 3.
 
 ---
@@ -175,7 +187,8 @@ glab api "projects/timmertech%2Fjetson-ffmpeg/pipelines?ref=main&per_page=1" \
   | jq '.[0] | {id, status, sha}'
 ```
 
-- If `success` → this blocker is cleared.
+- If `success` → the builds-only blocker is cleared (the full-tier pre-tag gate
+  is still required, see Pipeline check).
 - If `failed` → **STOP and report**. Merge introduced a regression.
 - If `running`/`pending` → continue waiting.
 
@@ -348,7 +361,7 @@ Create on invocation:
 2. Pre-flight: auth, clean tree, no existing tag, version sanity
 3. Check open MRs — ask user if they're release-blocking
 4. Wait for MRs to merge (if any) — monitor pipelines
-5. Wait for main pipeline green
+5. Wait for main pipeline green AND a full-tier (`HW_TIER=full`) pipeline green on the HEAD SHA
 6. Validate release scope — list commits since last tag
 7. Bump version in CMakeLists.txt
 8. Regenerate CHANGELOG.md with git-cliff

@@ -260,6 +260,9 @@ glab api "projects/timmertech%2Fjetson-ffmpeg/pipelines?ref=main&per_page=1" | j
 ```
 
 **Gate**: Main pipeline must go green before the issue is considered resolved.
+A push to `main` runs builds only (`HW_TIER=none`, ~15 min); hw tests already
+ran in the MR pipeline (`tiered`, MR must be rebased since merges are
+fast-forward). Re-arm the monitor on the new main pipeline ID after merge.
 If red → the merge introduced a regression; investigate immediately.
 
 If GitLab MR creation fails (auth, network), fall back to GitHub PR:

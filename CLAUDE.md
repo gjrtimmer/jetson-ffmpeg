@@ -584,6 +584,25 @@ default for all sessions in this repo — do not wait for the user to request it
   (MR merge → main pipeline green) must complete before starting the next.
   Do not overlap — one issue at a time unless the user explicitly says
   otherwise.
+- **Pipeline tiers (`HW_TIER`).** MR pipelines run `tiered` (all builds, all
+  fast hw suites on every version, stress suites on 7.1 + 8.1). A push to
+  `main` runs **builds only** (~15 min, `HW_TIER=none`): "main pipeline
+  green" after a merge means builds green, not hw. Docs-only changes create
+  no pipeline (MRs get a `ci:docs-only` job). The nightly schedule on `main`
+  and web runs set `HW_TIER=full` (every suite × every version on the Orin).
+  MRs are merged fast-forward (`merge_method=ff`): rebase the MR branch when
+  main moved, then wait for its new head pipeline.
+- **Pre-tag gate = full-tier pipeline green on the tag's SHA.** Before
+  tagging, confirm the latest nightly (or a web run with `HW_TIER=full`) on
+  that exact `main` SHA is `success`; if none exists, start one and wait. A
+  green post-merge main pipeline alone is NOT enough (builds only).
+- **The Orin runner is shared with jetson-nvmpi.** `resource_group` only
+  serializes within one project, so jetson-nvmpi `test:api` jobs and
+  jetson-ffmpeg hw jobs can run on the Orin concurrently and hang the Tegra
+  V4L2 driver (pipeline 56911, 8.1 jobs stuck in decoder-teardown). A
+  runner-level limit (`limit = 1` / `concurrent = 1`) is needed; until then
+  check for other running Orin jobs before starting hw work and retry a
+  hung job only once the runner is idle.
 - **All MRs for a release must be merged and green before tagging.** Never
   create a release tag while MRs intended for that release are still open or
   their main pipelines are still running. If a release was created
