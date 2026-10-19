@@ -49,25 +49,62 @@ done
 [ -n "${DEST}" ]    || { echo "[E] --dest is required" >&2; exit 1; }
 
 # Auth header: job token in CI (jetson-ffmpeg is on the jetson-nvmpi allowlist),
-# personal/project token for manual runs. Passed via a curl config on stdin so
+# personal/project token for manual runs. It goes through a 0600 config file so
 # the value never appears in the process list or the log.
-AUTH=()
-if [ -n "${TOKEN}" ]; then AUTH=("PRIVATE-TOKEN: ${TOKEN}")
-elif [ -n "${CI_JOB_TOKEN:-}" ]; then AUTH=("JOB-TOKEN: ${CI_JOB_TOKEN}")
-elif [ -n "${GITLAB_TOKEN:-}" ]; then AUTH=("PRIVATE-TOKEN: ${GITLAB_TOKEN}")
+HDR=""
+if [ -n "${TOKEN}" ]; then HDR="PRIVATE-TOKEN: ${TOKEN}"
+elif [ -n "${CI_JOB_TOKEN:-}" ]; then HDR="JOB-TOKEN: ${CI_JOB_TOKEN}"
+elif [ -n "${GITLAB_TOKEN:-}" ]; then HDR="PRIVATE-TOKEN: ${GITLAB_TOKEN}"
 fi
-fetch() {   # fetch URL OUTFILE ; fails on HTTP errors
-    if [ ${#AUTH[@]} -gt 0 ]; then
-        printf 'header = "%s"\n' "${AUTH[0]}" | curl -fsSL --retry 3 -K - -o "$2" "$1"
+TMP="$(mktemp -d)"
+trap 'rm -rf "${TMP}"' EXIT
+umask 077
+
+# fetch URL OUTFILE: curl if present, else wget (the CI builder images ship wget only)
+fetch() {
+    if command -v curl >/dev/null 2>&1; then
+        if [ -n "${HDR}" ]; then
+            printf 'header = "%s"\n' "${HDR}" > "${TMP}/curl.cfg"
+            curl -fsSL --retry 3 -K "${TMP}/curl.cfg" -o "$2" "$1"
+        else
+            curl -fsSL --retry 3 -o "$2" "$1"
+        fi
     else
-        curl -fsSL --retry 3 -o "$2" "$1"
+        if [ -n "${HDR}" ]; then
+            printf 'header = %s\n' "${HDR}" > "${TMP}/wget.cfg"
+            WGETRC="${TMP}/wget.cfg" wget -q -t 3 -O "$2" "$1"
+        else
+            wget -q -t 3 -O "$2" "$1"
+        fi
+    fi
+}
+
+# jget FILE FILTER-ARGS...: jq when present, else python3, else nothing.
+# Usage: jget file pkg VERSION | jget file sha FILENAME
+jget() {
+    local f="$1" kind="$2" key="$3"
+    if command -v jq >/dev/null 2>&1; then
+        if [ "${kind}" = pkg ]; then
+            jq -r --arg v "${key}" 'map(select(.version==$v))[0].id // empty' "${f}"
+        else
+            jq -r --arg f "${key}" 'map(select(.file_name==$f))[0].file_sha256 // empty' "${f}"
+        fi
+    elif command -v python3 >/dev/null 2>&1; then
+        python3 -I - "${f}" "${kind}" "${key}" <<'PY'
+import json, sys
+f, kind, key = sys.argv[1:4]
+rows = json.load(open(f))
+for r in rows:
+    if kind == "pkg" and r.get("version") == key:
+        print(r["id"]); break
+    if kind == "sha" and r.get("file_name") == key:
+        print(r.get("file_sha256") or ""); break
+PY
     fi
 }
 
 FILE="jetson-nvmpi_${VERSION}_l4t${L4T}_aarch64.tar.gz"
 BASE="${API}/projects/${PROJECT}/packages/generic/jetson-nvmpi/${VERSION}"
-TMP="$(mktemp -d)"
-trap 'rm -rf "${TMP}"' EXIT
 
 echo "[i] fetching ${FILE} (jetson-nvmpi ${VERSION})"
 fetch "${BASE}/${FILE}" "${TMP}/${FILE}"
@@ -77,9 +114,9 @@ fetch "${BASE}/${FILE}" "${TMP}/${FILE}"
 # token may not be allowed to list packages.
 EXPECT=""
 if fetch "${API}/projects/${PROJECT}/packages?package_name=jetson-nvmpi&package_version=${VERSION}" "${TMP}/pkg.json" 2>/dev/null; then
-    PKG_ID="$(jq -r --arg v "${VERSION}" 'map(select(.version==$v))[0].id // empty' "${TMP}/pkg.json" 2>/dev/null || true)"
+    PKG_ID="$(jget "${TMP}/pkg.json" pkg "${VERSION}" 2>/dev/null || true)"
     if [ -n "${PKG_ID}" ] && fetch "${API}/projects/${PROJECT}/packages/${PKG_ID}/package_files?per_page=100" "${TMP}/files.json" 2>/dev/null; then
-        EXPECT="$(jq -r --arg f "${FILE}" 'map(select(.file_name==$f))[0].file_sha256 // empty' "${TMP}/files.json" 2>/dev/null || true)"
+        EXPECT="$(jget "${TMP}/files.json" sha "${FILE}" 2>/dev/null || true)"
     fi
 fi
 if [ -n "${EXPECT}" ]; then
