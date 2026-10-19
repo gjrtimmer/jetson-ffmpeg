@@ -12,6 +12,10 @@
 #     test    - all HW test suites (test/hw-all.sh) on each Jetson variant
 #
 #   Tag pipelines (v<X.Y.Z>):  -> see https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Release-Process
+#     build        - nvmpi:jp6 + ffmpeg:jp6 (the artifacts the release gate tests)
+#     release-test - RELEASE GATE: full tier (HW_TIER=full, every suite) on real
+#                    Jetson hardware for every FFmpeg version; dist and release
+#                    `needs` all of it, so any failure = red pipeline, no release
 #     dist    - build REAL libnvmpi + ffmpeg per version in a plain container
 #               (the stub builds above are NOT runnable, so releases rebuild
 #               against the real tegra libs, pulled from NVIDIA's apt repo)
@@ -38,6 +42,7 @@ stages:
   - build
   - test:hw-fast
   - test:hw-full
+  - release-test
   - dist
   - release
 
@@ -176,10 +181,16 @@ ci:docs-only:
     paths:
       - .ccache
 
+# jp6 builds also run on release tags: the release gate tests these artifacts.
+.jp6-build-rules:
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+$/'
+    - !reference [.not-on-tag, rules]
+
 nvmpi:jp6:
   extends: .ccache
   stage: build
-  <<: *not-on-tag
+  rules: !reference [.jp6-build-rules, rules]
   script:
     - mkdir -p build && cd build
     - cmake -DCMAKE_INSTALL_PREFIX="${NVMPI_PREFIX}" -DCMAKE_BUILD_TYPE=Release -DWITH_STUBS=ON -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache ..
@@ -263,6 +274,7 @@ nvmpi:jp5:
 
 ffmpeg:jp6:
   <<: *ffmpeg-build
+  rules: !reference [.jp6-build-rules, rules]
   needs: ["nvmpi:jp6"]
   parallel:
     matrix:
@@ -476,6 +488,60 @@ test:hw-full:ffmpeg-8.1:                         # path D
           - FFVER: "8.1"
 
 # ---------------------------------------------------------------------------
+# Stage: release-test — RELEASE GATE (semver tag pipelines only).
+#
+# Full tier on real Jetson hardware for every FFmpeg version: every suite, no
+# exclusions, no mock/stub. Each job extends the matching test:hw-full job (same
+# script, needs and runner), overriding only what a release needs. dist:* and
+# release `needs` ALL of these jobs, so one red hardware run means no package, no
+# S3 upload and no release. Non-tag pipelines never create these jobs.
+# New FFmpeg version: add its release:test job here and to .release-gate.
+# ---------------------------------------------------------------------------
+.release-gate-job:
+  stage: release-test
+  timeout: 30m
+  tags: [jetson, orin-nx]
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+$/'
+  variables:
+    HW_TIER: "full"
+    HW_SUITES_EXCLUDE: ""
+
+# Gate job list for dist:* (release lists the same jobs explicitly).
+.release-gate:
+  needs:
+    - job: "release:test:ffmpeg-6.0"
+      artifacts: false
+    - job: "release:test:ffmpeg-6.1"
+      artifacts: false
+    - job: "release:test:ffmpeg-7.0"
+      artifacts: false
+    - job: "release:test:ffmpeg-7.1"
+      artifacts: false
+    - job: "release:test:ffmpeg-8.0"
+      artifacts: false
+    - job: "release:test:ffmpeg-8.1"
+      artifacts: false
+
+release:test:ffmpeg-6.0:
+  extends: ["test:hw-full:ffmpeg-6.0", ".release-gate-job"]
+
+release:test:ffmpeg-6.1:
+  extends: ["test:hw-full:ffmpeg-6.1", ".release-gate-job"]
+
+release:test:ffmpeg-7.0:
+  extends: ["test:hw-full:ffmpeg-7.0", ".release-gate-job"]
+
+release:test:ffmpeg-7.1:
+  extends: ["test:hw-full:ffmpeg-7.1", ".release-gate-job"]
+
+release:test:ffmpeg-8.0:
+  extends: ["test:hw-full:ffmpeg-8.0", ".release-gate-job"]
+
+release:test:ffmpeg-8.1:
+  extends: ["test:hw-full:ffmpeg-8.1", ".release-gate-job"]
+
+# ---------------------------------------------------------------------------
 # Stage: dist — build REAL libnvmpi + ffmpeg per version and tar each one
 # (tag pipelines only). The build stages above link stubs and are NOT
 # runnable; releases must rebuild against the real Multimedia API.
@@ -492,6 +558,7 @@ test:hw-full:ffmpeg-8.1:                         # path D
 .dist:
   stage: dist
   <<: *only-tag
+  needs: !reference [.release-gate, needs]
   before_script:
     - mkdir -p /opt/nvidia/l4t-packages && touch /opt/nvidia/l4t-packages/.nv-l4t-disable-boot-fw-update-in-preinstall
     - |
@@ -568,6 +635,18 @@ release:
     name: "${RELEASE_IMAGE}"
     pull_policy: if-not-present
   needs:
+    - job: "release:test:ffmpeg-6.0"
+      artifacts: false
+    - job: "release:test:ffmpeg-6.1"
+      artifacts: false
+    - job: "release:test:ffmpeg-7.0"
+      artifacts: false
+    - job: "release:test:ffmpeg-7.1"
+      artifacts: false
+    - job: "release:test:ffmpeg-8.0"
+      artifacts: false
+    - job: "release:test:ffmpeg-8.1"
+      artifacts: false
     - job: "dist:jp6"
     - job: "dist:jp5"
   variables:
