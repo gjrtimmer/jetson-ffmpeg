@@ -332,7 +332,7 @@ nvmpi-mock:jp6:
 # Each stub job `needs:` its own ffmpeg build + the mock build, so it starts
 # in parallel with the hw jobs. Suites guard hw-only assertions (perf numbers,
 # VIC, exact bitstream/pixel checks) with NVMPI_MOCK; see test/README.md
-# "Mock (stub) runs". STUB_SUITES = the mockable suites.
+# "Mock (stub) runs". The mockable suites are MOCK_SUITES in test/hw-all.sh.
 # ---------------------------------------------------------------------------
 .stub-test:
   stage: test:stub
@@ -341,9 +341,6 @@ nvmpi-mock:jp6:
   variables:
     NVMPI_MOCK: "1"
     JETSON_VARIANT: "mock"
-    STUB_SUITES: ""
-    HW_SUITE_TIMEOUT: "120"
-  allow_failure: true
   script:
     - echo "=== stub test (${CI_JOB_NAME}) against the nvmpi mock ==="
     - export PATH="${FFMPEG_PREFIX}/bin:${PATH}"
@@ -358,7 +355,7 @@ nvmpi-mock:jp6:
         grep -F "$l" /tmp/ldd.txt | grep -q "${CI_PROJECT_DIR}/_mock/" \
           || { echo "$l does not resolve to _mock (a stub or real lib would hide mock bugs)"; exit 1; }
       done
-    - HW_SUITES="${STUB_SUITES}" bash test/hw-all.sh
+    - bash test/hw-all.sh
 
 # ---------------------------------------------------------------------------
 # Stage: test — HW encode/decode on real Jetson hardware.

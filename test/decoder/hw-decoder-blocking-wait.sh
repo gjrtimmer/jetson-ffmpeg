@@ -93,6 +93,11 @@ for i in $(seq 1 5); do
 done
 echo "   5 rapid open/close cycles — OK"
 
+if is_mock; then
+  mock_skip "section 7 (timing numbers are meaningless without the hardware engines)"
+  echo "OK: hw-decoder-blocking-wait passed on ${variant} (mock)."
+  exit 0
+fi
 echo "== 7. perf (informational): normal vs low_delay =="
 ensure_sample SAMPLE_H264_720P_LONG gen-sample-h264-long 10
 

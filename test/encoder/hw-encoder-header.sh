@@ -23,6 +23,11 @@ echo "=== hw-encoder-header on variant: ${variant} ==="
 
 FRAMES=30
 for enc in h264_nvmpi hevc_nvmpi; do
+  if is_mock && [ "$enc" = hevc_nvmpi ]; then
+    echo "== ${enc} +global_header -> mp4 =="
+    mock_skip "mock HEVC parameter sets are canned, hvcC cannot be built from them"
+    continue
+  fi
   echo "== ${enc} +global_header -> mp4 =="
   # Extradata generation lives in ffmpeg/dev/common/libavcodec/nvmpi_enc.c
   # (GLOBAL_HEADER throwaway-encoder NAL scan).

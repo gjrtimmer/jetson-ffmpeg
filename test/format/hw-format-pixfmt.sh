@@ -25,7 +25,9 @@ echo "=== hw-format-pixfmt on variant: ${variant} ==="
 
 ensure_sample SAMPLE_H264_720P gen-sample-h264 3
 
+# Mock bitstreams are canned and not software-decodable: count demuxed packets.
 frame_count() {
+  if is_mock; then packet_count "$1"; return; fi
   ffprobe -v error -select_streams v:0 -count_frames \
     -show_entries stream=nb_read_frames -of csv=p=0 "$1"
 }
@@ -103,6 +105,12 @@ else
     echo "Code: src/nvmpi_dec.cpp (NvBufferColorFormat_NV12_10LE); nvmpi_dec.c (NV_PIX_P010 routing)."
     ff_fail "hevc_nvmpi did not emit P010LE from a Main10 stream."
   fi
+fi
+
+if is_mock; then
+  mock_skip "section 5 (the mock SPS carries no VUI timing info)"
+  echo "OK: hw-format-pixfmt passed on ${variant} (mock)."
+  exit 0
 fi
 
 # ---------------------------------------------------------------------------

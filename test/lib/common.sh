@@ -15,6 +15,9 @@
 #   device_health [LABEL]      decode a known-good sample; FAIL if the V4L2
 #                              device is unusable (call after stress loops)
 #   is_signal_rc RC            rc in the POSIX standard signal-kill range
+#   is_mock                    true when run against the jetson-nvmpi mock
+#                              (NVMPI_MOCK=1, CI test:stub); see mock_skip
+#   mock_skip WHY              print the standard "skipped on mock" line
 # plus everything from test/gen-samples.sh (sample paths, gen-*, gen-all).
 #
 # The Tegra V4L2 driver has stochastic segfaults on rapid device open/close
@@ -38,6 +41,14 @@ FF_KILL_GRACE=5
 FF_OUT="" FF_RC=0
 
 is_signal_rc() { [ "$1" -ge 129 ] && [ "$1" -le 159 ]; }
+
+# NVMPI_MOCK=1: the codecs run against the behavioural mock (no Jetson). Its
+# bitstreams are canned (HEVC parameter sets are not muxable, slice data is not
+# decodable) and it models no timing or driver quirks, so assertions that
+# need real hardware output are guarded with is_mock. Every guarded assertion
+# still runs on the Orin; the mock run is additive.
+is_mock() { [ "${NVMPI_MOCK:-0}" = "1" ]; }
+mock_skip() { echo "   SKIP on mock: $1 (asserted on real hardware only)"; }
 
 # run_ff [-T SECS] ARGS... : ffmpeg -y -hide_banner ARGS under timeout -k.
 # stdout+stderr are captured in FF_OUT. rc 124/137 = timeout / hard kill.
