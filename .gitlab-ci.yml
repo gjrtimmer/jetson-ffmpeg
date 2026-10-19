@@ -382,9 +382,10 @@ ffmpeg:jp5:
     # INVARIANT: the fast tier excludes ONLY these stress/soak suites. Every
     # other suite (filter-scale-vic, decoder-flush/lifecycle/codecs/chunk/pool,
     # encoder-gop/level/header/pools, format-pixfmt, smoke, rtp-sdp, jpeg/mjpeg,
-    # ...) still runs on real Jetson hardware for every FFmpeg version in every
-    # MR pipeline. Never add a suite here to save time; mock tests are additive.
-    HW_SUITES_EXCLUDE: "encoder-lifecycle encoder-thread-safety encoder-blocking decoder-teardown pthread-guard soak-decode decoder-blocking-wait encoder-nonblock"
+    # ..., lifecycle-stress, encoder-thread-safety) still runs on real Jetson
+    # hardware for every FFmpeg version in every MR pipeline. Never add a suite
+    # here to save time; mock tests are additive.
+    HW_SUITES_EXCLUDE: "encoder-blocking soak-decode decoder-blocking-wait encoder-nonblock"
   rules: *hw-rules-tiered
 
 # Full twin of a fast job: same version, runs only at HW_TIER=full.

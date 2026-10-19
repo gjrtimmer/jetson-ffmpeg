@@ -9,7 +9,7 @@
 # Usage:
 #   JETSON_VARIANT=orin-nx test/hw-all.sh           # all suites
 #   HW_SUITES="decoder-chunk encoder-gop" test/hw-all.sh   # subset
-#   HW_SUITES_EXCLUDE="soak-decode pthread-guard" test/hw-all.sh  # skip some
+#   HW_SUITES_EXCLUDE="soak-decode encoder-nonblock" test/hw-all.sh  # skip some
 #     (CI fast tier: stress suites are excluded, new suites run by default)
 #
 # CI log contract (what you see when something breaks):
