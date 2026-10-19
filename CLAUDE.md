@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **jetson-ffmpeg** enables hardware-accelerated H.264/HEVC/MPEG2/MPEG4/VP8/VP9 video encode/decode on NVIDIA Jetson via FFmpeg. This repo is the **FFmpeg integration only** (`ffmpeg/dev/`, `ffmpeg/patches/`): codec source files (`AVCodec`/`FFCodec` wrappers) that call libnvmpi through `dlopen` and get *patched into* a vanilla FFmpeg tree, then compiled as part of FFmpeg.
 
-**libnvmpi lives in its own repo, `timmertech/jetson-nvmpi`** (GitHub mirror `gjrtimmer/jetson-nvmpi`; issues on GitHub, MRs on GitLab). It is a standalone C-API shared library wrapping NVIDIA's V4L2/NvBuffer multimedia API. This repo consumes a **released** jetson-nvmpi package, pinned once as `NVMPI_VERSION` in `.gitlab-ci.yml` (generic package registry tarballs per JetPack; debs `libnvmpi1`/`libnvmpi-dev` for installs). libnvmpi code, its unit/API tests, stubs, mock, CMake build and driver-level fixes go to jetson-nvmpi, not here. To adopt a new libnvmpi: bump `NVMPI_VERSION`, run an MR pipeline.
+**libnvmpi lives in its own repo, `timmertech/jetson-nvmpi`** (GitHub mirror `gjrtimmer/jetson-nvmpi`; issues on GitHub, MRs on GitLab). It is a standalone C-API shared library wrapping NVIDIA's V4L2/NvBuffer multimedia API. This repo consumes a **released** jetson-nvmpi package, pinned once as `NVMPI_VERSION` in `.gitlab-ci.yml` (generic package registry tarballs per JetPack; debs `libnvmpi1`/`libnvmpi-dev` for installs). libnvmpi code, its unit/API tests, stubs, mock, CMake build and driver-level fixes go to jetson-nvmpi, not here. The nvmpi mock is built from `NVMPI_MOCK_REF` (default tag `v${NVMPI_VERSION}`; may be a jetson-nvmpi commit SHA for unreleased mock fixes). To adopt a new libnvmpi: bump `NVMPI_VERSION`, run an MR pipeline.
 
 FFmpeg needs neither libnvmpi headers nor libraries at build time (`-ldl` only); at runtime it dlopens `libnvmpi.so.1`, then `libnvmpi.so`; the integration layer is delivered as patches users apply to their own FFmpeg checkout.
 
@@ -28,7 +28,7 @@ deliberately no `test` alias (it would shadow the shell builtin).
 
 ```bash
 # libnvmpi comes from a jetson-nvmpi release: libnvmpi1 deb, or a tarball prefix
-./scripts/fetch-nvmpi.sh --version 4.0.0 --dest ~/nvmpi   # needs a GitLab token (GITLAB_TOKEN)
+./scripts/fetch-nvmpi.sh --version 4.0.1 --dest ~/nvmpi   # public GitHub release, no token; --source gitlab needs GITLAB_TOKEN
 # Patch + build a full FFmpeg <ver> with nvmpi (alias: build)
 ./scripts/build.sh --ffmpeg 7.1 [--nvmpi-prefix ~/nvmpi] [--install]
 

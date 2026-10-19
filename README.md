@@ -56,9 +56,11 @@ the list of tested FFmpeg releases.
 ## Quick Start
 
 ```bash
-# 1. Install libnvmpi from a jetson-nvmpi release (pick the package set that
-#    matches your JetPack: ~jp6 for JetPack 6, ~jp5 for JetPack 5)
-sudo apt install ./libnvmpi1_<version>~jp6_arm64.deb
+# 1. Install libnvmpi from the public jetson-nvmpi GitHub release
+#    (https://github.com/gjrtimmer/jetson-nvmpi/releases): pick the package set
+#    that matches your JetPack (.jp6 for JetPack 6, .jp5 for JetPack 5; the
+#    GitLab registry names them ~jp6 / ~jp5)
+sudo apt install ./libnvmpi1_<version>-1.jp6_arm64.deb
 
 # 2. Patch and build FFmpeg (needs no libnvmpi headers: it is loaded at runtime)
 git clone https://github.com/gjrtimmer/jetson-ffmpeg.git
@@ -73,8 +75,10 @@ sudo make install
 
 No deb? `scripts/fetch-nvmpi.sh --version <ver> --dest <dir>` unpacks the release
 tarball into a prefix, and `scripts/build.sh --ffmpeg 7.1 --nvmpi-prefix <dir>`
-builds against it. The version CI tests against is `NVMPI_VERSION` in
-`.gitlab-ci.yml`.
+builds against it. It downloads the public GitHub release asset (no token) and
+verifies its sha256; `--source gitlab` uses the GitLab package registry instead
+(needs a token), and CI tries that first. The version CI tests against is
+`NVMPI_VERSION` in `.gitlab-ci.yml`.
 
 For full build instructions and usage examples see the
 **[Build and Install](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Build-and-Install)**
