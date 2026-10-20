@@ -618,6 +618,12 @@ default for all sessions in this repo — do not wait for the user to request it
   runner-level limit (`limit = 1` / `concurrent = 1`) is needed; until then
   check for other running Orin jobs before starting hw work and retry a
   hung job only once the runner is idle.
+- **Coordinate before pushing to main or opening an MR.** First check open
+  MRs and running pipelines in both jetson repos (`glab mr list` /
+  `glab ci list` in jetson-ffmpeg and jetson-nvmpi). If other Claude sessions
+  are active on this repo or the Orin, message them first. Reason: ff merges
+  make every open MR `need_rebase`, and the Orin is shared, so uncoordinated
+  pushes cause rebase churn and hw collisions.
 - **All MRs for a release must be merged and green before tagging.** Never
   create a release tag while MRs intended for that release are still open or
   their main pipelines are still running. If a release was created
