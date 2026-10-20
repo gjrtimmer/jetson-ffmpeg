@@ -43,7 +43,7 @@
  * (HAVE_AV_CONFIG_H is defined) — version.h is intentionally skipped to
  * reduce rebuild scope.  We need LIBAVFILTER_VERSION_MINOR for the
  * hw_frames_ctx location guard (AVFilterLink vs FilterLink at 10.5+),
- * so pull it in explicitly.  Present in all supported versions (6.0–8.1);
+ * so pull it in explicitly.  Present in all supported versions (6.0–9.0);
  * __has_include guard for safety against future restructuring. */
 #if defined(__has_include)
 #if __has_include("libavfilter/version.h")
