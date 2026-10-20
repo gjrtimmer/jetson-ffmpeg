@@ -23,6 +23,7 @@ test/
 │   ├── hw-decoder-flush.sh
 │   ├── hw-decoder-lifecycle.sh
 │   ├── hw-decoder-mjpeg.sh
+│   ├── hw-decoder-mjpeg-drmprime.sh
 │   └── hw-decoder-pool.sh
 ├── encoder/               # NVENC encoder suites
 │   ├── hw-encoder-gop.sh
@@ -175,8 +176,8 @@ tags (the release gate is real hardware). It catches logic, lifecycle and
 wrapper bugs and, via `auto_cancel`, keeps such failures off the shared Orin.
 
 The mockable list is `MOCK_SUITES` in `hw-all.sh` (opt-in; new suites are not
-mocked until listed). Not mockable: `decoder-mjpeg`, `encoder-jpeg` (NvJPEG not
-mocked), `encoder-level` (canned SPS), `soak-decode`, `perf-bench`, `perf-mode`
+mocked until listed). Not mockable: `decoder-mjpeg`, `decoder-mjpeg-drmprime`, `encoder-jpeg` (NvJPEG
+not mocked; the jetson-nvmpi 4.1.0 mock has no JPEG fd model), `encoder-level` (canned SPS), `soak-decode`, `perf-bench`, `perf-mode`
 (timing needs the engines). Inside mockable suites, assertions that need real
 hardware output are guarded with `is_mock` / `mock_skip` (canned HEVC
 parameter sets cannot be muxed; canned slices are not software-decodable; no

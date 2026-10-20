@@ -134,6 +134,16 @@ gen-sample-mjpeg-480p() {
     -c:v mjpeg -q:v 5 "$1"
 }
 
+# Baseline MJPEG sample with a chosen size and chroma format (drm_prime suite).
+# PIX_FMT is a JPEG-range format: yuvj420p, yuvj422p or yuvj444p.
+#   gen-sample-mjpeg-fmt FILE WxH PIX_FMT [SECONDS]
+gen-sample-mjpeg-fmt() {
+  local w="${2%x*}" h="${2#*x}"
+  ffmpeg -y -hide_banner -loglevel error \
+    -f lavfi -i testsrc2=s=320x240:r=30 -t "${4:-1}" \
+    -vf "scale=${w}:${h}" -c:v mjpeg -pix_fmt "$3" -q:v 3 "$1"
+}
+
 # 5 s all-keyframe-every-30 H.264 sample for seek tests.
 gen-sample-h264-seek() {
   ffmpeg -y -hide_banner -loglevel error \
