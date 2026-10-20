@@ -126,7 +126,7 @@ done
 
 # ── 3. Odd sizes (decode only; H.264 cannot encode them) ─────────────────────
 echo "== 3. odd sizes decode =="
-for size in 33x17 17x33; do
+for size in 33x17 65x33; do
   in="${T}-odd-${size}.mkv"
   gen-sample-mjpeg-fmt "$in" "$size" yuvj420p 1
   run_ff_must "odd ${size}" -T 60 -loglevel warning \
