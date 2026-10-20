@@ -186,7 +186,7 @@ still running on hardware.
 ## Where these run
 
 - **GitLab CI** (`.gitlab-ci.yml`): `test:hw-fast:ffmpeg-<ver>` (only the soak
-  suite excluded) and `test:hw-full:ffmpeg-<ver>` (all suites; 7.1 and 8.1 in
+  suite excluded) and `test:hw-full:ffmpeg-<ver>` (all suites; 7.1 and 9.0 in
   every MR, all versions in the weekly full run), each executing
   `test/hw-all.sh` on the Jetson runner matrix. Jobs `needs:` their build and
   start right after it; a failed job cancels the rest of the pipeline.
