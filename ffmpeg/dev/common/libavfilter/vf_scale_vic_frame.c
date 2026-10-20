@@ -84,8 +84,10 @@ int scale_vic_filter_frame(AVFilterLink *inlink, AVFrame *in)
     ScaleVICContext *s     = avctx->priv;
     AVFrame *out = NULL;
     AVDRMFrameDescriptor *in_desc, *out_desc;
-    int src_fd, dst_fd, dup_fd, ret;
+    int src_fd = -1, dst_fd, dup_fd, ret;
     int dst_pitch;
+    int orig_fd = -1, direct = 0;
+    uint64_t mod;
 
     av_log(avctx, AV_LOG_DEBUG,
            "scale_vic: filter_frame entry pts=%" PRId64 " %dx%d fmt=%d\n",
@@ -108,50 +110,82 @@ int scale_vic_filter_frame(AVFilterLink *inlink, AVFrame *in)
         return AVERROR(EINVAL);
     }
 
-    /* nvmpi_surface_copy_from_dmabuf assumes the chroma plane starts at
-     * pitch * height. Frames whose surface pads the plane height (JPEG
-     * decoder with unaligned sizes) report a larger offset: copying would
-     * silently corrupt the chroma, so refuse them with a clear error. */
-    if (in_desc->layers[0].nb_planes > 1 &&
-        in_desc->layers[0].planes[1].offset !=
-            (ptrdiff_t)in_desc->layers[0].planes[0].pitch * in->height) {
-        av_log(avctx, AV_LOG_ERROR,
-               "scale_vic: unsupported chroma offset %td (expected pitch*height "
-               "= %td); use a 16-aligned picture height\n",
-               in_desc->layers[0].planes[1].offset,
-               (ptrdiff_t)in_desc->layers[0].planes[0].pitch * in->height);
-        av_frame_free(&in);
-        return AVERROR(EINVAL);
-    }
-
     av_log(avctx, AV_LOG_DEBUG,
            "scale_vic: input fd=%d pitch=%d, %dx%d → %dx%d\n",
            in_desc->objects[0].fd,
            (int)in_desc->layers[0].planes[0].pitch,
            in->width, in->height, outlink->w, outlink->h);
 
-    /* Copy the dup'd DMA-BUF frame data into a registered source buffer.
-     * The decoder dup()s its fds for AVFrame lifetime safety, but dup'd
-     * fds are not registered in NvBufSurface's internal table — the VIC
-     * hardware transform API (NvBufSurfTransform) requires registered
-     * surfaces.  This copy bridges that gap at the cost of one CPU memcpy
-     * per frame (~1.4 MB for 720p NV12). */
-    src_fd = s->in_fds[s->in_pool_idx];
-    s->in_pool_idx = (s->in_pool_idx + 1) % s->in_pool_size;
-
-    ret = nvmpi_surface_copy_from_dmabuf(src_fd,
-                                         in_desc->objects[0].fd,
-                                         in->width, in->height,
-                                         in_desc->layers[0].planes[0].pitch);
-    if (ret < 0) {
-        av_log(avctx, AV_LOG_ERROR,
-               "scale_vic: failed to copy input frame to registered "
-               "surface\n");
-        av_frame_free(&in);
-        return AVERROR_EXTERNAL;
+    /* Zero-copy source: frames from the JPEG decoder carry the ORIGINAL
+     * NvBufSurface-registered fd as a format-modifier hint (vendor 0x4E, see
+     * NVMPI_DRM_MOD_ORIG_FD in nvmpi_dec_drm.h). Valid while this frame is
+     * referenced, which it is during this call. VIC reads the surface with
+     * its real plane layout, so padded chroma offsets are handled and no CPU
+     * copy is needed. If the lookup fails (stale hint, other producer) the
+     * copy path below takes over. Scaling only: a same-size VIC transform
+     * deadlocks on JP6 (see the passthrough branch). */
+    mod = in_desc->objects[0].format_modifier;
+    if ((mod >> 56) == 0x4E)
+        orig_fd = (int)(mod & 0xFFFFFFFFu);
+    if (orig_fd >= 0 &&
+        (in->width != outlink->w || in->height != outlink->h)) {
+        dst_fd = s->out_fds[s->pool_idx];
+        if (nvmpi_vic_transform(s->vic_ctx, orig_fd, dst_fd,
+                                in->width, in->height,
+                                outlink->w, outlink->h) == 0) {
+            s->pool_idx = (s->pool_idx + 1) % s->pool_size;
+            dst_pitch = outlink->w;
+            direct = 1;
+        } else {
+            av_log(avctx, AV_LOG_DEBUG,
+                   "scale_vic: direct VIC from fd hint %d failed, copying\n",
+                   orig_fd);
+        }
     }
 
-    if (in->width == outlink->w && in->height == outlink->h) {
+    if (!direct) {
+        /* nvmpi_surface_copy_from_dmabuf assumes the chroma plane starts at
+         * pitch * height. Frames whose surface pads the plane height (JPEG
+         * decoder with unaligned sizes) report a larger offset: copying would
+         * silently corrupt the chroma, so refuse them with a clear error. */
+        if (in_desc->layers[0].nb_planes > 1 &&
+            in_desc->layers[0].planes[1].offset !=
+                (ptrdiff_t)in_desc->layers[0].planes[0].pitch * in->height) {
+            av_log(avctx, AV_LOG_ERROR,
+                   "scale_vic: unsupported chroma offset %td (expected pitch*height "
+                   "= %td); use a 16-aligned picture height\n",
+                   in_desc->layers[0].planes[1].offset,
+                   (ptrdiff_t)in_desc->layers[0].planes[0].pitch * in->height);
+            av_frame_free(&in);
+            return AVERROR(EINVAL);
+        }
+
+        /* Copy the dup'd DMA-BUF frame data into a registered source buffer.
+         * The decoder dup()s its fds for AVFrame lifetime safety, but dup'd
+         * fds are not registered in NvBufSurface's internal table — the VIC
+         * hardware transform API (NvBufSurfTransform) requires registered
+         * surfaces.  This copy bridges that gap at the cost of one CPU memcpy
+         * per frame (~1.4 MB for 720p NV12). */
+        src_fd = s->in_fds[s->in_pool_idx];
+        s->in_pool_idx = (s->in_pool_idx + 1) % s->in_pool_size;
+
+        ret = nvmpi_surface_copy_from_dmabuf(src_fd,
+                                             in_desc->objects[0].fd,
+                                             in->width, in->height,
+                                             in_desc->layers[0].planes[0].pitch);
+        if (ret < 0) {
+            av_log(avctx, AV_LOG_ERROR,
+                   "scale_vic: failed to copy input frame to registered "
+                   "surface\n");
+            av_frame_free(&in);
+            return AVERROR_EXTERNAL;
+        }
+    }
+
+    if (direct) {
+        /* Already transformed straight from the decoder's registered
+         * surface (dst_fd/dst_pitch set above); nothing left to do. */
+    } else if (in->width == outlink->w && in->height == outlink->h) {
         /* Passthrough: same dimensions — skip VIC transform entirely.
          * The registered source buffer already contains the NV12 data;
          * use it directly as the output.  This avoids the NvBufSurfTransform
