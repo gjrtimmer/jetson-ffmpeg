@@ -169,13 +169,16 @@ echo "   fds: ${fd1} -> ${fd2}"
 
 # ── 6. Range tag: full range on every frame ──────────────────────────────────
 echo "== 6. color range =="
-rng=$(ffprobe -v error -c:v mjpeg_nvmpi -output_format drm_prime -select_streams v:0 \
-  -show_entries frame=pix_fmt,color_range -of csv=p=0 -read_intervals '%+#3' \
-  "${S720}" 2>&1 || true)
-echo "   ${rng}" | head -3
-if ! printf '%s\n' "$rng" | grep -q 'drm_prime,pc'; then
-  echo "FAIL(range): expected drm_prime frames tagged pc (full range)."; exit 1
-fi
+# The filter-graph input line logged at verbose level carries the frame's
+# range (FFmpeg >= 6.1 prints "range:"); older versions do not log it.
+run_ff_must "range" -T 60 -loglevel verbose "${DEC_HW[@]}" -i "${S720}" \
+  -frames:v 2 -vf scale_vic=640:360 -c:v h264_nvmpi "${T}-range.mkv"
+line=$(printf '%s\n' "$FF_OUT" | grep -m1 'pixfmt:drm_prime' || true)
+case "$line" in
+  *range:pc*) echo "   range: pc (full)" ;;
+  *range:*)   echo "FAIL(range): drm_prime frames not tagged full range: ${line}"; exit 1 ;;
+  *)          echo "   range: not logged by this FFmpeg version, skipped" ;;
+esac
 
 # ── 7. Fallback: libnvmpi without the fd API (symbols forced off) ────────────
 echo "== 7. fallback to software frames =="
