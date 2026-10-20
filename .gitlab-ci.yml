@@ -67,7 +67,7 @@ stages:
 
 # Pipeline creation and the default hardware test tier (HW_TIER):
 #   tag                -> release pipeline (dist + release only)
-#   merge request      -> builds + tiered hw tests (7.1/8.1 full, rest fast)
+#   merge request      -> builds + tiered hw tests (7.1/9.0 full, rest fast)
 #   web/schedule/api   -> HW_TIER as chosen in the UI / schedule variable
 #                         (default none; the weekly schedule sets full)
 #   pipeline/trigger   -> full (cross-project trigger, e.g. from jetson-nvmpi)
@@ -107,7 +107,7 @@ workflow:
 variables:
   HW_TIER:
     value: "none"
-    description: "Hardware test tier: none = builds only, tiered = 7.1/8.1 full + other versions fast (stress suites skipped), full = all suites on all versions"
+    description: "Hardware test tier: none = builds only, tiered = 7.1/9.0 full + other versions fast (stress suites skipped), full = all suites on all versions"
     options:
       - "none"
       - "tiered"
@@ -279,7 +279,7 @@ ffmpeg:jp6:
   needs: ["nvmpi:fetch:jp6"]
   parallel:
     matrix:
-      - FFVER: ["6.0", "6.1", "7.0", "7.1", "8.0", "8.1"]
+      - FFVER: ["6.0", "6.1", "7.0", "7.1", "8.0", "8.1", "9.0"]
 
 # JP5 is a compile check only: oldest + newest FFmpeg cover the API range.
 ffmpeg:jp5:
@@ -290,7 +290,7 @@ ffmpeg:jp5:
   needs: ["nvmpi:fetch:jp5"]
   parallel:
     matrix:
-      - FFVER: ["6.0", "8.1"]
+      - FFVER: ["6.0", "9.0"]
 
 # Behavioural Jetson mock (jetson-nvmpi mock/): drop-in libnvv4l2 /
 # libnvbufsurface / libnvbufsurftransform carrying the REAL sonames. Built from
@@ -365,7 +365,7 @@ nvmpi-mock:jp6:
 #
 # Controlled by HW_TIER (see the workflow rules above):
 #   none   - no hw jobs (main push, plain branches)
-#   tiered - MR default. 7.1 and 8.1 run ALL suites (.hw-full); the other
+#   tiered - MR default. 7.1 and 9.0 run ALL suites (.hw-full); the other
 #            versions run the fast tier (.hw-fast) = everything except the
 #            stress suites listed in HW_SUITES_EXCLUDE.
 #   full   - everything, on every version (weekly schedule / web / cross-project trigger)
@@ -377,9 +377,9 @@ nvmpi-mock:jp6:
 # version (see "Wrapper code paths by FFmpeg version" in https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Development-Guide#wrapper-code-paths-by-ffmpeg-version):
 #
 #   6.0,6.1,7.0,7.1 -> path A (FFCodec) — identical wrapper code
-#   8.0,8.1          -> path B (FFCodec + AV_PROFILE)
+#   8.0,8.1,9.0      -> path B (FFCodec + AV_PROFILE)
 #
-# 7.1 (path A) and 8.1 (path B) carry the full suites. The other versions
+# 7.1 (path A) and 9.0 (path B) carry the full suites. The other versions
 # share wrapper code with them and run the fast tier to cover FFmpeg
 # ABI/runtime differences between releases; HW_TIER=full runs them in full too.
 #
@@ -530,6 +530,15 @@ test:stub:ffmpeg-8.1:                            # path B
           - FFVER: "8.1"
     - job: "nvmpi-mock:jp6"
 
+test:stub:ffmpeg-9.0:                            # path B
+  extends: .stub-test
+  needs:
+    - job: "ffmpeg:jp6"
+      parallel:
+        matrix:
+          - FFVER: "9.0"
+    - job: "nvmpi-mock:jp6"
+
 test:hw-fast:ffmpeg-6.0:                         # path A
   extends: .hw-fast
   needs:
@@ -602,13 +611,37 @@ test:hw-full:ffmpeg-7.1:                         # path A
         matrix:
           - FFVER: "7.1"
 
-test:hw-full:ffmpeg-8.1:                         # path B
-  extends: .hw-full
+test:hw-fast:ffmpeg-8.1:                         # path B
+  extends: .hw-fast
   needs:
     - job: "ffmpeg:jp6"
       parallel:
         matrix:
           - FFVER: "8.1"
+
+test:hw-full:ffmpeg-8.1:                         # path B
+  extends: .hw-full-twin
+  needs:
+    - job: "ffmpeg:jp6"
+      parallel:
+        matrix:
+          - FFVER: "8.1"
+
+test:hw-fast:ffmpeg-9.0:                         # path B
+  extends: .hw-fast
+  needs:
+    - job: "ffmpeg:jp6"
+      parallel:
+        matrix:
+          - FFVER: "9.0"
+
+test:hw-full:ffmpeg-9.0:                         # path B
+  extends: .hw-full
+  needs:
+    - job: "ffmpeg:jp6"
+      parallel:
+        matrix:
+          - FFVER: "9.0"
 
 # ---------------------------------------------------------------------------
 # Stage: release-test — RELEASE GATE (semver tag pipelines only).
@@ -645,6 +678,8 @@ test:hw-full:ffmpeg-8.1:                         # path B
       artifacts: false
     - job: "release:test:ffmpeg-8.1"
       artifacts: false
+    - job: "release:test:ffmpeg-9.0"
+      artifacts: false
 
 release:test:ffmpeg-6.0:
   extends: ["test:hw-full:ffmpeg-6.0", ".release-gate-job"]
@@ -663,6 +698,9 @@ release:test:ffmpeg-8.0:
 
 release:test:ffmpeg-8.1:
   extends: ["test:hw-full:ffmpeg-8.1", ".release-gate-job"]
+
+release:test:ffmpeg-9.0:
+  extends: ["test:hw-full:ffmpeg-9.0", ".release-gate-job"]
 
 # ---------------------------------------------------------------------------
 # Stage: dist — build ffmpeg per version, bundle the released libnvmpi and tar
@@ -715,7 +753,7 @@ dist:jp6:
   extends: .dist
   parallel:
     matrix:
-      - FFVER: ["6.0", "6.1", "7.0", "7.1", "8.0", "8.1"]
+      - FFVER: ["6.0", "6.1", "7.0", "7.1", "8.0", "8.1", "9.0"]
 
 dist:jp5:
   extends: .dist
@@ -726,7 +764,7 @@ dist:jp5:
     L4T_TAG: "${L4T_TAG_JP5}"
   parallel:
     matrix:
-      - FFVER: ["6.0", "6.1", "7.0", "7.1", "8.0", "8.1"]
+      - FFVER: ["6.0", "6.1", "7.0", "7.1", "8.0", "8.1", "9.0"]
 
 # ---------------------------------------------------------------------------
 # Stage: release — changelog + S3 upload + GitLab Release (+ generic package
@@ -754,6 +792,8 @@ release:
     - job: "release:test:ffmpeg-8.0"
       artifacts: false
     - job: "release:test:ffmpeg-8.1"
+      artifacts: false
+    - job: "release:test:ffmpeg-9.0"
       artifacts: false
     - job: "dist:jp6"
     - job: "dist:jp5"
