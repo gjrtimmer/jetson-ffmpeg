@@ -18,7 +18,7 @@ FFmpeg needs neither libnvmpi headers nor libraries at build time (`-ldl` only);
 - `test/` — per-feature hardware suites (`hw-*.sh`) run by `hw-all.sh` (auto-discovery; see `test/README.md`), `gen-samples.sh` (shared sample generators), and `smoke-all.sh` (full cross-version build + hw-all). FFmpeg sources are fetched by `scripts/clone-ffmpeg.sh`.
 - Prose documentation lives in the **[project wiki](https://github.com/gjrtimmer/jetson-ffmpeg/wiki)** (`jetson-ffmpeg.wiki.git`), not in-repo — the `docs/` folder has been retired. Script/alias reference: [Scripts and Commands](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Scripts-and-Commands).
 
-Supported FFmpeg versions: 6.0, 6.1, 7.0, 7.1, 8.0, 8.1 (libavcodec 60→62). 4.2 and 4.4 are retired since v3.0.0 (last release: v2.10.0). To add one, use the `add-ffmpeg-version` skill.
+Supported FFmpeg versions: 6.0, 6.1, 7.0, 7.1, 8.0, 8.1, 9.0 (libavcodec 60→63). 4.2 and 4.4 are retired since v3.0.0 (last release: v2.10.0). To add one, use the `add-ffmpeg-version` skill.
 
 ## Build & test commands
 
@@ -80,7 +80,7 @@ check if the fix needs `#if LIBAVCODEC_VERSION_MAJOR` or
 
 **CI is for final validation only.** Use the local loop for development.
 Push to pipeline when the local test passes. The pipeline validates all
-8 FFmpeg versions × 2 JetPack versions — don't iterate on pipeline
+7 FFmpeg versions × 2 JetPack versions — don't iterate on pipeline
 failures when you can reproduce locally.
 
 **Validate code changes before considering them done.** Two valid paths:
@@ -591,7 +591,7 @@ default for all sessions in this repo — do not wait for the user to request it
   otherwise.
 - **Pipeline tiers (`HW_TIER`).** MR pipelines run `tiered` (all builds, the
   `test:stub` stage, all fast hw suites on every version, soak + stress
-  suites on 7.1 + 8.1). `test:stub` runs the mockable suites against the
+  suites on 7.1 + 9.0). `test:stub` runs the mockable suites against the
   nvmpi mock on plain K3s runners in parallel with the hw jobs; it is
   additive (never replaces a hw run, never runs on tags) and a failure
   cancels queued hw jobs (`auto_cancel`). A push to `main` runs **builds +
