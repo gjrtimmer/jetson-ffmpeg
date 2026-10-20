@@ -551,7 +551,11 @@ default for all sessions in this repo — do not wait for the user to request it
   repo unless the user orders that specific release at that moment. Approving a
   plan does not authorize a release step inside it. Subagent prompts must state
   "no tags/releases". (jetson-nvmpi v4.0.0 was tagged prematurely by a subagent
-  and had to be deleted, 2026-10-19.)
+  and had to be deleted, 2026-10-19.) Exception: an order given in advance for a
+  batch counts ("work issues #A, #B, #C and release after each"). It covers only
+  the releases and issues it names; each release still needs its MR merged, main
+  green, and the release flow's gates. Pass the standing order explicitly into
+  subagent prompts.
 - **Agents waiting on pipelines stay until done.** Use `run_in_background` poll
   loops and wait for the notification. Hand back only when merged + main
   checked, or blocked >4h; never hand back early "because waiting".
