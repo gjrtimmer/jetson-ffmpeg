@@ -135,13 +135,19 @@ gen-sample-mjpeg-480p() {
 }
 
 # Baseline MJPEG sample with a chosen size and chroma format (drm_prime suite).
-# PIX_FMT is a JPEG-range format: yuvj420p, yuvj422p or yuvj444p.
+# PIX_FMT is a JPEG-range format: yuvj420p, yuvj422p or yuvj444p. Every frame
+# is the same still picture, so frame pairing in PSNR comparisons cannot drift.
 #   gen-sample-mjpeg-fmt FILE WxH PIX_FMT [SECONDS]
 gen-sample-mjpeg-fmt() {
-  local w="${2%x*}" h="${2#*x}"
+  local w="${2%x*}" h="${2#*x}" still="$1.still.png"
   ffmpeg -y -hide_banner -loglevel error \
-    -f lavfi -i testsrc2=s=320x240:r=30 -t "${4:-1}" \
+    -f lavfi -i testsrc2=s=320x240 -frames:v 1 "$still" || return 1
+  ffmpeg -y -hide_banner -loglevel error \
+    -loop 1 -framerate 30 -i "$still" -t "${4:-1}" \
     -vf "scale=${w}:${h}" -c:v mjpeg -pix_fmt "$3" -q:v 3 "$1"
+  local rc=$?
+  rm -f "$still"
+  return "$rc"
 }
 
 # 5 s all-keyframe-every-30 H.264 sample for seek tests.

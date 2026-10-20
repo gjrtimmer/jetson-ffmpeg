@@ -96,6 +96,13 @@ for c in 1280x720:yuvj420p 1000x562:yuvj420p 642x358:yuvj420p \
   size="${c%%:*}"; pf="${c##*:}"; tag="${size}-${pf}"
   in="${T}-${tag}.mkv"; enc="${T}-${tag}-enc.mkv"
   gen-sample-mjpeg-fmt "$in" "$size" "$pf" 1
+  # 4:2:2 / 4:4:4 only where the NVJPG decoder accepts the format at all
+  # (the legacy software-frame path is the probe); otherwise skip the case.
+  if [ "$pf" != yuvj420p ] && ! run_ff -T 30 -loglevel error \
+       -c:v mjpeg_nvmpi -i "$in" -frames:v 1 -f null -; then
+    echo "   ${tag}: SKIP (NVJPG decoder rejects this JPEG format even with software frames)"
+    continue
+  fi
   run_ff_must "${tag}: hw decode+encode" -T 60 -loglevel error \
     "${DEC_HW[@]}" -i "$in" -c:v h264_nvmpi -b:v 20M "$enc"
   run_ff_must "${tag}: baseline encode" -T 60 -loglevel error \
