@@ -19,7 +19,7 @@ for ver in ${VERSIONS}; do
     src="${DEV_DIR}/ffmpeg${ver}"
     # Shallow-clone only if the tree is not already present.
     if [ ! -d "${src}" ]; then
-        git clone --depth=1 -b "release/${ver}" https://git.ffmpeg.org/ffmpeg.git "${src}"
+        "${REPO_ROOT}/scripts/clone-ffmpeg.sh" -o "${src}" "${ver}"
     fi
 
     # Reset to pristine first so reused trees produce a clean diff (drops any

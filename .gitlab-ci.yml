@@ -238,7 +238,7 @@ nvmpi:fetch:jp5:
     CCACHE_BASEDIR: "/tmp/ffmpeg"
   script:
     - echo "=== ffmpeg ${FFVER} ==="
-    - git clone --depth=1 -b "release/${FFVER}" https://git.ffmpeg.org/ffmpeg.git /tmp/ffmpeg
+    - bash ./scripts/clone-ffmpeg.sh -o /tmp/ffmpeg "${FFVER}"
     - bash ./scripts/ffpatch.sh /tmp/ffmpeg
     - cd /tmp/ffmpeg
     - |

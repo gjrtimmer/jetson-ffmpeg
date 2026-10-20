@@ -65,9 +65,11 @@ jobs:
           fi
 
       - name: Patch and build ffmpeg
+        env:
+          MATRIX_FFMPEG: ${{ matrix.ffmpeg }}
         run: |
           echo "=== ffmpeg ${{ matrix.ffmpeg }} ==="
-          git clone --depth=1 -b "${{ matrix.ffmpeg }}" https://git.ffmpeg.org/ffmpeg.git /tmp/ffmpeg
+          bash ./scripts/clone-ffmpeg.sh -o /tmp/ffmpeg "${MATRIX_FFMPEG#release/}"
           bash ./scripts/ffpatch.sh /tmp/ffmpeg
           cd /tmp/ffmpeg
           ./configure \
