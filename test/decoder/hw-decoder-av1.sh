@@ -30,12 +30,15 @@ T=/tmp/nvmpi-av1
 trap 'rm -f "${T}"-* 2>/dev/null || true' EXIT
 
 echo "== 1. decode: frame count and dimensions =="
-# ffprobe -count_frames decodes with the forced decoder; 5 packets -> 5 frames.
-probe=$(timeout -k 5 60 ffprobe -v error -c:v av1_nvmpi -count_frames -select_streams v:0 \
-  -show_entries stream=width,height,nb_read_frames -of csv=p=0 "$FIX" 2>&1) \
-  || { echo "$probe"; ff_fail "ffprobe with av1_nvmpi failed (libnvmpi >= 4.2.0 on JetPack 6 required)."; }
-echo "   width,height,frames = ${probe}"
-[ "$probe" = "${W},${H},${N}" ] || ff_fail "expected ${W},${H},${N}, got '${probe}'."
+# Stream geometry comes from the IVF header; the decoder itself is forced with
+# ffmpeg (ffprobe on PATH may not be the patched build). 5 packets -> 5 frames.
+dims=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 "$FIX")
+[ "$dims" = "${W},${H}" ] || ff_fail "fixture dimensions '${dims}', expected ${W},${H}."
+run_ff_must "decode" -T 60 -c:v av1_nvmpi -i "$FIX" -f null -
+assert_frames "$N" "av1 decode"
+frames=$(printf '%s\n' "$FF_OUT" | grep -oP 'frame=\s*\K[0-9]+' | tail -1)
+[ "$frames" -eq "$N" ] || ff_fail "expected exactly ${N} frames, got ${frames}."
+printf '%s\n' "$FF_OUT" | grep -q "Video: av1.*${W}x${H}" || ff_fail "input stream not reported as av1 ${W}x${H}."
 
 echo "== 2. raw output size (non-empty, correctly sized frames) =="
 run_ff_must "rawvideo" -T 60 -loglevel warning -c:v av1_nvmpi -i "$FIX" \

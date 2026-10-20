@@ -7,9 +7,10 @@
 # only), early exit with frames still queued (the codec is closed before the
 # frames are unref'd), a dup'd-fd leak check, the range tag, the 4.0.x
 # fallback (symbols forced off) and the unchanged default software path.
-# Runs on the nvmpi mock too (libnvmpi >= 4.2.1 NvJPEGDecoder model, #128); the
-# mock surface holds a synthetic pattern, so the pixel comparison is hardware
-# only. No rapid open/close loops (Tegra driver segfaults).
+# Hardware only: CI's mock job runs the released libnvmpi, which links the real
+# NvJPEGDecoder sample class (libjpeg ABI mismatch against the mock libs), so the
+# mock JPEG model of jetson-nvmpi 4.2.1 cannot be used here and this suite is not
+# in MOCK_SUITES. No rapid open/close loops (Tegra driver segfaults).
 set -eu
 # shellcheck source-path=SCRIPTDIR/..
 # shellcheck source=lib/common.sh
@@ -18,6 +19,10 @@ set -eu
 variant="${JETSON_VARIANT:-unknown}"
 echo "=== hw-decoder-mjpeg-drmprime on variant: ${variant} ==="
 
+if is_mock; then
+  mock_skip "NvJPEG decode is not mocked for the released libnvmpi"
+  exit 0
+fi
 has_codec dec mjpeg_nvmpi || { echo "SKIP: mjpeg_nvmpi not compiled in."; exit 0; }
 has_sw_encoder mjpeg || { echo "SKIP: software mjpeg encoder missing (sample generation)."; exit 0; }
 ffmpeg -hide_banner -filters 2>&1 | grep -q scale_vic || ff_fail "scale_vic filter missing."
@@ -104,8 +109,6 @@ for c in 1280x720:yuvj420p 1000x562:yuvj420p 642x358:yuvj420p \
   fi
   run_ff_must "${tag}: hw decode+encode" -T 60 -loglevel error \
     "${DEC_HW[@]}" -i "$in" -c:v h264_nvmpi -b:v 20M "$enc"
-  # The mock surface holds a synthetic pattern, not the JPEG pixels.
-  if is_mock; then mock_skip "${tag} pixel comparison"; continue; fi
   run_ff_must "${tag}: baseline encode" -T 60 -loglevel error \
     -c:v mjpeg_nvmpi -i "$in" -vf "scale=in_range=pc:out_range=pc,format=yuv420p" \
     -c:v h264_nvmpi -b:v 20M "${enc}.base.mkv"
