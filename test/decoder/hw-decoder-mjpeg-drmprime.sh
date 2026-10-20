@@ -52,17 +52,19 @@ plane_psnr() {
   awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^psnr_[yuv]:/) { split($i, a, ":"); k = substr(a[1], 6, 1); v = (a[2] == "inf") ? 99 : a[2]; if (!(k in m) || v + 0 < m[k] + 0) m[k] = v } } END { printf "%s %s %s\n", m["y"], m["u"], m["v"] }' "$log"
 }
 
-# psnr_ok HW BASE LABEL: every plane of the hw path within 3 dB of the
-# encoder-only baseline (same encoder, software-decoded input), so encoder
-# loss cancels and only a wrong plane layout / chroma conversion can fail.
+# psnr_ok HW BASE LABEL: the baseline is the SAME hardware decoder on its
+# software-frame path (same NVJPG+VIC output, same encoder), so every plane of
+# the drm_prime path must stay within 3 dB of it; a wrong plane layout or
+# chroma offset drops chroma far below. Hardware decode itself differs from
+# libjpeg by VIC rounding (~40 dB), hence the absolute floor of 30 dB too.
 psnr_ok() {
   local hw="$1" base="$2" label="$3"
   echo "   ${label}: hw Y/U/V = ${hw} dB, baseline = ${base} dB"
   # shellcheck disable=SC2086
   set -- $hw $base
   awk -v a="$1" -v b="$2" -v c="$3" -v d="$4" -v e="$5" -v f="$6" \
-    'BEGIN { exit !(a + 3 >= d && b + 3 >= e && c + 3 >= f) }' \
-    || { echo "FAIL(${label}): hw path more than 3 dB below the baseline (plane layout wrong?)."; exit 1; }
+    'BEGIN { exit !(a + 3 >= d && b + 3 >= e && c + 3 >= f && a >= 30 && b >= 30 && c >= 30) }' \
+    || { echo "FAIL(${label}): hw path below the 30 dB floor or more than 3 dB under the software-frame baseline (plane layout wrong?)."; exit 1; }
 }
 
 # ── 1. Zero-copy pipeline: MJPEG -> drm_prime -> scale_vic -> h264_nvmpi ─────
@@ -106,7 +108,7 @@ for c in 1280x720:yuvj420p 1000x562:yuvj420p 642x358:yuvj420p \
   run_ff_must "${tag}: hw decode+encode" -T 60 -loglevel error \
     "${DEC_HW[@]}" -i "$in" -c:v h264_nvmpi -b:v 20M "$enc"
   run_ff_must "${tag}: baseline encode" -T 60 -loglevel error \
-    -i "$in" -vf "scale=in_range=pc:out_range=pc,format=yuv420p" \
+    -c:v mjpeg_nvmpi -i "$in" -vf "scale=in_range=pc:out_range=pc,format=yuv420p" \
     -c:v h264_nvmpi -b:v 20M "${enc}.base.mkv"
   psnr_ok "$(plane_psnr "$in" "$enc" "${size%x*}" "${size#*x}")" \
           "$(plane_psnr "$in" "${enc}.base.mkv" "${size%x*}" "${size#*x}")" "$tag"
