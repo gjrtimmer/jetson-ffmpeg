@@ -92,14 +92,17 @@ fi
 # Two Annex B streams back to back: 1280x720 then 642x358 (new SPS at an IDR).
 # libnvmpi starts a new pool generation, frames keep their own geometry, and
 # scale_vic reconfigures to the new hw_frames_ctx. No frame may be lost or
-# carry the old layout.
+# carry the old layout. -autoscale 0: after the encoder opened, ffmpeg's graph
+# reinit would otherwise insert a software "auto_scale" behind scale_vic, which
+# cannot convert DRM_PRIME frames ("Impossible to convert between the formats").
 echo "== 3. resolution change mid-stream (1280x720 -> 642x358) =="
 SCHG="${T}-change.h264"
 gen_h264 "${T}-chg-a.h264" 1280x720 1
 gen_h264 "${T}-chg-b.h264" 642x358 1
 cat "${T}-chg-a.h264" "${T}-chg-b.h264" > "${SCHG}"
 run_ff_must "resolution-change decode" -T 90 -loglevel warning \
-  "${DEC_HW[@]}" -f h264 -i "${SCHG}" -vf scale_vic=640:360 -c:v h264_nvmpi "${T}-change.mkv"
+  "${DEC_HW[@]}" -f h264 -i "${SCHG}" -vf scale_vic=640:360 -autoscale 0 \
+  -c:v h264_nvmpi "${T}-change.mkv"
 if printf '%s\n' "$FF_OUT" | grep -qi "inconsistent DMA-BUF layout"; then
   ff_fail "decoder reported an inconsistent DMA-BUF layout after the resolution change."
 fi
