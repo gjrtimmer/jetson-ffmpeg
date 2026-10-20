@@ -1671,7 +1671,7 @@ index 0000000..51bb3b7
 +};
 diff --git a/libavcodec/nvmpi_enc.c b/libavcodec/nvmpi_enc.c
 new file mode 100644
-index 0000000..a52572a
+index 0000000..62c699d
 --- /dev/null
 +++ b/libavcodec/nvmpi_enc.c
 @@ -0,0 +1,484 @@
@@ -2063,7 +2063,7 @@ index 0000000..a52572a
 +
 +static const AVOption options[] = {
 +	{ "num_capture_buffers", "Number of buffers in the capture context", OFFSET(num_capture_buffers), AV_OPT_TYPE_INT, {.i64 = 10 }, 1, 32, VE, "num_capture_buffers" },
-+	{ "packet_pool_size", "Number of packets that could be buffered in the encoder before user must read it with avcodec_receive_packet()", OFFSET(packet_pool_size), AV_OPT_TYPE_INT, {.i64 = OPT_packet_pool_size_DEFAULT }, OPT_packet_pool_size_MIN, OPT_packet_pool_size_MAX, VE, "packet_pool_size" },
++	{ "packet_pool_size", "Number of packets that could be buffered in the encoder before user must read it with avcodec_receive_packet() (with -nonblocking 1 use >= encoder delay + 1; default 10 is fine)", OFFSET(packet_pool_size), AV_OPT_TYPE_INT, {.i64 = OPT_packet_pool_size_DEFAULT }, OPT_packet_pool_size_MIN, OPT_packet_pool_size_MAX, VE, "packet_pool_size" },
 +	/// Profile,
 +
 +	{ "profile",  "Set the encoding profile", OFFSET(profile), AV_OPT_TYPE_INT,   { .i64 = FF_PROFILE_UNKNOWN },       FF_PROFILE_UNKNOWN, FF_PROFILE_H264_HIGH, VE, "profile" },
@@ -2112,7 +2112,7 @@ index 0000000..a52572a
 +	{ "cabac", "Enable CABAC entropy coding (H.264 only; ~10-15%% better compression than CAVLC)", OFFSET(cabac), AV_OPT_TYPE_BOOL, {.i64 = 0 }, 0, 1, VE, "cabac" },
 +	{ "lossless", "Enable lossless encoding (H.264 only, constant QP 0 + High 4:4:4 Predictive profile)", OFFSET(lossless), AV_OPT_TYPE_BOOL, {.i64 = 0 }, 0, 1, VE, "lossless" },
 +	{ "wait_timeout", "Blocking wait timeout in milliseconds for low-delay mode (0 = default 500ms)", OFFSET(wait_timeout), AV_OPT_TYPE_INT, {.i64 = OPT_wait_timeout_AUTO }, 0, OPT_wait_timeout_MAX, VE, "wait_timeout" },
-+	{ "nonblocking", "Non-blocking encode mode: send_frame returns EAGAIN instead of blocking when no output-plane buffer is available", OFFSET(nonblocking), AV_OPT_TYPE_BOOL, {.i64 = 0 }, 0, 1, VE, "nonblocking" },
++	{ "nonblocking", "Non-blocking encode mode: send_frame returns EAGAIN (back-pressure, no frame is dropped) instead of blocking when no output-plane buffer or packet slot is available; needs packet_pool_size >= encoder delay + 1", OFFSET(nonblocking), AV_OPT_TYPE_BOOL, {.i64 = 0 }, 0, 1, VE, "nonblocking" },
 +	{ NULL }
 +};
 +
@@ -2161,10 +2161,10 @@ index 0000000..a52572a
 +NVMPI_ENC(hevc, "HEVC", AV_CODEC_ID_HEVC);
 diff --git a/libavcodec/nvmpi_enc_ff_internal.h b/libavcodec/nvmpi_enc_ff_internal.h
 new file mode 100644
-index 0000000..e6bca98
+index 0000000..469273e
 --- /dev/null
 +++ b/libavcodec/nvmpi_enc_ff_internal.h
-@@ -0,0 +1,65 @@
+@@ -0,0 +1,66 @@
 +#pragma once
 +
 +/*
@@ -2204,6 +2204,7 @@ index 0000000..e6bca98
 +	int wait_timeout;           //blocking-wait ceiling in ms (0 = default 500ms)
 +	int nonblocking;            //non-blocking mode: put_frame returns EAGAIN instead of blocking
 +	int encoder_flushing;       //set after EOS was sent to libnvmpi
++	int send_eagain;            //last send_frame returned EAGAIN (back-pressure): receive must wait
 +	int dmabuf_input;           //set when pix_fmt is DRM_PRIME (mmap+CPU-read path)
 +	int64_t last_bitrate;       //track last-set bitrate for dynamic change detection
 +	AVFrame *frame; //tmp frame
@@ -2513,10 +2514,10 @@ index 0000000..7814ed2
 +};
 diff --git a/libavcodec/nvmpi_enc_runtime.c b/libavcodec/nvmpi_enc_runtime.c
 new file mode 100644
-index 0000000..9b32545
+index 0000000..26828fe
 --- /dev/null
 +++ b/libavcodec/nvmpi_enc_runtime.c
-@@ -0,0 +1,494 @@
+@@ -0,0 +1,506 @@
 +/*
 + * nvmpi_enc_runtime.c — FFmpeg encoder wrapper for libnvmpi (layer 2 of
 + * jetson-ffmpeg, the FFmpeg integration layer): the encode hot path
@@ -2921,9 +2922,16 @@ index 0000000..9b32545
 +	int res;
 +
 +	/* During flushing, use blocking get_packet to avoid CPU spin while
-+	 * waiting for the DQ thread to deliver final encoded packets. */
++	 * waiting for the DQ thread to deliver final encoded packets.
++	 * Also block when the last send_frame was refused with EAGAIN
++	 * (libnvmpi back-pressure, jetson-nvmpi#125): the packet pool is full of
++	 * in-flight AUs, so a packet is guaranteed to arrive. With a tiny
++	 * packet_pool_size a non-blocking get_packet could return EAGAIN here
++	 * too, leaving FFmpeg with EAGAIN on both send and receive (stall).
++	 * Bounded by libnvmpi's wait_timeout, so it cannot hang. */
 +	res = nvmpi_encoder_get_packet(nvmpi_context->ctx, &nPkt,
-+		(avctx->flags & AV_CODEC_FLAG_LOW_DELAY) || nvmpi_context->encoder_flushing);
++		(avctx->flags & AV_CODEC_FLAG_LOW_DELAY) || nvmpi_context->encoder_flushing
++		|| nvmpi_context->send_eagain);
 +	if(res<0)
 +	{
 +		/* -2 = actual EOS from the V4L2 DQ thread (all packets drained).
@@ -2980,11 +2988,15 @@ index 0000000..9b32545
 +		}
 +	}
 +
++	/* Cleared every call; set below only if this call's send is refused. */
++	nvmpi_context->send_eagain = 0;
 +	if(needSendFrame)
 +	{
 +		res = ff_nvmpi_send_frame(avctx, frame);
 +		if (res < 0)
 +		{
++			/* Back-pressure: frame stays pending; receive_packet must wait. */
++			if(res == AVERROR(EAGAIN)) nvmpi_context->send_eagain = 1;
 +			if(res != AVERROR_EOF && res != AVERROR(EAGAIN)) return res;
 +		}
 +		else av_frame_unref(frame);
@@ -3010,6 +3022,7 @@ index 0000000..9b32545
 +
 +    /* Clear the FFmpeg-side flushing flag so send_frame accepts frames. */
 +    nvmpi_context->encoder_flushing = 0;
++    nvmpi_context->send_eagain = 0;
 +}
 diff --git a/libavfilter/Makefile b/libavfilter/Makefile
 index 91487af..61818b1 100644

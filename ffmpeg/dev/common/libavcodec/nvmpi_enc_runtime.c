@@ -402,9 +402,16 @@ static int ff_nvmpi_receive_packet(AVCodecContext *avctx, AVPacket *pkt)
 	int res;
 
 	/* During flushing, use blocking get_packet to avoid CPU spin while
-	 * waiting for the DQ thread to deliver final encoded packets. */
+	 * waiting for the DQ thread to deliver final encoded packets.
+	 * Also block when the last send_frame was refused with EAGAIN
+	 * (libnvmpi back-pressure, jetson-nvmpi#125): the packet pool is full of
+	 * in-flight AUs, so a packet is guaranteed to arrive. With a tiny
+	 * packet_pool_size a non-blocking get_packet could return EAGAIN here
+	 * too, leaving FFmpeg with EAGAIN on both send and receive (stall).
+	 * Bounded by libnvmpi's wait_timeout, so it cannot hang. */
 	res = nvmpi_encoder_get_packet(nvmpi_context->ctx, &nPkt,
-		(avctx->flags & AV_CODEC_FLAG_LOW_DELAY) || nvmpi_context->encoder_flushing);
+		(avctx->flags & AV_CODEC_FLAG_LOW_DELAY) || nvmpi_context->encoder_flushing
+		|| nvmpi_context->send_eagain);
 	if(res<0)
 	{
 		/* -2 = actual EOS from the V4L2 DQ thread (all packets drained).
@@ -461,11 +468,15 @@ int ff_nvmpi_receive_packet_async(AVCodecContext *avctx, AVPacket *pkt)
 		}
 	}
 
+	/* Cleared every call; set below only if this call's send is refused. */
+	nvmpi_context->send_eagain = 0;
 	if(needSendFrame)
 	{
 		res = ff_nvmpi_send_frame(avctx, frame);
 		if (res < 0)
 		{
+			/* Back-pressure: frame stays pending; receive_packet must wait. */
+			if(res == AVERROR(EAGAIN)) nvmpi_context->send_eagain = 1;
 			if(res != AVERROR_EOF && res != AVERROR(EAGAIN)) return res;
 		}
 		else av_frame_unref(frame);
@@ -491,4 +502,5 @@ void nvmpi_flush_encoder(AVCodecContext *avctx)
 
     /* Clear the FFmpeg-side flushing flag so send_frame accepts frames. */
     nvmpi_context->encoder_flushing = 0;
+    nvmpi_context->send_eagain = 0;
 }

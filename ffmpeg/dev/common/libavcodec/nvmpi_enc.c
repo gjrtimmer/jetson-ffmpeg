@@ -386,7 +386,7 @@ static const FFCodecDefault defaults[] = {
 
 static const AVOption options[] = {
 	{ "num_capture_buffers", "Number of buffers in the capture context", OFFSET(num_capture_buffers), AV_OPT_TYPE_INT, {.i64 = 10 }, 1, 32, VE, "num_capture_buffers" },
-	{ "packet_pool_size", "Number of packets that could be buffered in the encoder before user must read it with avcodec_receive_packet()", OFFSET(packet_pool_size), AV_OPT_TYPE_INT, {.i64 = OPT_packet_pool_size_DEFAULT }, OPT_packet_pool_size_MIN, OPT_packet_pool_size_MAX, VE, "packet_pool_size" },
+	{ "packet_pool_size", "Number of packets that could be buffered in the encoder before user must read it with avcodec_receive_packet() (with -nonblocking 1 use >= encoder delay + 1; default 10 is fine)", OFFSET(packet_pool_size), AV_OPT_TYPE_INT, {.i64 = OPT_packet_pool_size_DEFAULT }, OPT_packet_pool_size_MIN, OPT_packet_pool_size_MAX, VE, "packet_pool_size" },
 	/// Profile,
 
 	{ "profile",  "Set the encoding profile", OFFSET(profile), AV_OPT_TYPE_INT,   { .i64 = FF_PROFILE_UNKNOWN },       FF_PROFILE_UNKNOWN, FF_PROFILE_H264_HIGH, VE, "profile" },
@@ -435,7 +435,7 @@ static const AVOption options[] = {
 	{ "cabac", "Enable CABAC entropy coding (H.264 only; ~10-15%% better compression than CAVLC)", OFFSET(cabac), AV_OPT_TYPE_BOOL, {.i64 = 0 }, 0, 1, VE, "cabac" },
 	{ "lossless", "Enable lossless encoding (H.264 only, constant QP 0 + High 4:4:4 Predictive profile)", OFFSET(lossless), AV_OPT_TYPE_BOOL, {.i64 = 0 }, 0, 1, VE, "lossless" },
 	{ "wait_timeout", "Blocking wait timeout in milliseconds for low-delay mode (0 = default 500ms)", OFFSET(wait_timeout), AV_OPT_TYPE_INT, {.i64 = OPT_wait_timeout_AUTO }, 0, OPT_wait_timeout_MAX, VE, "wait_timeout" },
-	{ "nonblocking", "Non-blocking encode mode: send_frame returns EAGAIN instead of blocking when no output-plane buffer is available", OFFSET(nonblocking), AV_OPT_TYPE_BOOL, {.i64 = 0 }, 0, 1, VE, "nonblocking" },
+	{ "nonblocking", "Non-blocking encode mode: send_frame returns EAGAIN (back-pressure, no frame is dropped) instead of blocking when no output-plane buffer or packet slot is available; needs packet_pool_size >= encoder delay + 1", OFFSET(nonblocking), AV_OPT_TYPE_BOOL, {.i64 = 0 }, 0, 1, VE, "nonblocking" },
 	{ NULL }
 };
 
