@@ -8,6 +8,9 @@
 #   1. Every mode produces exactly FRAMES packets (no drops, no hangs):
 #      blocking/default, blocking/low_delay, nonblocking/default,
 #      nonblocking/low_delay for H.264; blocking/low_delay + nonblocking for HEVC.
+#      Back-pressure (jetson-nvmpi#125, jetson-ffmpeg#125): nonblocking never
+#      drops an AU, also with a tiny -packet_pool_size (3), where send and
+#      receive can both see EAGAIN (receive must then wait; no stall).
 #   2. Custom -wait_timeout with low_delay works.
 #   3. Early termination (-t 1) exits cleanly with low_delay and with
 #      -nonblocking 1 (no hang, >0 packets).
@@ -69,6 +72,10 @@ encode_check h264_nvmpi "-flags low_delay" "" "h264 blocking/low_delay"
 echo "== h264: nonblocking x {default, low_delay} =="
 encode_check h264_nvmpi "-nonblocking 1" "" "h264 nonblocking/default"
 encode_check h264_nvmpi "-nonblocking 1 -flags low_delay" "" "h264 nonblocking/low_delay"
+
+echo "== h264: nonblocking + small packet_pool_size (back-pressure, exact count) =="
+encode_check h264_nvmpi "-nonblocking 1" "-packet_pool_size 3" "h264 nonblocking/pool=3"
+encode_check h264_nvmpi "-nonblocking 1 -flags low_delay" "-packet_pool_size 3" "h264 nonblocking/low_delay/pool=3"
 
 echo "== hevc: blocking/low_delay, nonblocking =="
 if is_mock; then
