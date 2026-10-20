@@ -627,14 +627,6 @@ test:hw-full:ffmpeg-8.1:                         # path B
         matrix:
           - FFVER: "8.1"
 
-test:hw-fast:ffmpeg-9.0:                         # path B
-  extends: .hw-fast
-  needs:
-    - job: "ffmpeg:jp6"
-      parallel:
-        matrix:
-          - FFVER: "9.0"
-
 test:hw-full:ffmpeg-9.0:                         # path B
   extends: .hw-full
   needs:

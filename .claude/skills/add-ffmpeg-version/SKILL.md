@@ -109,7 +109,9 @@ Use these names exactly as they exist today (verify with `grep -n "ffmpeg-9.0"`)
   `test:hw-full:ffmpeg-<ver>` (extends `.hw-full-twin`).
 - Full-tier carrier: 7.1 and 9.0 run full in every MR (one per wrapper path).
   If `<ver>` shares a path with the current carrier and is newer, move the
-  carrier role to it: `test:hw-full:ffmpeg-<ver>` extends `.hw-full`, and the old
+  carrier role to it: `test:hw-full:ffmpeg-<ver>` extends `.hw-full` and the
+  carrier gets NO `test:hw-fast:ffmpeg-<ver>` job (`.hw-full` already runs in
+  tiered MRs; a fast job would run the same suites twice, see 7.1), and the old
   carrier becomes a `test:hw-fast:ffmpeg-<old>` job plus a
   `test:hw-full:ffmpeg-<old>` twin (`.hw-full-twin`). A new wrapper path adds a
   third carrier instead. Update the stage comments and the `HW_TIER` variable
