@@ -1,5 +1,5 @@
 diff --git a/configure b/configure
-index 4722bb5..4f523af 100755
+index 4722bb5..fa95a60 100755
 --- a/configure
 +++ b/configure
 @@ -364,6 +364,7 @@ External library support:
@@ -71,15 +71,16 @@ index 4722bb5..4f523af 100755
  vp8_mediacodec_decoder_deps="mediacodec"
  vp8_mediacodec_encoder_deps="mediacodec"
  vp8_qsv_decoder_select="qsvdec"
-@@ -3503,6 +3516,7 @@ vp8_v4l2m2m_decoder_deps="v4l2_m2m vp8_v4l2_m2m"
+@@ -3503,6 +3516,8 @@ vp8_v4l2m2m_decoder_deps="v4l2_m2m vp8_v4l2_m2m"
  vp8_v4l2m2m_encoder_deps="v4l2_m2m vp8_v4l2_m2m"
  vp9_amf_decoder_deps="amf"
  vp9_cuvid_decoder_deps="cuvid"
 +vp9_nvmpi_decoder_deps="nvmpi"
++av1_nvmpi_decoder_deps="nvmpi"
  vp9_mediacodec_decoder_deps="mediacodec"
  vp9_mediacodec_encoder_deps="mediacodec"
  vp9_qsv_decoder_select="qsvdec"
-@@ -4066,6 +4080,7 @@ libvmaf_cuda_filter_deps="libvmaf libvmaf_cuda ffnvcodec"
+@@ -4066,6 +4081,7 @@ libvmaf_cuda_filter_deps="libvmaf libvmaf_cuda ffnvcodec"
  zmq_filter_deps="libzmq"
  zoompan_filter_deps="swscale"
  zscale_filter_deps="libzimg const_nan"
@@ -87,7 +88,7 @@ index 4722bb5..4f523af 100755
  scale_vaapi_filter_deps="vaapi"
  scale_vt_filter_deps="videotoolbox VTPixelTransferSessionCreate"
  scale_vulkan_filter_deps="vulkan spirv_compiler"
-@@ -7202,6 +7217,7 @@ enabled libvvenc          && require_pkg_config libvvenc "libvvenc >= 1.6.1" "vv
+@@ -7202,6 +7218,7 @@ enabled libvvenc          && require_pkg_config libvvenc "libvvenc >= 1.6.1" "vv
  enabled libwebp           && {
      enabled libwebp_encoder      && require_pkg_config libwebp "libwebp >= 0.2.0" webp/encode.h WebPGetEncoderVersion
      enabled libwebp_anim_encoder && check_pkg_config libwebp_anim_encoder "libwebpmux >= 0.4.0" webp/mux.h WebPAnimEncoderOptionsInit; }
@@ -96,7 +97,7 @@ index 4722bb5..4f523af 100755
                               require_cpp_condition libx264 x264.h "X264_BUILD >= 155" && {
                               [ "$toolchain" != "msvc" ] ||
 diff --git a/libavcodec/Makefile b/libavcodec/Makefile
-index 5a4d4d3..67e31ee 100644
+index 5a4d4d3..b81cc76 100644
 --- a/libavcodec/Makefile
 +++ b/libavcodec/Makefile
 @@ -431,6 +431,8 @@ OBJS-$(CONFIG_H264_MEDIACODEC_DECODER) += mediacodecdec.o
@@ -149,16 +150,17 @@ index 5a4d4d3..67e31ee 100644
  OBJS-$(CONFIG_VP8_CUVID_DECODER)       += cuviddec.o
  OBJS-$(CONFIG_VP8_MEDIACODEC_DECODER)  += mediacodecdec.o
  OBJS-$(CONFIG_VP8_MEDIACODEC_ENCODER)  += mediacodecenc.o
-@@ -812,6 +821,7 @@ OBJS-$(CONFIG_VP9_DECODER)             += vp9.o vp9data.o vp9dsp.o vp9lpf.o vp9r
+@@ -812,6 +821,8 @@ OBJS-$(CONFIG_VP9_DECODER)             += vp9.o vp9data.o vp9dsp.o vp9lpf.o vp9r
                                            vp9block.o vp9prob.o vp9mvs.o vpx_rac.o \
                                            vp9dsp_8bpp.o vp9dsp_10bpp.o vp9dsp_12bpp.o
  OBJS-$(CONFIG_VP9_AMF_DECODER)         += amfdec.o
 +OBJS-$(CONFIG_VP9_NVMPI_DECODER)      += nvmpi_dec.o
++OBJS-$(CONFIG_AV1_NVMPI_DECODER)      += nvmpi_dec.o
  OBJS-$(CONFIG_VP9_CUVID_DECODER)       += cuviddec.o
  OBJS-$(CONFIG_VP9_MEDIACODEC_DECODER)  += mediacodecdec.o
  OBJS-$(CONFIG_VP9_MEDIACODEC_ENCODER)  += mediacodecenc.o
 diff --git a/libavcodec/allcodecs.c b/libavcodec/allcodecs.c
-index f5ec2e0..61cd793 100644
+index f5ec2e0..2f2720c 100644
 --- a/libavcodec/allcodecs.c
 +++ b/libavcodec/allcodecs.c
 @@ -150,6 +150,8 @@ extern const FFCodec ff_h263p_encoder;
@@ -199,7 +201,7 @@ index f5ec2e0..61cd793 100644
  extern const FFCodec ff_mpeg4_v4l2m2m_decoder;
  extern const FFCodec ff_mpeg4_mmal_decoder;
  extern const FFCodec ff_mpegvideo_decoder;
-@@ -380,9 +388,11 @@ extern const FFCodec ff_vp6a_decoder;
+@@ -380,9 +388,12 @@ extern const FFCodec ff_vp6a_decoder;
  extern const FFCodec ff_vp6f_decoder;
  extern const FFCodec ff_vp7_decoder;
  extern const FFCodec ff_vp8_decoder;
@@ -208,15 +210,16 @@ index f5ec2e0..61cd793 100644
  extern const FFCodec ff_vp8_v4l2m2m_decoder;
  extern const FFCodec ff_vp9_decoder;
 +extern const FFCodec ff_vp9_nvmpi_decoder;
++extern const FFCodec ff_av1_nvmpi_decoder;
  extern const FFCodec ff_vp9_rkmpp_decoder;
  extern const FFCodec ff_vp9_v4l2m2m_decoder;
  extern const FFCodec ff_vqa_decoder;
 diff --git a/libavcodec/dynlink_nvmpi.h b/libavcodec/dynlink_nvmpi.h
 new file mode 100644
-index 0000000..5fc2080
+index 0000000..9d08421
 --- /dev/null
 +++ b/libavcodec/dynlink_nvmpi.h
-@@ -0,0 +1,399 @@
+@@ -0,0 +1,401 @@
 +/*
 + * dynlink_nvmpi.h -- Runtime lazy-loading of libnvmpi via dlopen/dlsym.
 + *
@@ -284,6 +287,8 @@ index 0000000..5fc2080
 +    NV_VIDEO_CodingVP9,
 +    NV_VIDEO_CodingHEVC,
 +    NV_VIDEO_CodingMJPEG,
++    /* AV1 decode (libnvmpi >= 4.2.0, JetPack 6 only); appended last to keep the ABI. */
++    NV_VIDEO_CodingAV1,
 +} nvCodingType;
 +
 +/* Simple width/height pair (decoder resize target). */
@@ -618,10 +623,10 @@ index 0000000..5fc2080
 +#endif /* DYNLINK_NVMPI_H */
 diff --git a/libavcodec/nvmpi_dec.c b/libavcodec/nvmpi_dec.c
 new file mode 100644
-index 0000000..bfa7b11
+index 0000000..aeadda6
 --- /dev/null
 +++ b/libavcodec/nvmpi_dec.c
-@@ -0,0 +1,608 @@
+@@ -0,0 +1,613 @@
 +/*
 + * nvmpi_dec.c — FFmpeg decoder wrapper for libnvmpi (layer 2 of
 + * jetson-ffmpeg, the FFmpeg integration layer).
@@ -739,6 +744,9 @@ index 0000000..bfa7b11
 +		case AV_CODEC_ID_MPEG4:		return NV_VIDEO_CodingMPEG4;
 +		case AV_CODEC_ID_MPEG2VIDEO:    return NV_VIDEO_CodingMPEG2;
 +		case AV_CODEC_ID_MJPEG:         return NV_VIDEO_CodingMJPEG;
++		//AV1 exists in every supported libavcodec (6.0-9.0), no version guard needed.
++		//On JetPack 5 libnvmpi cannot create the decoder (no V4L2 AV1 format), so init fails cleanly.
++		case AV_CODEC_ID_AV1:           return NV_VIDEO_CodingAV1;
 +		default:                        return NV_VIDEO_CodingUnused;
 +	}
 +};
@@ -1221,7 +1229,7 @@ index 0000000..bfa7b11
 +	};
 +
 +
-+//Instantiate the six nvmpi decoders. Each expansion must have a matching
++//Instantiate the nvmpi decoders. Each expansion must have a matching
 +//extern in allcodecs.c and a CONFIG_*_NVMPI_DECODER Makefile/configure
 +//entry (added by ffpatch.sh / the version overlays).
 +NVMPI_DEC(h264,  AV_CODEC_ID_H264,"h264_mp4toannexb");
@@ -1230,6 +1238,8 @@ index 0000000..bfa7b11
 +NVMPI_DEC(mpeg4, AV_CODEC_ID_MPEG4,NULL);
 +NVMPI_DEC(vp9,  AV_CODEC_ID_VP9,NULL);
 +NVMPI_DEC(vp8, AV_CODEC_ID_VP8,NULL);
++//No bsf: libnvmpi takes one low-overhead-format temporal unit per packet as is.
++NVMPI_DEC(av1, AV_CODEC_ID_AV1,NULL);
 diff --git a/libavcodec/nvmpi_dec_drm.h b/libavcodec/nvmpi_dec_drm.h
 new file mode 100644
 index 0000000..44bc06b

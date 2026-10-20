@@ -115,6 +115,9 @@ static nvCodingType nvmpi_get_codingtype(AVCodecContext *avctx)
 		case AV_CODEC_ID_MPEG4:		return NV_VIDEO_CodingMPEG4;
 		case AV_CODEC_ID_MPEG2VIDEO:    return NV_VIDEO_CodingMPEG2;
 		case AV_CODEC_ID_MJPEG:         return NV_VIDEO_CodingMJPEG;
+		//AV1 exists in every supported libavcodec (6.0-9.0), no version guard needed.
+		//On JetPack 5 libnvmpi cannot create the decoder (no V4L2 AV1 format), so init fails cleanly.
+		case AV_CODEC_ID_AV1:           return NV_VIDEO_CodingAV1;
 		default:                        return NV_VIDEO_CodingUnused;
 	}
 };
@@ -597,7 +600,7 @@ static const AVOption options[] = {
 	};
 
 
-//Instantiate the six nvmpi decoders. Each expansion must have a matching
+//Instantiate the nvmpi decoders. Each expansion must have a matching
 //extern in allcodecs.c and a CONFIG_*_NVMPI_DECODER Makefile/configure
 //entry (added by ffpatch.sh / the version overlays).
 NVMPI_DEC(h264,  AV_CODEC_ID_H264,"h264_mp4toannexb");
@@ -606,3 +609,5 @@ NVMPI_DEC(mpeg2, AV_CODEC_ID_MPEG2VIDEO,NULL);
 NVMPI_DEC(mpeg4, AV_CODEC_ID_MPEG4,NULL);
 NVMPI_DEC(vp9,  AV_CODEC_ID_VP9,NULL);
 NVMPI_DEC(vp8, AV_CODEC_ID_VP8,NULL);
+//No bsf: libnvmpi takes one low-overhead-format temporal unit per packet as is.
+NVMPI_DEC(av1, AV_CODEC_ID_AV1,NULL);

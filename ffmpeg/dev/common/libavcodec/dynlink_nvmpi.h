@@ -65,6 +65,8 @@ typedef enum {
     NV_VIDEO_CodingVP9,
     NV_VIDEO_CodingHEVC,
     NV_VIDEO_CodingMJPEG,
+    /* AV1 decode (libnvmpi >= 4.2.0, JetPack 6 only); appended last to keep the ABI. */
+    NV_VIDEO_CodingAV1,
 } nvCodingType;
 
 /* Simple width/height pair (decoder resize target). */

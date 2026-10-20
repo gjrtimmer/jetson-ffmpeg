@@ -169,6 +169,13 @@ if ! grep -q 'vp9_nvmpi_decoder_deps' "$BKP_FILE_CONFIGURE"; then
 	if cmp "$BKP_FILE_CONFIGURE" "$BKP_FILE_CONFIGURE.1"; then return 1; fi;
 fi
 
+#add nvmpi av1 deps. insert after vp9_nvmpi_decoder_deps (added above)
+if ! grep -q 'av1_nvmpi_decoder_deps' "$BKP_FILE_CONFIGURE"; then
+	cp "$BKP_FILE_CONFIGURE" "$BKP_FILE_CONFIGURE.1"
+	sed -i '/vp9_nvmpi_decoder_deps="nvmpi"/a av1_nvmpi_decoder_deps="nvmpi"' "$BKP_FILE_CONFIGURE"
+	if cmp "$BKP_FILE_CONFIGURE" "$BKP_FILE_CONFIGURE.1"; then return 1; fi;
+fi
+
 #add nvmpi mjpeg deps. insert after mjpeg_cuvid_decoder_deps="cuvid"
 if ! grep -q 'mjpeg_nvmpi_decoder_deps' "$BKP_FILE_CONFIGURE"; then
 	cp "$BKP_FILE_CONFIGURE" "$BKP_FILE_CONFIGURE.1"
@@ -241,6 +248,13 @@ if ! grep -q 'CONFIG_VP9_NVMPI_DECODER' "$BKP_FILE_LIBAVCODEC_MAKEFILE"; then
 	if cmp "$BKP_FILE_LIBAVCODEC_MAKEFILE" "$BKP_FILE_LIBAVCODEC_MAKEFILE.1"; then return 1; fi;
 fi
 
+#add nvmpi av1 decoder
+if ! grep -q 'CONFIG_AV1_NVMPI_DECODER' "$BKP_FILE_LIBAVCODEC_MAKEFILE"; then
+	cp "$BKP_FILE_LIBAVCODEC_MAKEFILE" "$BKP_FILE_LIBAVCODEC_MAKEFILE.1"
+	sed -i '/OBJS-\$(CONFIG_VP9_NVMPI_DECODER)/a OBJS-\$(CONFIG_AV1_NVMPI_DECODER)      += nvmpi_dec.o' "$BKP_FILE_LIBAVCODEC_MAKEFILE"
+	if cmp "$BKP_FILE_LIBAVCODEC_MAKEFILE" "$BKP_FILE_LIBAVCODEC_MAKEFILE.1"; then return 1; fi;
+fi
+
 #add nvmpi mjpeg decoder
 if ! grep -q 'CONFIG_MJPEG_NVMPI_DECODER' "$BKP_FILE_LIBAVCODEC_MAKEFILE"; then
 	cp "$BKP_FILE_LIBAVCODEC_MAKEFILE" "$BKP_FILE_LIBAVCODEC_MAKEFILE.1"
@@ -303,6 +317,13 @@ fi
 if ! grep -q 'ff_vp9_nvmpi_decoder' "$BKP_FILE_LIBAVCODEC_ALLCODECSC"; then
 	cp "$BKP_FILE_LIBAVCODEC_ALLCODECSC" "$BKP_FILE_LIBAVCODEC_ALLCODECSC.1"
 	sed -i "/$FF_CODEC_INTERFACE ff_vp9_decoder;/a $FF_CODEC_INTERFACE ff_vp9_nvmpi_decoder;" "$BKP_FILE_LIBAVCODEC_ALLCODECSC"
+	if cmp "$BKP_FILE_LIBAVCODEC_ALLCODECSC" "$BKP_FILE_LIBAVCODEC_ALLCODECSC.1"; then return 1; fi;
+fi
+
+#add nvmpi av1 decoder
+if ! grep -q 'ff_av1_nvmpi_decoder' "$BKP_FILE_LIBAVCODEC_ALLCODECSC"; then
+	cp "$BKP_FILE_LIBAVCODEC_ALLCODECSC" "$BKP_FILE_LIBAVCODEC_ALLCODECSC.1"
+	sed -i "/$FF_CODEC_INTERFACE ff_vp9_nvmpi_decoder;/a $FF_CODEC_INTERFACE ff_av1_nvmpi_decoder;" "$BKP_FILE_LIBAVCODEC_ALLCODECSC"
 	if cmp "$BKP_FILE_LIBAVCODEC_ALLCODECSC" "$BKP_FILE_LIBAVCODEC_ALLCODECSC.1"; then return 1; fi;
 fi
 
