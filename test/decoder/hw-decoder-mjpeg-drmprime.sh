@@ -39,9 +39,9 @@ DEC_HW=(-hwaccel nvmpi -c:v mjpeg_nvmpi)
 
 frames_of() { packet_count "$1"; }   # demuxed packet count (0 on error)
 
-# plane_psnr REF DEC W H: min of psnr_y/u/v between two files, both software
-# decoded and treated as full range at WxH, so only the hw path (padded surface
-# offsets, chroma conversion) can make them differ.
+# plane_psnr REF DEC W H: prints "Y U V" (minimum PSNR per plane over the
+# compared frames) between two files, both software decoded and treated as full
+# range at WxH. Used to compare the hw path against an encoder-only baseline.
 plane_psnr() {
   local ref="$1" dec="$2" w="$3" h="$4" log="${T}-psnr.log"
   run_ff_must "psnr: compare" -T 60 -loglevel error \
@@ -49,7 +49,20 @@ plane_psnr() {
     -lavfi "[0:v]scale=${w}:${h}:in_range=pc:out_range=pc,format=yuv420p[a];[1:v]scale=${w}:${h}:in_range=pc:out_range=pc,format=yuv420p[b];[a][b]psnr=stats_file=${log}" \
     -f null -
   # stats_file lines: n:1 mse_avg:.. psnr_y:48.3 psnr_u:.. psnr_v:..
-  awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^psnr_[yuv]:/) { split($i, a, ":"); v = (a[2] == "inf") ? 99 : a[2]; if (min == "" || v + 0 < min + 0) min = v } } END { print min }' "$log"
+  awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^psnr_[yuv]:/) { split($i, a, ":"); k = substr(a[1], 6, 1); v = (a[2] == "inf") ? 99 : a[2]; if (!(k in m) || v + 0 < m[k] + 0) m[k] = v } } END { printf "%s %s %s\n", m["y"], m["u"], m["v"] }' "$log"
+}
+
+# psnr_ok HW BASE LABEL: every plane of the hw path within 3 dB of the
+# encoder-only baseline (same encoder, software-decoded input), so encoder
+# loss cancels and only a wrong plane layout / chroma conversion can fail.
+psnr_ok() {
+  local hw="$1" base="$2" label="$3"
+  echo "   ${label}: hw Y/U/V = ${hw} dB, baseline = ${base} dB"
+  # shellcheck disable=SC2086
+  set -- $hw $base
+  awk -v a="$1" -v b="$2" -v c="$3" -v d="$4" -v e="$5" -v f="$6" \
+    'BEGIN { exit !(a + 3 >= d && b + 3 >= e && c + 3 >= f) }' \
+    || { echo "FAIL(${label}): hw path more than 3 dB below the baseline (plane layout wrong?)."; exit 1; }
 }
 
 # ── 1. Zero-copy pipeline: MJPEG -> drm_prime -> scale_vic -> h264_nvmpi ─────
@@ -85,11 +98,11 @@ for c in 1280x720:yuvj420p 1000x562:yuvj420p 642x358:yuvj420p \
   gen-sample-mjpeg-fmt "$in" "$size" "$pf" 1
   run_ff_must "${tag}: hw decode+encode" -T 60 -loglevel error \
     "${DEC_HW[@]}" -i "$in" -c:v h264_nvmpi -b:v 20M "$enc"
-  p=$(plane_psnr "$in" "$enc" "${size%x*}" "${size#*x}")
-  if [ -z "$p" ] || [ "${p%%.*}" -lt 25 ]; then
-    echo "FAIL(${tag}): min plane PSNR ${p:-?} dB < 25 dB (plane layout wrong?)."; exit 1
-  fi
-  echo "   ${tag}: min plane PSNR ${p} dB"
+  run_ff_must "${tag}: baseline encode" -T 60 -loglevel error \
+    -i "$in" -vf "scale=in_range=pc:out_range=pc,format=yuv420p" \
+    -c:v h264_nvmpi -b:v 20M "${enc}.base.mkv"
+  psnr_ok "$(plane_psnr "$in" "$enc" "${size%x*}" "${size#*x}")" \
+          "$(plane_psnr "$in" "${enc}.base.mkv" "${size%x*}" "${size#*x}")" "$tag"
 done
 
 # ── 3. Odd sizes (decode only; H.264 cannot encode them) ─────────────────────
