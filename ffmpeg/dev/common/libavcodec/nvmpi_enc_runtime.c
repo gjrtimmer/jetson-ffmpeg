@@ -288,7 +288,7 @@ static int ff_nvmpi_send_frame(AVCodecContext *avctx,const AVFrame *frame)
 			AVDRMFrameDescriptor *desc = (AVDRMFrameDescriptor *)frame->data[0];
 			int drm_fd;
 			int pitch;
-			size_t y_size, uv_size, total_size;
+			size_t y_size, uv_size, uv_off, total_size;
 			void *map;
 			struct dma_buf_sync sync;
 
@@ -301,10 +301,29 @@ static int ff_nvmpi_send_frame(AVCodecContext *avctx,const AVFrame *frame)
 			drm_fd = desc->objects[0].fd;
 			pitch  = desc->layers[0].planes[0].pitch;
 
-			/* NV12 layout: Y plane (pitch * height) + UV plane (pitch * height/2) */
+			/* NV12 layout: Y plane (pitch * height) + UV plane (pitch * height/2).
+			 * The UV plane starts at the descriptor's real chroma offset:
+			 * decoders whose surfaces pad the plane height (JPEG decoder,
+			 * odd/unaligned sizes) report an offset above pitch * height.
+			 * Video-decoder frames report exactly pitch * height, so their
+			 * behaviour is unchanged. */
 			y_size  = (size_t)pitch * frame->height;
 			uv_size = (size_t)pitch * frame->height / 2;
-			total_size = y_size + uv_size;
+			uv_off  = y_size;
+			if (desc->nb_layers > 0 && desc->layers[0].nb_planes > 1 &&
+			    desc->layers[0].planes[1].offset > 0)
+				uv_off = (size_t)desc->layers[0].planes[1].offset;
+			/* Bounds: the chroma plane must start after luma and the whole
+			 * mapping must fit the dma-buf, else mmap'd reads would run past
+			 * it (SIGBUS) on a corrupt/hostile descriptor. */
+			if (uv_off < y_size || uv_off > SIZE_MAX - uv_size ||
+			    (desc->objects[0].size &&
+			     uv_off + uv_size > desc->objects[0].size)) {
+				av_log(avctx, AV_LOG_ERROR,
+				       "nvmpi: DRM_PRIME frame has an inconsistent NV12 layout\n");
+				return AVERROR(EINVAL);
+			}
+			total_size = uv_off + uv_size;
 
 			/* DMA-BUF sync: ensure VIC/decoder writes are visible to CPU */
 			memset(&sync, 0, sizeof(sync));
@@ -324,7 +343,7 @@ static int ff_nvmpi_send_frame(AVCodecContext *avctx,const AVFrame *frame)
 			 * payload[0] = Y, payload[1] = interleaved UV.
 			 * linesize = pitch (may differ from width due to alignment). */
 			_nvframe.payload[0] = map;
-			_nvframe.payload[1] = (uint8_t *)map + y_size;
+			_nvframe.payload[1] = (uint8_t *)map + uv_off;
 			_nvframe.payload[2] = NULL;
 			_nvframe.payload_size[0] = y_size;
 			_nvframe.payload_size[1] = uv_size;

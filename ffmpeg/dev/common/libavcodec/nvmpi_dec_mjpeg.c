@@ -9,7 +9,9 @@
  *   - Synchronous per-frame decode, with self-describing resolution that
  *     may require a re-decode when the bitstream's dimensions differ from
  *     avctx's current dimensions
- *   - Always YUV420P output with JPEG (full) color range — no NV12/P010LE
+ *   - YUV420P output with JPEG (full) color range by default (software
+ *     frames); opt-in DRM_PRIME zero-copy output when libnvmpi >= 4.1.0
+ *     (see nvmpi_dec_mjpeg_fd.h) — no P010LE
  *
  * This file is NOT built in this repository: it is patched into a vanilla
  * FFmpeg source tree (libavcodec/) by scripts/ffpatch.sh or the generated
@@ -47,6 +49,9 @@
 #include "version.h"
 
 /*
+ * pix_fmts is a static table, so DRM_PRIME is listed after YUV420P (the
+ * default) unconditionally; whether it is really usable (libnvmpi >= 4.1.0)
+ * is decided at runtime in .init, which falls back to YUV420P otherwise.
  * libavcodec 63 (FFmpeg 9.0+): pix_fmts moved from the public AVCodec (.p)
  * to a direct field on FFCodec in codec_internal.h. Pre-63 uses .p.pix_fmts;
  * 63+ uses .pix_fmts (or the CODEC_PIXFMTS() macro).
@@ -54,11 +59,11 @@
 #if LIBAVCODEC_VERSION_MAJOR >= 63
 /* libavcodec 63 (FFmpeg 9.0+): pix_fmts on FFCodec directly */
 #define NVMPI_MJPEG_PIXFMTS \
-	.pix_fmts = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NONE}
+	.pix_fmts = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_DRM_PRIME, AV_PIX_FMT_NONE}
 #else
 /* libavcodec 60-62 (FFmpeg 6.0-8.x): pix_fmts on public AVCodec sub-struct */
 #define NVMPI_MJPEG_PIXFMTS \
-	.p.pix_fmts = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NONE}
+	.p.pix_fmts = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_DRM_PRIME, AV_PIX_FMT_NONE}
 #endif
 
 //valid range / default for the frame_pool_size AVOption (mirrors the size
@@ -95,17 +100,22 @@ typedef struct {
 	int disable_dpb;       //skip DPB reordering (low-latency, default off)
 	int wait_timeout;      //blocking wait timeout in ms (0 = default 500ms)
 	int output_format;     //requested output pixel format (AVPixelFormat; NONE = auto)
+	int drm_out;           //mjpeg only (appended: keeps all AVOption offsets): 1 = DRM_PRIME fd output
 } nvmpiDecodeContext;
+
+#include "nvmpi_dec_mjpeg_fd.h"
 
 /* ------------------------------------------------------------------ */
 /* MJPEG-specific callbacks (NvJPEGDecoder, not V4L2)                  */
 /* ------------------------------------------------------------------ */
 
 //MJPEG .init: create the JPEG decoder (no V4L2 device, no capture thread).
-//Output is always YUV420P with JPEG (full) color range.
+//Default output is YUV420P with JPEG (full) color range. DRM_PRIME (NV12
+//DMA-BUF) is used only when explicitly requested AND libnvmpi >= 4.1.0.
 static int nvmpi_init_mjpeg_decoder(AVCodecContext *avctx)
 {
 	nvmpiDecodeContext *nvmpi_context = avctx->priv_data;
+	int ret;
 
 	/* Load libnvmpi.so via dlopen (same as the V4L2 decoder path). */
 	if (nvmpi_dynlink_load() < 0) {
@@ -116,8 +126,25 @@ static int nvmpi_init_mjpeg_decoder(AVCodecContext *avctx)
 		return AVERROR_EXTERNAL;
 	}
 
-	avctx->pix_fmt = AV_PIX_FMT_YUV420P;
 	avctx->color_range = AVCOL_RANGE_JPEG;
+
+	//Opt-in zero-copy path. Falls back (with a warning, never an error) to
+	//the software path below when the fd API is missing or unusable.
+	if (nvmpi_mjpeg_drm_requested(avctx, nvmpi_context))
+	{
+		nvmpi_context->ctx = nvmpi_mjpeg_create_fd_decoder(avctx, nvmpi_context);
+		if (nvmpi_context->ctx)
+		{
+			avctx->pix_fmt = AV_PIX_FMT_DRM_PRIME;
+			nvmpi_context->drm_out = 1;
+			ret = nvmpi_drm_init_hw_frames(avctx, AV_PIX_FMT_NV12);
+			if (ret < 0)
+				return ret; //.close (INIT_CLEANUP) destroys the decoder
+			return 0;       //frames are built per decode, no bufFrame
+		}
+	}
+
+	avctx->pix_fmt = AV_PIX_FMT_YUV420P;
 
 	nvmpi_context->bufFrame = av_frame_alloc();
 	if (!nvmpi_context->bufFrame)
@@ -157,6 +184,9 @@ static int nvmpi_decode_mjpeg(AVCodecContext *avctx, AVFrame *data, int *got_fra
 	nvFrame _nvframe = {0};
 	nvPacket packet;
 	int res;
+
+	if (nvmpi_context->drm_out)
+		return nvmpi_decode_mjpeg_fd(avctx, frame, got_frame, avpkt);
 
 	if (!avpkt->size)
 	{

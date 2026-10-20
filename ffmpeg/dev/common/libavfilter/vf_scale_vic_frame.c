@@ -108,6 +108,22 @@ int scale_vic_filter_frame(AVFilterLink *inlink, AVFrame *in)
         return AVERROR(EINVAL);
     }
 
+    /* nvmpi_surface_copy_from_dmabuf assumes the chroma plane starts at
+     * pitch * height. Frames whose surface pads the plane height (JPEG
+     * decoder with unaligned sizes) report a larger offset: copying would
+     * silently corrupt the chroma, so refuse them with a clear error. */
+    if (in_desc->layers[0].nb_planes > 1 &&
+        in_desc->layers[0].planes[1].offset !=
+            (ptrdiff_t)in_desc->layers[0].planes[0].pitch * in->height) {
+        av_log(avctx, AV_LOG_ERROR,
+               "scale_vic: unsupported chroma offset %td (expected pitch*height "
+               "= %td); use a 16-aligned picture height\n",
+               in_desc->layers[0].planes[1].offset,
+               (ptrdiff_t)in_desc->layers[0].planes[0].pitch * in->height);
+        av_frame_free(&in);
+        return AVERROR(EINVAL);
+    }
+
     av_log(avctx, AV_LOG_DEBUG,
            "scale_vic: input fd=%d pitch=%d, %dx%d → %dx%d\n",
            in_desc->objects[0].fd,

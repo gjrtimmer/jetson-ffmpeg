@@ -44,24 +44,9 @@
 #include "codec_internal.h"
 #include "version.h"
 
-/* DRM_FORMAT constants for AVDRMFrameDescriptor layer description.
- * Defined inline to avoid requiring <drm_fourcc.h> / libdrm-dev as a
- * build dependency — the constants are stable ABI from the Linux kernel. */
-#ifndef DRM_FORMAT_NV12
-#define DRM_FORMAT_NV12 \
-    (((uint32_t)('N')) | ((uint32_t)('V') << 8) | \
-     ((uint32_t)('1') << 16) | ((uint32_t)('2') << 24))
-#endif
-
-/* Private DRM format modifier: carries the original NvBufSurface-registered
- * DMA-BUF fd through dup'd-fd frames.  The decoder dup()s fds for FFmpeg
- * frame lifetime safety, but the dup'd fd is not registered in
- * NvBufSurface's internal table.  Downstream consumers that need a
- * registered fd (e.g. scale_vic filter calling NvBufSurfTransform) extract
- * the original fd from this modifier.
- *
- * Vendor byte 0x4E ("N" for nvmpi) avoids collision with standard
- * DRM_FORMAT_MOD vendors (0x00–0x0F) and NVIDIA's own (0x03). */
+/* DRM_PRIME wrapping (descriptor, release, hw_frames_ctx) is shared with
+ * nvmpi_dec_mjpeg.c; DRM_FORMAT_NV12 and NVMPI_DRM_MOD_ORIG_FD live there. */
+#include "nvmpi_dec_drm.h"
 
 /*
  * libavcodec 63 (FFmpeg 9.0+): pix_fmts moved from the public AVCodec (.p)
@@ -117,35 +102,6 @@ typedef struct {
 /* ------------------------------------------------------------------ */
 /* DRM_PRIME (zero-copy) frame support                                 */
 /* ------------------------------------------------------------------ */
-
-/* Carries the dup'd DMA-BUF fd and libnvmpi's pool-return callback
- * through to the AVBuffer release path. Allocated per-frame on the
- * heap; freed in nvmpi_drm_release_frame when FFmpeg drops the last
- * reference to frame->buf[0]. */
-typedef struct {
-    int fd;                          /* dup'd DMA-BUF fd (owned by us) */
-    nvmpi_frame_release_cb release;  /* returns original buffer to pool */
-    void *opaque;                    /* libnvmpi pool-return context */
-} NvmpiDRMOpaque;
-
-/* AVBufferRef release callback for DRM_PRIME frames. Invoked when
- * FFmpeg drops the last reference to frame->buf[0]:
- *   1. close the dup'd fd (our copy; the original stays in libnvmpi)
- *   2. call the pool-return callback to recycle the buffer
- *   3. free the opaque + descriptor allocations */
-static void nvmpi_drm_release_frame(void *opaque, uint8_t *data)
-{
-    NvmpiDRMOpaque *drm = (NvmpiDRMOpaque *)opaque;
-
-    if (drm->fd >= 0)
-        close(drm->fd);
-
-    if (drm->release)
-        drm->release(drm->opaque);
-
-    av_free(drm);
-    av_free(data);
-}
 
 //Translate FFmpeg's codec id into libnvmpi's coding type enum.
 //Returns NV_VIDEO_CodingUnused for anything libnvmpi cannot decode.
@@ -298,32 +254,10 @@ static int nvmpi_init_decoder(AVCodecContext *avctx)
 	 * and encoders that frames are DRM_PRIME-wrapped DMA-BUF surfaces
 	 * with NV12 software layout. Created after format negotiation so
 	 * -output_format can override -hwaccel if both are specified. */
-	if (avctx->hw_device_ctx && avctx->pix_fmt == AV_PIX_FMT_DRM_PRIME) {
-		AVHWDeviceContext *device_ctx =
-			(AVHWDeviceContext *)avctx->hw_device_ctx->data;
-		if (device_ctx->type == AV_HWDEVICE_TYPE_NVMPI) {
-			avctx->hw_frames_ctx = av_hwframe_ctx_alloc(avctx->hw_device_ctx);
-			if (!avctx->hw_frames_ctx) {
-				av_log(avctx, AV_LOG_ERROR,
-				       "nvmpi: failed to allocate hw_frames_ctx\n");
-				return AVERROR(ENOMEM);
-			}
-
-			AVHWFramesContext *frames_ctx =
-				(AVHWFramesContext *)avctx->hw_frames_ctx->data;
-			frames_ctx->format    = AV_PIX_FMT_DRM_PRIME;
-			frames_ctx->sw_format = AV_PIX_FMT_NV12;
-			frames_ctx->width     = avctx->width;
-			frames_ctx->height    = avctx->height;
-
-			int ret = av_hwframe_ctx_init(avctx->hw_frames_ctx);
-			if (ret < 0) {
-				av_log(avctx, AV_LOG_ERROR,
-				       "nvmpi: failed to init hw_frames_ctx: %d\n", ret);
-				av_buffer_unref(&avctx->hw_frames_ctx);
-				return ret;
-			}
-		}
+	{
+		int hret = nvmpi_drm_init_hw_frames(avctx, AV_PIX_FMT_NV12);
+		if (hret < 0)
+			return hret;
 	}
 
     if (nvmpi_context->resize_expr && sscanf(nvmpi_context->resize_expr, "%dx%d",
@@ -478,6 +412,7 @@ static int nvmpi_decode(AVCodecContext *avctx, AVFrame *data, int *got_frame, AV
 		int64_t timestamp;
 		nvmpi_frame_release_cb release_cb;
 		void *release_opaque;
+		NvmpiDRMFrameInfo info = {0};
 
 		res = nvmpi_decoder_get_frame_fd(nvmpi_context->ctx,
 			&dmabuf_fd, &width, &height, &pitch, &timestamp,
@@ -487,91 +422,30 @@ static int nvmpi_decode(AVCodecContext *avctx, AVFrame *data, int *got_frame, AV
 		if (res < 0)
 			return decode_ret;
 
-		/* dup() the borrowed fd — FFmpeg frame lifetime is unpredictable
-		 * (filters, encoder queues hold refs). The dup'd fd is closed
-		 * in nvmpi_drm_release_frame when the last buf[0] ref drops. */
-		int dup_fd = dup(dmabuf_fd);
-		if (dup_fd < 0) {
-			av_log(avctx, AV_LOG_ERROR,
-			       "dup(dmabuf_fd=%d) failed\n", dmabuf_fd);
-			release_cb(release_opaque);
-			return AVERROR_EXTERNAL;
-		}
+		/* Single NV12 layer, luma + chroma in one DMA-BUF. The chroma offset
+		 * is pitch*height: this API returns one pitch only (see
+		 * jetson-nvmpi#129 / jetson-ffmpeg#131). No original-fd hint: the
+		 * V4L2 pool is destroyed by decoder close while borrows may still be
+		 * outstanding, so the hint could dangle. The shared helper dup()s the
+		 * fd and releases the borrow exactly once on every path. */
+		info.fd            = dmabuf_fd;
+		info.orig_fd_hint  = 0;
+		info.release       = release_cb;
+		info.opaque        = release_opaque;
+		info.fourcc        = DRM_FORMAT_NV12;
+		info.nb_planes     = 2;
+		info.pitch[0]      = pitch;
+		info.pitch[1]      = pitch;
+		info.offset[0]     = 0;
+		info.offset[1]     = (uint32_t)pitch * height;
+		info.size          = (size_t)pitch * height * 3 / 2;
+		info.width         = width;
+		info.height        = height;
+		info.pts           = timestamp;
 
-		/* Allocated here; freed in nvmpi_drm_release_frame via av_free(data) */
-		AVDRMFrameDescriptor *desc = av_mallocz(sizeof(*desc));
-		if (!desc) {
-			close(dup_fd);
-			release_cb(release_opaque);
-			return AVERROR(ENOMEM);
-		}
-
-		/* Single DMA-BUF object, one NV12 layer with luma + chroma planes */
-		desc->nb_objects = 1;
-		desc->objects[0].fd              = dup_fd;
-		desc->objects[0].size            = (size_t)pitch * height * 3 / 2;
-		desc->objects[0].format_modifier = 0;
-
-		desc->nb_layers = 1;
-		desc->layers[0].format    = DRM_FORMAT_NV12;
-		desc->layers[0].nb_planes = 2;
-		desc->layers[0].planes[0].object_index = 0;
-		desc->layers[0].planes[0].offset       = 0;
-		desc->layers[0].planes[0].pitch        = pitch;
-		desc->layers[0].planes[1].object_index = 0;
-		desc->layers[0].planes[1].offset       = (ptrdiff_t)pitch * height;
-		desc->layers[0].planes[1].pitch        = pitch;
-
-		/* Allocated here; freed in nvmpi_drm_release_frame via av_free(opaque) */
-		NvmpiDRMOpaque *drm_opaque = av_mallocz(sizeof(*drm_opaque));
-		if (!drm_opaque) {
-			close(dup_fd);
-			release_cb(release_opaque);
-			av_free(desc);
-			return AVERROR(ENOMEM);
-		}
-		drm_opaque->fd      = dup_fd;
-		drm_opaque->release = release_cb;
-		drm_opaque->opaque  = release_opaque;
-
-		frame->data[0] = (uint8_t *)desc;
-		frame->buf[0]  = av_buffer_create((uint8_t *)desc, sizeof(*desc),
-		                                   nvmpi_drm_release_frame,
-		                                   drm_opaque,
-		                                   AV_BUFFER_FLAG_READONLY);
-		if (!frame->buf[0]) {
-			close(dup_fd);
-			release_cb(release_opaque);
-			av_free(drm_opaque);
-			av_free(desc);
-			return AVERROR(ENOMEM);
-		}
-
-		frame->format  = AV_PIX_FMT_DRM_PRIME;
-		frame->width   = width;
-		frame->height  = height;
-		frame->pts     = timestamp;
-		frame->pkt_dts = AV_NOPTS_VALUE;
-
-		/* Propagate hw_frames_ctx to each DRM_PRIME output frame.
-		 * FFmpeg 7.x derives filter-graph buffersrc parameters from
-		 * individual frames rather than from AVCodecContext, so each
-		 * DRM_PRIME frame must carry hw_frames_ctx.  Without it the
-		 * buffersrc rejects the HW pixel format on filter graph reinit:
-		 * "Setting BufferSourceContext.pix_fmt to a HW format requires
-		 *  hw_frames_ctx to be non-NULL!" */
-		if (avctx->hw_frames_ctx) {
-			frame->hw_frames_ctx = av_buffer_ref(avctx->hw_frames_ctx);
-			if (!frame->hw_frames_ctx) {
-				/* Unref buf[0] to trigger nvmpi_drm_release_frame —
-				 * returns the dup'd fd and the frame pool slot.
-				 * Without this, OOM here leaks the DMA-BUF fd and
-				 * starves the libnvmpi frame pool. */
-				av_buffer_unref(&frame->buf[0]);
-				frame->data[0] = NULL;
-				return AVERROR(ENOMEM);
-			}
-		}
+		res = nvmpi_drm_wrap_frame(frame, &info, avctx->hw_frames_ctx);
+		if (res < 0)
+			return res;
 
 		if (width && height) {
 			avctx->width  = width;

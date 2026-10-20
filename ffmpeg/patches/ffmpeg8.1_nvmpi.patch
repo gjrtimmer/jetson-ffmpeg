@@ -214,10 +214,10 @@ index 695214f..7c6340c 100644
  extern const FFCodec ff_vqa_decoder;
 diff --git a/libavcodec/dynlink_nvmpi.h b/libavcodec/dynlink_nvmpi.h
 new file mode 100644
-index 0000000..a450265
+index 0000000..5fc2080
 --- /dev/null
 +++ b/libavcodec/dynlink_nvmpi.h
-@@ -0,0 +1,381 @@
+@@ -0,0 +1,399 @@
 +/*
 + * dynlink_nvmpi.h -- Runtime lazy-loading of libnvmpi via dlopen/dlsym.
 + *
@@ -227,8 +227,7 @@ index 0000000..a450265
 + * library is loaded at runtime on first codec use; if absent, the codec
 + * gracefully reports "unavailable" and FFmpeg continues.
 + *
-+ * Usage: #include "dynlink_nvmpi.h" instead of <nvmpi.h> in the FFmpeg
-+ * wrapper files (nvmpi_dec.c, nvmpi_enc.c, nvmpi_enc_jpeg.c).
++ * Usage: #include "dynlink_nvmpi.h" instead of <nvmpi.h> in the wrappers.
 + *
 + * Load sequence:
 + *   1. Codec .init calls nvmpi_dynlink_load()
@@ -238,21 +237,12 @@ index 0000000..a450265
 + *   3. All nvmpi_* function calls transparently dispatch through the
 + *      loaded pointers via macro redirects (existing code unchanged).
 + *   4. The library stays loaded for the process lifetime (no dlclose).
-+ *      This is intentional: multiple codec instances may share the
-+ *      handle concurrently, and the memory cost is negligible.
 + *
-+ * Thread safety: dlopen/dlsym are thread-safe on Linux.  Concurrent
-+ * calls to nvmpi_dynlink_load() from different codec instances are
-+ * benign -- each resolves the same symbols to the same addresses, and
-+ * dlopen is reference-counted internally.
++ * Thread safety: concurrent nvmpi_dynlink_load() calls are benign (same
++ * .so, same addresses; dlopen is reference-counted).
 + *
-+ * Ported and improved from the YuriiHoliuk/jetson-ffmpeg fork's
-+ * dynlink_nvmpi.h approach.  Key differences:
-+ *   - Covers ALL 22 public nvmpi functions (inc. JPEG enc/dec, flush,
-+ *     force_idr, set_bitrate).
-+ *   - No dlclose (safe with concurrent codec instances).
-+ *   - Self-contained types kept in sync with gjrtimmer/jetson-ffmpeg's
-+ *     nvmpi.h, not YuriiHoliuk's extended API.
++ * Ported from the YuriiHoliuk/jetson-ffmpeg dynlink approach; no dlclose,
++ * types kept in sync with nvmpi.h.
 + */
 +#ifndef DYNLINK_NVMPI_H
 +#define DYNLINK_NVMPI_H
@@ -260,18 +250,17 @@ index 0000000..a450265
 +#include <stdlib.h>
 +#include <stdbool.h>
 +#include <stdint.h>
++#include <time.h>
 +#include <dlfcn.h>
 +
 +/* ------------------------------------------------------------------ */
 +/* Type definitions (duplicated from nvmpi.h -- keep in sync)          */
 +/* ------------------------------------------------------------------ */
 +
-+/* Maximum encoded-frame buffer size in bytes.  Shared with nvmpi.h;
-+ * used by the encoder wrapper for packet pool allocation. */
++/* Maximum encoded-frame buffer size in bytes (encoder packet pool). */
 +#define NVMPI_ENC_CHUNK_SIZE 10*1024*1024
 +
-+/* Encoder would block waiting for a free OUTPUT-plane buffer; caller should
-+ * drain output packets (receive_packet) and retry. Matches Linux EAGAIN. */
++/* Encoder would block: drain output packets and retry (Linux EAGAIN). */
 +#define NVMPI_ERR_EAGAIN (-11)
 +
 +/* Opaque context handle.  Decoder and encoder each define their own
@@ -376,6 +365,9 @@ index 0000000..a450265
 +/* Release callback for borrowed DMA-BUF fds from get_frame_fd. */
 +typedef void (*nvmpi_frame_release_cb)(void *opaque);
 +
++/* nvmpi_fd_frame, NVMPI_ERR_INVAL + ABI asserts (libnvmpi >= 4.1.0) */
++#include "nvmpi_fd_frame.h"
++
 +/* ------------------------------------------------------------------ */
 +/* Function pointer typedefs                                           */
 +/* ------------------------------------------------------------------ */
@@ -409,6 +401,12 @@ index 0000000..a450265
 +typedef int       (*fn_nvmpi_jpeg_encoder_put_frame)(nvmpictx *ctx, nvFrame *frame);
 +typedef int       (*fn_nvmpi_jpeg_encoder_get_packet)(nvmpictx *ctx, nvPacket *packet);
 +typedef int       (*fn_nvmpi_jpeg_encoder_close)(nvmpictx *ctx);
++
++/* JPEG decoder DMA-BUF output (libnvmpi >= 4.1.0, optional) */
++typedef nvmpictx* (*fn_nvmpi_create_jpeg_decoder_fmt)(nvPixFormat out, int pool_size);
++typedef int       (*fn_nvmpi_jpeg_decoder_get_frame_fd)(nvmpictx *ctx,
++    nvmpi_fd_frame *frame, nvmpi_frame_release_cb *release,
++    void **opaque, bool wait);
 +
 +/* DMA-BUF fd passthrough (zero-copy) */
 +typedef int       (*fn_nvmpi_decoder_get_frame_fd)(nvmpictx *ctx,
@@ -456,26 +454,34 @@ index 0000000..a450265
 +static fn_nvmpi_jpeg_encoder_get_packet  nvmpi_jpeg_encoder_get_packet_dl;
 +static fn_nvmpi_jpeg_encoder_close       nvmpi_jpeg_encoder_close_dl;
 +
++/* JPEG decoder DMA-BUF output: NULL when libnvmpi < 4.1.0 */
++static fn_nvmpi_create_jpeg_decoder_fmt    nvmpi_create_jpeg_decoder_fmt_dl;
++static fn_nvmpi_jpeg_decoder_get_frame_fd  nvmpi_jpeg_decoder_get_frame_fd_dl;
++
 +/* DMA-BUF fd passthrough (zero-copy) */
 +static fn_nvmpi_decoder_get_frame_fd    nvmpi_decoder_get_frame_fd_dl;
 +static fn_nvmpi_encoder_put_frame_fd    nvmpi_encoder_put_frame_fd_dl;
 +static fn_nvmpi_surface_alloc           nvmpi_surface_alloc_dl;
 +static fn_nvmpi_surface_destroy         nvmpi_surface_destroy_dl;
 +
-+/* Library handle (per-TU; dlopen is reference-counted internally). */
++/* Library handle (per-TU; dlopen is refcounted). */
 +static void *nvmpi_lib_handle;
 +
 +/* ------------------------------------------------------------------ */
 +/* Loader                                                              */
 +/* ------------------------------------------------------------------ */
 +
-+/* Helper: resolve one symbol or jump to the fail label.
-+ * Uses dlsym + cast; the pragma suppresses pedantic warnings about
-+ * casting void* to function pointers (ISO C forbids it, POSIX requires
-+ * it, and every real compiler on Linux supports it). */
++/* Resolve one required symbol (dlsym + cast) or jump to the fail label. */
 +#define NVMPI_LOAD_SYM(ptr, name) do {                              \
 +    *(void **)&(ptr) = dlsym(nvmpi_lib_handle, #name);              \
 +    if (!(ptr)) goto fail;                                           \
++} while (0)
++
++/* Optional symbol (libnvmpi >= 4.1.0 features only): missing -> pointer
++ * stays NULL, load continues. Required symbols keep NVMPI_LOAD_SYM (fails
++ * loudly). Callers must gate on nvmpi_has_*(). */
++#define NVMPI_LOAD_SYM_OPT(ptr, name) do {                          \
++    *(void **)&(ptr) = dlsym(nvmpi_lib_handle, #name);              \
 +} while (0)
 +
 +/*
@@ -536,22 +542,34 @@ index 0000000..a450265
 +    NVMPI_LOAD_SYM(nvmpi_jpeg_encoder_get_packet_dl, nvmpi_jpeg_encoder_get_packet);
 +    NVMPI_LOAD_SYM(nvmpi_jpeg_encoder_close_dl,      nvmpi_jpeg_encoder_close);
 +
-+    /* DMA-BUF fd passthrough symbols (zero-copy, issue #60) */
++    /* DMA-BUF fd passthrough symbols (zero-copy) */
 +    NVMPI_LOAD_SYM(nvmpi_decoder_get_frame_fd_dl,   nvmpi_decoder_get_frame_fd);
 +    NVMPI_LOAD_SYM(nvmpi_encoder_put_frame_fd_dl,   nvmpi_encoder_put_frame_fd);
 +    NVMPI_LOAD_SYM(nvmpi_surface_alloc_dl,           nvmpi_surface_alloc);
 +    NVMPI_LOAD_SYM(nvmpi_surface_destroy_dl,         nvmpi_surface_destroy);
 +
++    /* JPEG decoder DMA-BUF output (4.1.0+): optional, 4.0.x keeps loading */
++    NVMPI_LOAD_SYM_OPT(nvmpi_create_jpeg_decoder_fmt_dl,   nvmpi_create_jpeg_decoder_fmt);
++    NVMPI_LOAD_SYM_OPT(nvmpi_jpeg_decoder_get_frame_fd_dl, nvmpi_jpeg_decoder_get_frame_fd);
++
 +    return 0;
 +
 +fail:
-+    /* A symbol was missing -- close the partially loaded library.
-+     * This should never happen with a matching libnvmpi version, but
-+     * protects against ABI mismatches between the header types above
-+     * and the installed .so. */
++    /* A required symbol is missing (ABI mismatch): unload the library. */
 +    dlclose(nvmpi_lib_handle);
 +    nvmpi_lib_handle = NULL;
 +    return -1;
++}
++
++/* True when libnvmpi exports the JPEG fd API (both symbols, 4.1.0+).
++ * NVMPI_FORCE_NO_JPEG_FD=1 (test hook) fakes a 4.0.x library. */
++static inline int nvmpi_has_jpeg_fd(void)
++{
++    const char *force = getenv("NVMPI_FORCE_NO_JPEG_FD");
++
++    if (force && force[0] == '1')
++        return 0;
++    return nvmpi_create_jpeg_decoder_fmt_dl && nvmpi_jpeg_decoder_get_frame_fd_dl;
 +}
 +
 +/* ------------------------------------------------------------------ */
@@ -601,10 +619,10 @@ index 0000000..a450265
 +#endif /* DYNLINK_NVMPI_H */
 diff --git a/libavcodec/nvmpi_dec.c b/libavcodec/nvmpi_dec.c
 new file mode 100644
-index 0000000..a11f1d7
+index 0000000..bfa7b11
 --- /dev/null
 +++ b/libavcodec/nvmpi_dec.c
-@@ -0,0 +1,734 @@
+@@ -0,0 +1,608 @@
 +/*
 + * nvmpi_dec.c — FFmpeg decoder wrapper for libnvmpi (layer 2 of
 + * jetson-ffmpeg, the FFmpeg integration layer).
@@ -651,24 +669,9 @@ index 0000000..a11f1d7
 +#include "codec_internal.h"
 +#include "version.h"
 +
-+/* DRM_FORMAT constants for AVDRMFrameDescriptor layer description.
-+ * Defined inline to avoid requiring <drm_fourcc.h> / libdrm-dev as a
-+ * build dependency — the constants are stable ABI from the Linux kernel. */
-+#ifndef DRM_FORMAT_NV12
-+#define DRM_FORMAT_NV12 \
-+    (((uint32_t)('N')) | ((uint32_t)('V') << 8) | \
-+     ((uint32_t)('1') << 16) | ((uint32_t)('2') << 24))
-+#endif
-+
-+/* Private DRM format modifier: carries the original NvBufSurface-registered
-+ * DMA-BUF fd through dup'd-fd frames.  The decoder dup()s fds for FFmpeg
-+ * frame lifetime safety, but the dup'd fd is not registered in
-+ * NvBufSurface's internal table.  Downstream consumers that need a
-+ * registered fd (e.g. scale_vic filter calling NvBufSurfTransform) extract
-+ * the original fd from this modifier.
-+ *
-+ * Vendor byte 0x4E ("N" for nvmpi) avoids collision with standard
-+ * DRM_FORMAT_MOD vendors (0x00–0x0F) and NVIDIA's own (0x03). */
++/* DRM_PRIME wrapping (descriptor, release, hw_frames_ctx) is shared with
++ * nvmpi_dec_mjpeg.c; DRM_FORMAT_NV12 and NVMPI_DRM_MOD_ORIG_FD live there. */
++#include "nvmpi_dec_drm.h"
 +
 +/*
 + * libavcodec 63 (FFmpeg 9.0+): pix_fmts moved from the public AVCodec (.p)
@@ -724,35 +727,6 @@ index 0000000..a11f1d7
 +/* ------------------------------------------------------------------ */
 +/* DRM_PRIME (zero-copy) frame support                                 */
 +/* ------------------------------------------------------------------ */
-+
-+/* Carries the dup'd DMA-BUF fd and libnvmpi's pool-return callback
-+ * through to the AVBuffer release path. Allocated per-frame on the
-+ * heap; freed in nvmpi_drm_release_frame when FFmpeg drops the last
-+ * reference to frame->buf[0]. */
-+typedef struct {
-+    int fd;                          /* dup'd DMA-BUF fd (owned by us) */
-+    nvmpi_frame_release_cb release;  /* returns original buffer to pool */
-+    void *opaque;                    /* libnvmpi pool-return context */
-+} NvmpiDRMOpaque;
-+
-+/* AVBufferRef release callback for DRM_PRIME frames. Invoked when
-+ * FFmpeg drops the last reference to frame->buf[0]:
-+ *   1. close the dup'd fd (our copy; the original stays in libnvmpi)
-+ *   2. call the pool-return callback to recycle the buffer
-+ *   3. free the opaque + descriptor allocations */
-+static void nvmpi_drm_release_frame(void *opaque, uint8_t *data)
-+{
-+    NvmpiDRMOpaque *drm = (NvmpiDRMOpaque *)opaque;
-+
-+    if (drm->fd >= 0)
-+        close(drm->fd);
-+
-+    if (drm->release)
-+        drm->release(drm->opaque);
-+
-+    av_free(drm);
-+    av_free(data);
-+}
 +
 +//Translate FFmpeg's codec id into libnvmpi's coding type enum.
 +//Returns NV_VIDEO_CodingUnused for anything libnvmpi cannot decode.
@@ -905,32 +879,10 @@ index 0000000..a11f1d7
 +	 * and encoders that frames are DRM_PRIME-wrapped DMA-BUF surfaces
 +	 * with NV12 software layout. Created after format negotiation so
 +	 * -output_format can override -hwaccel if both are specified. */
-+	if (avctx->hw_device_ctx && avctx->pix_fmt == AV_PIX_FMT_DRM_PRIME) {
-+		AVHWDeviceContext *device_ctx =
-+			(AVHWDeviceContext *)avctx->hw_device_ctx->data;
-+		if (device_ctx->type == AV_HWDEVICE_TYPE_NVMPI) {
-+			avctx->hw_frames_ctx = av_hwframe_ctx_alloc(avctx->hw_device_ctx);
-+			if (!avctx->hw_frames_ctx) {
-+				av_log(avctx, AV_LOG_ERROR,
-+				       "nvmpi: failed to allocate hw_frames_ctx\n");
-+				return AVERROR(ENOMEM);
-+			}
-+
-+			AVHWFramesContext *frames_ctx =
-+				(AVHWFramesContext *)avctx->hw_frames_ctx->data;
-+			frames_ctx->format    = AV_PIX_FMT_DRM_PRIME;
-+			frames_ctx->sw_format = AV_PIX_FMT_NV12;
-+			frames_ctx->width     = avctx->width;
-+			frames_ctx->height    = avctx->height;
-+
-+			int ret = av_hwframe_ctx_init(avctx->hw_frames_ctx);
-+			if (ret < 0) {
-+				av_log(avctx, AV_LOG_ERROR,
-+				       "nvmpi: failed to init hw_frames_ctx: %d\n", ret);
-+				av_buffer_unref(&avctx->hw_frames_ctx);
-+				return ret;
-+			}
-+		}
++	{
++		int hret = nvmpi_drm_init_hw_frames(avctx, AV_PIX_FMT_NV12);
++		if (hret < 0)
++			return hret;
 +	}
 +
 +    if (nvmpi_context->resize_expr && sscanf(nvmpi_context->resize_expr, "%dx%d",
@@ -1085,6 +1037,7 @@ index 0000000..a11f1d7
 +		int64_t timestamp;
 +		nvmpi_frame_release_cb release_cb;
 +		void *release_opaque;
++		NvmpiDRMFrameInfo info = {0};
 +
 +		res = nvmpi_decoder_get_frame_fd(nvmpi_context->ctx,
 +			&dmabuf_fd, &width, &height, &pitch, &timestamp,
@@ -1094,91 +1047,30 @@ index 0000000..a11f1d7
 +		if (res < 0)
 +			return decode_ret;
 +
-+		/* dup() the borrowed fd — FFmpeg frame lifetime is unpredictable
-+		 * (filters, encoder queues hold refs). The dup'd fd is closed
-+		 * in nvmpi_drm_release_frame when the last buf[0] ref drops. */
-+		int dup_fd = dup(dmabuf_fd);
-+		if (dup_fd < 0) {
-+			av_log(avctx, AV_LOG_ERROR,
-+			       "dup(dmabuf_fd=%d) failed\n", dmabuf_fd);
-+			release_cb(release_opaque);
-+			return AVERROR_EXTERNAL;
-+		}
++		/* Single NV12 layer, luma + chroma in one DMA-BUF. The chroma offset
++		 * is pitch*height: this API returns one pitch only (see
++		 * jetson-nvmpi#129 / jetson-ffmpeg#131). No original-fd hint: the
++		 * V4L2 pool is destroyed by decoder close while borrows may still be
++		 * outstanding, so the hint could dangle. The shared helper dup()s the
++		 * fd and releases the borrow exactly once on every path. */
++		info.fd            = dmabuf_fd;
++		info.orig_fd_hint  = 0;
++		info.release       = release_cb;
++		info.opaque        = release_opaque;
++		info.fourcc        = DRM_FORMAT_NV12;
++		info.nb_planes     = 2;
++		info.pitch[0]      = pitch;
++		info.pitch[1]      = pitch;
++		info.offset[0]     = 0;
++		info.offset[1]     = (uint32_t)pitch * height;
++		info.size          = (size_t)pitch * height * 3 / 2;
++		info.width         = width;
++		info.height        = height;
++		info.pts           = timestamp;
 +
-+		/* Allocated here; freed in nvmpi_drm_release_frame via av_free(data) */
-+		AVDRMFrameDescriptor *desc = av_mallocz(sizeof(*desc));
-+		if (!desc) {
-+			close(dup_fd);
-+			release_cb(release_opaque);
-+			return AVERROR(ENOMEM);
-+		}
-+
-+		/* Single DMA-BUF object, one NV12 layer with luma + chroma planes */
-+		desc->nb_objects = 1;
-+		desc->objects[0].fd              = dup_fd;
-+		desc->objects[0].size            = (size_t)pitch * height * 3 / 2;
-+		desc->objects[0].format_modifier = 0;
-+
-+		desc->nb_layers = 1;
-+		desc->layers[0].format    = DRM_FORMAT_NV12;
-+		desc->layers[0].nb_planes = 2;
-+		desc->layers[0].planes[0].object_index = 0;
-+		desc->layers[0].planes[0].offset       = 0;
-+		desc->layers[0].planes[0].pitch        = pitch;
-+		desc->layers[0].planes[1].object_index = 0;
-+		desc->layers[0].planes[1].offset       = (ptrdiff_t)pitch * height;
-+		desc->layers[0].planes[1].pitch        = pitch;
-+
-+		/* Allocated here; freed in nvmpi_drm_release_frame via av_free(opaque) */
-+		NvmpiDRMOpaque *drm_opaque = av_mallocz(sizeof(*drm_opaque));
-+		if (!drm_opaque) {
-+			close(dup_fd);
-+			release_cb(release_opaque);
-+			av_free(desc);
-+			return AVERROR(ENOMEM);
-+		}
-+		drm_opaque->fd      = dup_fd;
-+		drm_opaque->release = release_cb;
-+		drm_opaque->opaque  = release_opaque;
-+
-+		frame->data[0] = (uint8_t *)desc;
-+		frame->buf[0]  = av_buffer_create((uint8_t *)desc, sizeof(*desc),
-+		                                   nvmpi_drm_release_frame,
-+		                                   drm_opaque,
-+		                                   AV_BUFFER_FLAG_READONLY);
-+		if (!frame->buf[0]) {
-+			close(dup_fd);
-+			release_cb(release_opaque);
-+			av_free(drm_opaque);
-+			av_free(desc);
-+			return AVERROR(ENOMEM);
-+		}
-+
-+		frame->format  = AV_PIX_FMT_DRM_PRIME;
-+		frame->width   = width;
-+		frame->height  = height;
-+		frame->pts     = timestamp;
-+		frame->pkt_dts = AV_NOPTS_VALUE;
-+
-+		/* Propagate hw_frames_ctx to each DRM_PRIME output frame.
-+		 * FFmpeg 7.x derives filter-graph buffersrc parameters from
-+		 * individual frames rather than from AVCodecContext, so each
-+		 * DRM_PRIME frame must carry hw_frames_ctx.  Without it the
-+		 * buffersrc rejects the HW pixel format on filter graph reinit:
-+		 * "Setting BufferSourceContext.pix_fmt to a HW format requires
-+		 *  hw_frames_ctx to be non-NULL!" */
-+		if (avctx->hw_frames_ctx) {
-+			frame->hw_frames_ctx = av_buffer_ref(avctx->hw_frames_ctx);
-+			if (!frame->hw_frames_ctx) {
-+				/* Unref buf[0] to trigger nvmpi_drm_release_frame —
-+				 * returns the dup'd fd and the frame pool slot.
-+				 * Without this, OOM here leaks the DMA-BUF fd and
-+				 * starves the libnvmpi frame pool. */
-+				av_buffer_unref(&frame->buf[0]);
-+				frame->data[0] = NULL;
-+				return AVERROR(ENOMEM);
-+			}
-+		}
++		res = nvmpi_drm_wrap_frame(frame, &info, avctx->hw_frames_ctx);
++		if (res < 0)
++			return res;
 +
 +		if (width && height) {
 +			avctx->width  = width;
@@ -1339,12 +1231,256 @@ index 0000000..a11f1d7
 +NVMPI_DEC(mpeg4, AV_CODEC_ID_MPEG4,NULL);
 +NVMPI_DEC(vp9,  AV_CODEC_ID_VP9,NULL);
 +NVMPI_DEC(vp8, AV_CODEC_ID_VP8,NULL);
+diff --git a/libavcodec/nvmpi_dec_drm.h b/libavcodec/nvmpi_dec_drm.h
+new file mode 100644
+index 0000000..44bc06b
+--- /dev/null
++++ b/libavcodec/nvmpi_dec_drm.h
+@@ -0,0 +1,238 @@
++/*
++ * nvmpi_dec_drm.h -- DRM_PRIME frame wrapping shared by the nvmpi decoders
++ * (nvmpi_dec.c: V4L2 video decoders, nvmpi_dec_mjpeg.c: NvJPEG decoder).
++ *
++ * Both decoders hand out borrowed libnvmpi DMA-BUF fds as AVFrames. The
++ * descriptor / opaque / release logic lives here exactly once. Every
++ * function is static inline so each translation unit (patched into FFmpeg
++ * and compiled on its own) only pays for what it uses.
++ *
++ * Include after "dynlink_nvmpi.h" and the libavcodec/libavutil headers
++ * that provide AVFrame, AVBufferRef and AVDRMFrameDescriptor.
++ */
++#ifndef NVMPI_DEC_DRM_H
++#define NVMPI_DEC_DRM_H
++
++#include <stdint.h>
++#include <unistd.h>
++
++#include "dynlink_nvmpi.h"
++#include "libavutil/buffer.h"
++#include "libavutil/frame.h"
++#include "libavutil/hwcontext.h"
++#include "libavutil/hwcontext_drm.h"
++#include "libavutil/log.h"
++#include "libavutil/mem.h"
++
++/* DRM_FORMAT constants for AVDRMFrameDescriptor layer description.
++ * Defined inline to avoid requiring <drm_fourcc.h> / libdrm-dev as a
++ * build dependency -- the constants are stable ABI from the Linux kernel. */
++#ifndef DRM_FORMAT_NV12
++#define DRM_FORMAT_NV12 \
++    (((uint32_t)('N')) | ((uint32_t)('V') << 8) | \
++     ((uint32_t)('1') << 16) | ((uint32_t)('2') << 24))
++#endif
++
++/* Private DRM format modifier: carries the ORIGINAL NvBufSurface-registered
++ * DMA-BUF fd as a hint next to the dup'd fd in objects[0].fd. A dup'd fd is
++ * not registered in NvBufSurface's internal table (NvBufSurfaceFromFd fails
++ * on it), so a consumer needing a registered surface may decode the hint.
++ * The hint is only valid while the frame is referenced AND the decoder that
++ * produced it is still open; consumers must fall back to a copy when the
++ * lookup fails. Vendor byte 0x4E ("N" for nvmpi) avoids collision with the
++ * standard DRM_FORMAT_MOD vendors (0x00-0x0F) and NVIDIA's own (0x03).
++ * vf_scale_vic_frame.c writes the same encoding for its output frames. */
++#define NVMPI_DRM_MOD_ORIG_FD(fd) \
++    ((((uint64_t)0x4E) << 56) | (uint64_t)(unsigned int)(fd))
++
++/* Carries the dup'd DMA-BUF fd and libnvmpi's release callback through to
++ * the AVBuffer free path. Allocated per frame; freed in
++ * nvmpi_drm_release_frame when FFmpeg drops the last reference to
++ * frame->buf[0]. */
++typedef struct {
++    int fd;                          /* dup'd DMA-BUF fd (owned by the frame) */
++    nvmpi_frame_release_cb release;  /* returns the borrow to libnvmpi */
++    void *opaque;                    /* libnvmpi release cookie */
++} NvmpiDRMOpaque;
++
++/* Everything the wrapper needs to describe one borrowed frame. */
++typedef struct {
++    int fd;                       /* borrowed libnvmpi fd (never closed here) */
++    int orig_fd_hint;             /* 1: publish fd via NVMPI_DRM_MOD_ORIG_FD */
++    nvmpi_frame_release_cb release; /* mandatory: called exactly once */
++    void *opaque;
++    uint32_t fourcc;              /* DRM_FORMAT_* of the single layer */
++    int nb_planes;                /* 1..AV_DRM_MAX_PLANES */
++    uint32_t pitch[4];            /* bytes per row of each plane */
++    uint32_t offset[4];           /* byte offset of each plane in the fd */
++    size_t size;                  /* total bytes behind fd */
++    int width, height;
++    int64_t pts;
++} NvmpiDRMFrameInfo;
++
++/* AVBufferRef free callback for DRM_PRIME frames. Runs when FFmpeg drops
++ * the last reference to frame->buf[0]. The ORDER is part of the contract
++ * (the borrow must outlive our dup, never the reverse):
++ *   1. close the dup'd fd (our private copy of the dma-buf reference)
++ *   2. call libnvmpi's release callback exactly once
++ *   3. free the opaque and the descriptor
++ * Single deallocation point for all three; may run on any thread and after
++ * the decoder was closed (libnvmpi defers pool destruction to the release). */
++static inline void nvmpi_drm_release_frame(void *opaque, uint8_t *data)
++{
++    NvmpiDRMOpaque *drm = (NvmpiDRMOpaque *)opaque;
++
++    if (drm->fd >= 0)
++        close(drm->fd);
++    drm->fd = -1;               /* never close twice */
++
++    if (drm->release)
++        drm->release(drm->opaque);
++    drm->release = NULL;        /* never release twice */
++
++    av_free(drm);
++    av_free(data);
++}
++
++/* Wrap a borrowed libnvmpi fd into frame (DRM_PRIME).
++ *
++ * Ownership: on return 0 the frame owns the borrow (released when buf[0] is
++ * freed). On ANY error the borrow is released here exactly once and nothing
++ * leaks, so callers must not release again. frame->hw_frames_ctx is set from
++ * hw_frames_ctx when non-NULL (FFmpeg 7.x derives buffersrc parameters from
++ * individual frames; without it the buffersrc rejects the HW pixel format). */
++static inline int nvmpi_drm_wrap_frame(AVFrame *frame, const NvmpiDRMFrameInfo *in,
++                                       AVBufferRef *hw_frames_ctx)
++{
++    AVDRMFrameDescriptor *desc = NULL;
++    NvmpiDRMOpaque *drm = NULL;
++    int dup_fd = -1, i;
++
++    /* Reject a descriptor the AVDRMFrameDescriptor cannot hold before
++     * touching any resource; a malformed layout must not index past
++     * planes[]. */
++    if (!in->release)
++        return AVERROR(EINVAL);
++    if (in->nb_planes < 1 || in->nb_planes > AV_DRM_MAX_PLANES || in->fd < 0)
++        goto fail_einval;
++
++    /* dup(): FFmpeg frame lifetime is unpredictable (filters and encoder
++     * queues hold refs, and FFmpeg 8.1+ closes the codec before unref'ing
++     * frames), so the frame keeps its own reference to the dma-buf. */
++    dup_fd = dup(in->fd);
++    if (dup_fd < 0) {
++        av_log(NULL, AV_LOG_ERROR, "nvmpi: dup(dmabuf_fd=%d) failed\n", in->fd);
++        goto fail_external;
++    }
++
++    /* Allocated here; freed in nvmpi_drm_release_frame via av_free(data) */
++    desc = av_mallocz(sizeof(*desc));
++    /* Allocated here; freed in nvmpi_drm_release_frame via av_free(opaque) */
++    drm = av_mallocz(sizeof(*drm));
++    if (!desc || !drm)
++        goto fail_nomem;
++
++    /* Single DMA-BUF object, one layer. The modifier hint (original fd) is
++     * published only when the producer guarantees it stays valid while the
++     * frame is referenced (JPEG decoder: refcounted deferred destroy). */
++    desc->nb_objects = 1;
++    desc->objects[0].fd              = dup_fd;
++    desc->objects[0].size            = in->size;
++    desc->objects[0].format_modifier =
++        in->orig_fd_hint ? NVMPI_DRM_MOD_ORIG_FD(in->fd) : 0;
++
++    desc->nb_layers = 1;
++    desc->layers[0].format    = in->fourcc;
++    desc->layers[0].nb_planes = in->nb_planes;
++    for (i = 0; i < in->nb_planes; i++) {
++        desc->layers[0].planes[i].object_index = 0;
++        desc->layers[0].planes[i].offset       = in->offset[i];
++        desc->layers[0].planes[i].pitch        = in->pitch[i];
++    }
++
++    drm->fd      = dup_fd;
++    drm->release = in->release;
++    drm->opaque  = in->opaque;
++
++    frame->buf[0] = av_buffer_create((uint8_t *)desc, sizeof(*desc),
++                                     nvmpi_drm_release_frame, drm,
++                                     AV_BUFFER_FLAG_READONLY);
++    if (!frame->buf[0])
++        goto fail_nomem;
++    /* From here nvmpi_drm_release_frame owns dup_fd, the borrow, drm, desc. */
++
++    frame->data[0] = (uint8_t *)desc;
++    frame->format  = AV_PIX_FMT_DRM_PRIME;
++    frame->width   = in->width;
++    frame->height  = in->height;
++    frame->pts     = in->pts;
++    frame->pkt_dts = AV_NOPTS_VALUE;
++
++    if (hw_frames_ctx) {
++        frame->hw_frames_ctx = av_buffer_ref(hw_frames_ctx);
++        if (!frame->hw_frames_ctx) {
++            /* Unref buf[0]: runs nvmpi_drm_release_frame, which closes the
++             * dup'd fd and releases the borrow exactly once. */
++            av_buffer_unref(&frame->buf[0]);
++            frame->data[0] = NULL;
++            return AVERROR(ENOMEM);
++        }
++    }
++    return 0;
++
++fail_nomem:
++    /* buf[0] creation failed or an allocation failed: the AVBuffer free
++     * callback will never run, so undo everything by hand, in the same
++     * order (close dup, release borrow, free). */
++    if (dup_fd >= 0)
++        close(dup_fd);
++    in->release(in->opaque);
++    av_free(drm);
++    av_free(desc);
++    return AVERROR(ENOMEM);
++fail_einval:
++    in->release(in->opaque);
++    return AVERROR(EINVAL);
++fail_external:
++    in->release(in->opaque);
++    return AVERROR_EXTERNAL;
++}
++
++/* Create avctx->hw_frames_ctx (DRM_PRIME, sw_format) when an NVMPI hwaccel
++ * device is attached and the output format is DRM_PRIME. Tells downstream
++ * filters/encoders that frames are DRM_PRIME-wrapped DMA-BUF surfaces.
++ * Returns 0 (also when nothing needs to be created) or a negative AVERROR. */
++static inline int nvmpi_drm_init_hw_frames(AVCodecContext *avctx,
++                                           enum AVPixelFormat sw_format)
++{
++    AVHWDeviceContext *device_ctx;
++    AVHWFramesContext *frames_ctx;
++    int ret;
++
++    if (!avctx->hw_device_ctx || avctx->pix_fmt != AV_PIX_FMT_DRM_PRIME)
++        return 0;
++    device_ctx = (AVHWDeviceContext *)avctx->hw_device_ctx->data;
++    if (device_ctx->type != AV_HWDEVICE_TYPE_NVMPI)
++        return 0;
++
++    avctx->hw_frames_ctx = av_hwframe_ctx_alloc(avctx->hw_device_ctx);
++    if (!avctx->hw_frames_ctx) {
++        av_log(avctx, AV_LOG_ERROR, "nvmpi: failed to allocate hw_frames_ctx\n");
++        return AVERROR(ENOMEM);
++    }
++    frames_ctx = (AVHWFramesContext *)avctx->hw_frames_ctx->data;
++    frames_ctx->format    = AV_PIX_FMT_DRM_PRIME;
++    frames_ctx->sw_format = sw_format;
++    frames_ctx->width     = avctx->width;
++    frames_ctx->height    = avctx->height;
++
++    ret = av_hwframe_ctx_init(avctx->hw_frames_ctx);
++    if (ret < 0) {
++        av_log(avctx, AV_LOG_ERROR, "nvmpi: failed to init hw_frames_ctx: %d\n", ret);
++        av_buffer_unref(&avctx->hw_frames_ctx);
++        return ret;
++    }
++    return 0;
++}
++
++#endif /* NVMPI_DEC_DRM_H */
 diff --git a/libavcodec/nvmpi_dec_mjpeg.c b/libavcodec/nvmpi_dec_mjpeg.c
 new file mode 100644
-index 0000000..51bb3b7
+index 0000000..69f630c
 --- /dev/null
 +++ b/libavcodec/nvmpi_dec_mjpeg.c
-@@ -0,0 +1,325 @@
+@@ -0,0 +1,355 @@
 +/*
 + * nvmpi_dec_mjpeg.c — FFmpeg MJPEG decoder wrapper for libnvmpi's JPEG
 + * decoder (layer 2 of jetson-ffmpeg, the FFmpeg integration layer).
@@ -1356,7 +1492,9 @@ index 0000000..51bb3b7
 + *   - Synchronous per-frame decode, with self-describing resolution that
 + *     may require a re-decode when the bitstream's dimensions differ from
 + *     avctx's current dimensions
-+ *   - Always YUV420P output with JPEG (full) color range — no NV12/P010LE
++ *   - YUV420P output with JPEG (full) color range by default (software
++ *     frames); opt-in DRM_PRIME zero-copy output when libnvmpi >= 4.1.0
++ *     (see nvmpi_dec_mjpeg_fd.h) — no P010LE
 + *
 + * This file is NOT built in this repository: it is patched into a vanilla
 + * FFmpeg source tree (libavcodec/) by scripts/ffpatch.sh or the generated
@@ -1394,6 +1532,9 @@ index 0000000..51bb3b7
 +#include "version.h"
 +
 +/*
++ * pix_fmts is a static table, so DRM_PRIME is listed after YUV420P (the
++ * default) unconditionally; whether it is really usable (libnvmpi >= 4.1.0)
++ * is decided at runtime in .init, which falls back to YUV420P otherwise.
 + * libavcodec 63 (FFmpeg 9.0+): pix_fmts moved from the public AVCodec (.p)
 + * to a direct field on FFCodec in codec_internal.h. Pre-63 uses .p.pix_fmts;
 + * 63+ uses .pix_fmts (or the CODEC_PIXFMTS() macro).
@@ -1401,11 +1542,11 @@ index 0000000..51bb3b7
 +#if LIBAVCODEC_VERSION_MAJOR >= 63
 +/* libavcodec 63 (FFmpeg 9.0+): pix_fmts on FFCodec directly */
 +#define NVMPI_MJPEG_PIXFMTS \
-+	.pix_fmts = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NONE}
++	.pix_fmts = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_DRM_PRIME, AV_PIX_FMT_NONE}
 +#else
 +/* libavcodec 60-62 (FFmpeg 6.0-8.x): pix_fmts on public AVCodec sub-struct */
 +#define NVMPI_MJPEG_PIXFMTS \
-+	.p.pix_fmts = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_NONE}
++	.p.pix_fmts = (const enum AVPixelFormat[]){AV_PIX_FMT_YUV420P, AV_PIX_FMT_DRM_PRIME, AV_PIX_FMT_NONE}
 +#endif
 +
 +//valid range / default for the frame_pool_size AVOption (mirrors the size
@@ -1442,17 +1583,22 @@ index 0000000..51bb3b7
 +	int disable_dpb;       //skip DPB reordering (low-latency, default off)
 +	int wait_timeout;      //blocking wait timeout in ms (0 = default 500ms)
 +	int output_format;     //requested output pixel format (AVPixelFormat; NONE = auto)
++	int drm_out;           //mjpeg only (appended: keeps all AVOption offsets): 1 = DRM_PRIME fd output
 +} nvmpiDecodeContext;
++
++#include "nvmpi_dec_mjpeg_fd.h"
 +
 +/* ------------------------------------------------------------------ */
 +/* MJPEG-specific callbacks (NvJPEGDecoder, not V4L2)                  */
 +/* ------------------------------------------------------------------ */
 +
 +//MJPEG .init: create the JPEG decoder (no V4L2 device, no capture thread).
-+//Output is always YUV420P with JPEG (full) color range.
++//Default output is YUV420P with JPEG (full) color range. DRM_PRIME (NV12
++//DMA-BUF) is used only when explicitly requested AND libnvmpi >= 4.1.0.
 +static int nvmpi_init_mjpeg_decoder(AVCodecContext *avctx)
 +{
 +	nvmpiDecodeContext *nvmpi_context = avctx->priv_data;
++	int ret;
 +
 +	/* Load libnvmpi.so via dlopen (same as the V4L2 decoder path). */
 +	if (nvmpi_dynlink_load() < 0) {
@@ -1463,8 +1609,25 @@ index 0000000..51bb3b7
 +		return AVERROR_EXTERNAL;
 +	}
 +
-+	avctx->pix_fmt = AV_PIX_FMT_YUV420P;
 +	avctx->color_range = AVCOL_RANGE_JPEG;
++
++	//Opt-in zero-copy path. Falls back (with a warning, never an error) to
++	//the software path below when the fd API is missing or unusable.
++	if (nvmpi_mjpeg_drm_requested(avctx, nvmpi_context))
++	{
++		nvmpi_context->ctx = nvmpi_mjpeg_create_fd_decoder(avctx, nvmpi_context);
++		if (nvmpi_context->ctx)
++		{
++			avctx->pix_fmt = AV_PIX_FMT_DRM_PRIME;
++			nvmpi_context->drm_out = 1;
++			ret = nvmpi_drm_init_hw_frames(avctx, AV_PIX_FMT_NV12);
++			if (ret < 0)
++				return ret; //.close (INIT_CLEANUP) destroys the decoder
++			return 0;       //frames are built per decode, no bufFrame
++		}
++	}
++
++	avctx->pix_fmt = AV_PIX_FMT_YUV420P;
 +
 +	nvmpi_context->bufFrame = av_frame_alloc();
 +	if (!nvmpi_context->bufFrame)
@@ -1504,6 +1667,9 @@ index 0000000..51bb3b7
 +	nvFrame _nvframe = {0};
 +	nvPacket packet;
 +	int res;
++
++	if (nvmpi_context->drm_out)
++		return nvmpi_decode_mjpeg_fd(avctx, frame, got_frame, avpkt);
 +
 +	if (!avpkt->size)
 +	{
@@ -1670,6 +1836,213 @@ index 0000000..51bb3b7
 +	NVMPI_MJPEG_PIXFMTS,
 +	.p.wrapper_name   = "nvmpi",
 +};
+diff --git a/libavcodec/nvmpi_dec_mjpeg_fd.h b/libavcodec/nvmpi_dec_mjpeg_fd.h
+new file mode 100644
+index 0000000..814da97
+--- /dev/null
++++ b/libavcodec/nvmpi_dec_mjpeg_fd.h
+@@ -0,0 +1,201 @@
++/*
++ * nvmpi_dec_mjpeg_fd.h -- DRM_PRIME (zero-copy) output of the mjpeg_nvmpi
++ * decoder, using libnvmpi 4.1.0's nvmpi_jpeg_decoder_get_frame_fd.
++ *
++ * Included by nvmpi_dec_mjpeg.c AFTER nvmpiDecodeContext is defined (the
++ * functions below are static inline and use that struct). Split out only to
++ * keep each file under 400 lines; it is not a separate translation unit.
++ *
++ * The API is OPTIONAL at runtime: libnvmpi 4.0.x lacks the symbols, so every
++ * entry point is gated on nvmpi_has_jpeg_fd() and the caller falls back to
++ * the software-frame path (YUV420P) with a warning. No compile-time
++ * dependency on libnvmpi 4.1.
++ */
++#ifndef NVMPI_DEC_MJPEG_FD_H
++#define NVMPI_DEC_MJPEG_FD_H
++
++#include <limits.h>
++
++#include "libavutil/time.h"
++#include "nvmpi_dec_drm.h"
++
++/* Default budget (ms) for put_packet to wait for a free pool buffer when
++ * downstream still holds every borrowed frame. */
++#define NVMPI_MJPEG_FD_POOL_WAIT_MS 500
++
++/* Is DRM_PRIME output requested? Explicit only: -output_format drm_prime, a
++ * caller-preset avctx->pix_fmt, or an attached NVMPI hwaccel device
++ * (-hwaccel nvmpi), the same triggers as the V4L2 video decoders. */
++static inline int nvmpi_mjpeg_drm_requested(AVCodecContext *avctx,
++                                            const nvmpiDecodeContext *c)
++{
++    if (c->output_format == AV_PIX_FMT_DRM_PRIME ||
++        avctx->pix_fmt == AV_PIX_FMT_DRM_PRIME)
++        return 1;
++    if (avctx->hw_device_ctx &&
++        ((AVHWDeviceContext *)avctx->hw_device_ctx->data)->type ==
++            AV_HWDEVICE_TYPE_NVMPI)
++        return 1;
++    return 0;
++}
++
++/* Try to create the fd-output decoder. Returns the handle, or NULL after
++ * logging a warning (symbols missing = libnvmpi 4.0.x, or creation failed,
++ * e.g. legacy nvbuf_utils build): the caller then uses the software path.
++ * NV12 is requested because scale_vic and the DRM_PRIME encoder path consume
++ * NV12 (4:2:2 / 4:4:4 JPEGs are converted by the VIC inside libnvmpi). */
++static inline nvmpictx *nvmpi_mjpeg_create_fd_decoder(AVCodecContext *avctx,
++                                                      const nvmpiDecodeContext *c)
++{
++    nvmpictx *ctx;
++
++    if (!nvmpi_has_jpeg_fd()) {
++        av_log(avctx, AV_LOG_WARNING,
++               "drm_prime output requested but libnvmpi lacks the JPEG fd API "
++               "(needs >= 4.1.0): falling back to software YUV420P frames.\n");
++        return NULL;
++    }
++    ctx = nvmpi_create_jpeg_decoder_fmt_dl(NV_PIX_NV12, c->frame_pool_size);
++    if (!ctx)
++        av_log(avctx, AV_LOG_WARNING,
++               "libnvmpi could not create the DMA-BUF JPEG decoder: falling "
++               "back to software YUV420P frames.\n");
++    return ctx;
++}
++
++/* Feed one packet; a full pool (every buffer still borrowed downstream) is
++ * NOT an error: put_packet returns NVMPI_ERR_EAGAIN without consuming the
++ * packet and downstream may release from another thread, so retry briefly.
++ * A decode callback must never return AVERROR(EAGAIN) (libavcodec asserts). */
++static inline int nvmpi_mjpeg_put_packet_fd(AVCodecContext *avctx,
++                                            nvmpiDecodeContext *c, nvPacket *pkt)
++{
++    int budget = c->wait_timeout > 0 ? c->wait_timeout : NVMPI_MJPEG_FD_POOL_WAIT_MS;
++    int res;
++
++    while ((res = nvmpi_jpeg_decoder_put_packet(c->ctx, pkt)) == NVMPI_ERR_EAGAIN) {
++        if (budget-- <= 0) {
++            av_log(avctx, AV_LOG_ERROR,
++                   "DMA-BUF pool exhausted: downstream holds every frame "
++                   "(raise -frame_pool_size).\n");
++            return AVERROR_EXTERNAL;
++        }
++        av_usleep(1000);
++    }
++    if (res < 0) {
++        av_log(avctx, AV_LOG_ERROR,
++               "nvmpi_jpeg_decoder_put_packet failed (code=%d).\n", res);
++        return AVERROR_EXTERNAL;
++    }
++    return 0;
++}
++
++/* .decode callback for the fd-output mode: one JPEG in, one DRM_PRIME frame
++ * (NV12 layer, real per-plane pitch/offset from the allocator) out. */
++static inline int nvmpi_decode_mjpeg_fd(AVCodecContext *avctx, AVFrame *frame,
++                                        int *got_frame, AVPacket *avpkt)
++{
++    nvmpiDecodeContext *c = avctx->priv_data;
++    nvmpi_fd_frame fdf = {0};
++    nvmpi_frame_release_cb release = NULL;
++    void *release_opaque = NULL;
++    NvmpiDRMFrameInfo info = {0};
++    nvPacket packet;
++    uint64_t chroma_end;
++    int res, i;
++
++    *got_frame = 0;
++    if (!avpkt->size)
++        return 0;
++
++    packet.flags = 0;
++    packet.privData = NULL;
++    packet.payload_size = avpkt->size;
++    packet.payload = avpkt->data;
++    packet.pts = avpkt->pts;
++
++    res = nvmpi_mjpeg_put_packet_fd(avctx, c, &packet);
++    if (res < 0)
++        return res;
++
++    /* struct_size MUST be set before the call: libnvmpi fills at most that
++     * many bytes (forward/backward ABI) and rejects a smaller value. */
++    fdf.struct_size = sizeof(fdf);
++    res = nvmpi_jpeg_decoder_get_frame_fd_dl(c->ctx, &fdf, &release,
++                                             &release_opaque, 1);
++    if (res == NVMPI_ERR_INVAL) {
++        av_log(avctx, AV_LOG_ERROR,
++               "nvmpi_jpeg_decoder_get_frame_fd rejected its arguments "
++               "(struct_size/handle mismatch).\n");
++        return AVERROR_EXTERNAL;
++    }
++    if (res < 0)
++        return avpkt->size;   /* no frame (timeout/EOS), same as the sw path */
++
++    /* From here the borrow is ours: every exit before nvmpi_drm_wrap_frame
++     * must call release(), and the wrapper releases on its own errors. */
++
++    /* Defensive validation of the library-reported layout: a hostile or
++     * corrupt JPEG must not make a consumer index outside the dma-buf.
++     * The chroma plane must end inside `size`; sums use 64 bits. */
++    chroma_end = (uint64_t)fdf.offset[1] +
++                 (uint64_t)fdf.pitch[1] * ((fdf.height + 1) / 2);
++    if (fdf.format != NV_PIX_NV12 || fdf.num_planes != 2 || fdf.fd < 0 ||
++        !fdf.width || !fdf.height || fdf.width > INT_MAX || fdf.height > INT_MAX ||
++        fdf.pitch[0] < fdf.width || fdf.pitch[1] < fdf.width ||
++        fdf.offset[1] < (uint64_t)fdf.pitch[0] * fdf.height ||
++        chroma_end > fdf.size) {
++        av_log(avctx, AV_LOG_ERROR,
++               "nvmpi: inconsistent DMA-BUF JPEG layout (%ux%u planes=%u "
++               "pitch=%u/%u off1=%u size=%llu)\n", fdf.width, fdf.height,
++               fdf.num_planes, fdf.pitch[0], fdf.pitch[1], fdf.offset[1],
++               (unsigned long long)fdf.size);
++        release(release_opaque);
++        return AVERROR_INVALIDDATA;
++    }
++
++    info.fd           = fdf.fd;
++    info.orig_fd_hint = 1;  /* libnvmpi keeps the surface alive until release */
++    info.release      = release;
++    info.opaque       = release_opaque;
++    info.fourcc       = DRM_FORMAT_NV12;
++    info.nb_planes    = 2;
++    for (i = 0; i < 2; i++) {
++        info.pitch[i]  = fdf.pitch[i];
++        info.offset[i] = fdf.offset[i];
++    }
++    info.size   = (size_t)fdf.size;
++    info.width  = fdf.width;
++    info.height = fdf.height;
++    info.pts    = fdf.timestamp;
++
++    /* Picture size is self-describing: keep avctx and the hw_frames_ctx in
++     * step so downstream filters see consistent geometry. */
++    if ((int)fdf.width != avctx->width || (int)fdf.height != avctx->height) {
++        avctx->width  = fdf.width;
++        avctx->height = fdf.height;
++        if (avctx->hw_frames_ctx) {
++            av_buffer_unref(&avctx->hw_frames_ctx);
++            res = nvmpi_drm_init_hw_frames(avctx, AV_PIX_FMT_NV12);
++            if (res < 0) {
++                release(release_opaque);
++                return res;
++            }
++        }
++    }
++
++    res = nvmpi_drm_wrap_frame(frame, &info, avctx->hw_frames_ctx);
++    if (res < 0)
++        return res;
++
++    /* Range from the library flag (bit0 = full); applied per frame and to
++     * avctx (init already defaulted avctx to JPEG/full). */
++    frame->color_range = (fdf.flags & NVMPI_FD_FRAME_FULL_RANGE)
++                         ? AVCOL_RANGE_JPEG : AVCOL_RANGE_MPEG;
++    avctx->color_range = frame->color_range;
++
++    *got_frame = 1;
++    return avpkt->size;
++}
++
++#endif /* NVMPI_DEC_MJPEG_FD_H */
 diff --git a/libavcodec/nvmpi_enc.c b/libavcodec/nvmpi_enc.c
 new file mode 100644
 index 0000000..62c699d
@@ -2515,10 +2888,10 @@ index 0000000..7814ed2
 +};
 diff --git a/libavcodec/nvmpi_enc_runtime.c b/libavcodec/nvmpi_enc_runtime.c
 new file mode 100644
-index 0000000..26828fe
+index 0000000..e099366
 --- /dev/null
 +++ b/libavcodec/nvmpi_enc_runtime.c
-@@ -0,0 +1,506 @@
+@@ -0,0 +1,525 @@
 +/*
 + * nvmpi_enc_runtime.c — FFmpeg encoder wrapper for libnvmpi (layer 2 of
 + * jetson-ffmpeg, the FFmpeg integration layer): the encode hot path
@@ -2809,7 +3182,7 @@ index 0000000..26828fe
 +			AVDRMFrameDescriptor *desc = (AVDRMFrameDescriptor *)frame->data[0];
 +			int drm_fd;
 +			int pitch;
-+			size_t y_size, uv_size, total_size;
++			size_t y_size, uv_size, uv_off, total_size;
 +			void *map;
 +			struct dma_buf_sync sync;
 +
@@ -2822,10 +3195,29 @@ index 0000000..26828fe
 +			drm_fd = desc->objects[0].fd;
 +			pitch  = desc->layers[0].planes[0].pitch;
 +
-+			/* NV12 layout: Y plane (pitch * height) + UV plane (pitch * height/2) */
++			/* NV12 layout: Y plane (pitch * height) + UV plane (pitch * height/2).
++			 * The UV plane starts at the descriptor's real chroma offset:
++			 * decoders whose surfaces pad the plane height (JPEG decoder,
++			 * odd/unaligned sizes) report an offset above pitch * height.
++			 * Video-decoder frames report exactly pitch * height, so their
++			 * behaviour is unchanged. */
 +			y_size  = (size_t)pitch * frame->height;
 +			uv_size = (size_t)pitch * frame->height / 2;
-+			total_size = y_size + uv_size;
++			uv_off  = y_size;
++			if (desc->nb_layers > 0 && desc->layers[0].nb_planes > 1 &&
++			    desc->layers[0].planes[1].offset > 0)
++				uv_off = (size_t)desc->layers[0].planes[1].offset;
++			/* Bounds: the chroma plane must start after luma and the whole
++			 * mapping must fit the dma-buf, else mmap'd reads would run past
++			 * it (SIGBUS) on a corrupt/hostile descriptor. */
++			if (uv_off < y_size || uv_off > SIZE_MAX - uv_size ||
++			    (desc->objects[0].size &&
++			     uv_off + uv_size > desc->objects[0].size)) {
++				av_log(avctx, AV_LOG_ERROR,
++				       "nvmpi: DRM_PRIME frame has an inconsistent NV12 layout\n");
++				return AVERROR(EINVAL);
++			}
++			total_size = uv_off + uv_size;
 +
 +			/* DMA-BUF sync: ensure VIC/decoder writes are visible to CPU */
 +			memset(&sync, 0, sizeof(sync));
@@ -2845,7 +3237,7 @@ index 0000000..26828fe
 +			 * payload[0] = Y, payload[1] = interleaved UV.
 +			 * linesize = pitch (may differ from width due to alignment). */
 +			_nvframe.payload[0] = map;
-+			_nvframe.payload[1] = (uint8_t *)map + y_size;
++			_nvframe.payload[1] = (uint8_t *)map + uv_off;
 +			_nvframe.payload[2] = NULL;
 +			_nvframe.payload_size[0] = y_size;
 +			_nvframe.payload_size[1] = uv_size;
@@ -3025,6 +3417,72 @@ index 0000000..26828fe
 +    nvmpi_context->encoder_flushing = 0;
 +    nvmpi_context->send_eagain = 0;
 +}
+diff --git a/libavcodec/nvmpi_fd_frame.h b/libavcodec/nvmpi_fd_frame.h
+new file mode 100644
+index 0000000..d3c1153
+--- /dev/null
++++ b/libavcodec/nvmpi_fd_frame.h
+@@ -0,0 +1,60 @@
++/*
++ * nvmpi_fd_frame.h -- libnvmpi 4.1.0 JPEG-decoder fd API types, copied byte
++ * for byte from libnvmpi's nvmpi.h (the ABI is frozen there: fields are only
++ * ever appended after `flags`). Included by dynlink_nvmpi.h right after
++ * nvPixFormat is defined; do not include it directly.
++ */
++#ifndef NVMPI_FD_FRAME_H
++#define NVMPI_FD_FRAME_H
++
++#include <stddef.h>
++#include <stdint.h>
++
++/* Invalid argument (NULL pointer, struct_size too small, wrong handle
++ * family). Copied byte for byte from libnvmpi 4.1.0 nvmpi.h. */
++#define NVMPI_ERR_INVAL (-22)
++
++/* One decoded JPEG frame as a borrowed DMA-BUF fd. FROZEN ABI: copied byte
++ * for byte from libnvmpi 4.1.0 nvmpi.h (fields are only ever appended after
++ * `flags`). The caller sets struct_size = sizeof(nvmpi_fd_frame) before the
++ * call. Use pitch[]/offset[]/size to address planes, never width/height
++ * (the displayed size may be smaller than the padded planes). */
++typedef struct {
++    uint32_t struct_size;      /* IN: sizeof(nvmpi_fd_frame) of the caller */
++    int fd;                    /* borrowed pitch-linear dmabuf fd */
++    uint32_t width, height;    /* displayed JPEG size (planes may be larger) */
++    nvPixFormat format;        /* NV_PIX_NV12 (2 planes) or NV_PIX_YUV420 (3) */
++    uint32_t num_planes;       /* 2 for NV12, 3 for YUV420 */
++    uint32_t pitch[3];         /* bytes per row of each plane */
++    uint32_t offset[3];        /* byte offset of each plane inside the fd */
++    uint64_t size;             /* total size of the buffer behind fd */
++    int64_t timestamp;         /* pts copied from nvPacket.pts of the input */
++    uint32_t flags;            /* bit0 (NVMPI_FD_FRAME_FULL_RANGE): full range */
++} nvmpi_fd_frame;
++
++#define NVMPI_FD_FRAME_FULL_RANGE 0x1u
++#define NVMPI_FD_FRAME_V1_SIZE \
++    (offsetof(nvmpi_fd_frame, flags) + sizeof(uint32_t))
++
++/* ABI drift guard: pins the LP64 (aarch64) layout against the 4.1.0 header.
++ * A mismatch is a build error here instead of silent memory corruption. */
++#if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 201112L && defined(__LP64__)
++_Static_assert(NVMPI_ERR_INVAL == -22, "NVMPI_ERR_INVAL ABI");
++_Static_assert(sizeof(nvPixFormat) == 4, "nvPixFormat ABI");
++_Static_assert(sizeof(nvmpi_fd_frame) == 72, "nvmpi_fd_frame size ABI");
++_Static_assert(offsetof(nvmpi_fd_frame, struct_size) == 0, "struct_size ABI");
++_Static_assert(offsetof(nvmpi_fd_frame, fd) == 4, "fd ABI");
++_Static_assert(offsetof(nvmpi_fd_frame, width) == 8, "width ABI");
++_Static_assert(offsetof(nvmpi_fd_frame, height) == 12, "height ABI");
++_Static_assert(offsetof(nvmpi_fd_frame, format) == 16, "format ABI");
++_Static_assert(offsetof(nvmpi_fd_frame, num_planes) == 20, "num_planes ABI");
++_Static_assert(offsetof(nvmpi_fd_frame, pitch) == 24, "pitch ABI");
++_Static_assert(offsetof(nvmpi_fd_frame, offset) == 36, "offset ABI");
++_Static_assert(offsetof(nvmpi_fd_frame, size) == 48, "size ABI");
++_Static_assert(offsetof(nvmpi_fd_frame, timestamp) == 56, "timestamp ABI");
++_Static_assert(offsetof(nvmpi_fd_frame, flags) == 64, "flags ABI");
++_Static_assert(NVMPI_FD_FRAME_V1_SIZE == 68, "V1 size ABI");
++#endif
++
++
++#endif /* NVMPI_FD_FRAME_H */
 diff --git a/libavfilter/Makefile b/libavfilter/Makefile
 index 7506327..5f91d47 100644
 --- a/libavfilter/Makefile
@@ -3577,10 +4035,10 @@ index 0000000..fafbdaf
 +#endif
 diff --git a/libavfilter/vf_scale_vic_frame.c b/libavfilter/vf_scale_vic_frame.c
 new file mode 100644
-index 0000000..fc68a49
+index 0000000..0615d5b
 --- /dev/null
 +++ b/libavfilter/vf_scale_vic_frame.c
-@@ -0,0 +1,273 @@
+@@ -0,0 +1,289 @@
 +/*
 + * vf_scale_vic_frame.c — per-frame processing for the Tegra VIC hardware
 + * scale/CSC filter.
@@ -3687,6 +4145,22 @@ index 0000000..fc68a49
 +    if (!in_desc || in_desc->nb_objects < 1) {
 +        av_log(avctx, AV_LOG_ERROR,
 +               "scale_vic: input frame has no DRM objects\n");
++        av_frame_free(&in);
++        return AVERROR(EINVAL);
++    }
++
++    /* nvmpi_surface_copy_from_dmabuf assumes the chroma plane starts at
++     * pitch * height. Frames whose surface pads the plane height (JPEG
++     * decoder with unaligned sizes) report a larger offset: copying would
++     * silently corrupt the chroma, so refuse them with a clear error. */
++    if (in_desc->layers[0].nb_planes > 1 &&
++        in_desc->layers[0].planes[1].offset !=
++            (ptrdiff_t)in_desc->layers[0].planes[0].pitch * in->height) {
++        av_log(avctx, AV_LOG_ERROR,
++               "scale_vic: unsupported chroma offset %td (expected pitch*height "
++               "= %td); use a 16-aligned picture height\n",
++               in_desc->layers[0].planes[1].offset,
++               (ptrdiff_t)in_desc->layers[0].planes[0].pitch * in->height);
 +        av_frame_free(&in);
 +        return AVERROR(EINVAL);
 +    }
