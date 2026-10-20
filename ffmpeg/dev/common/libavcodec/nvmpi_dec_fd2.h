@@ -104,6 +104,25 @@ static inline int nvmpi_dec_get_drm_info(AVCodecContext *avctx, nvmpictx *ctx,
             return AVERROR_INVALIDDATA;
         }
 
+        /* Diagnostics (-loglevel verbose): the real per-plane layout of each
+         * new geometry, to tell padded surfaces from layout bugs on hardware.
+         * Logged on size/offset change only, never per frame. */
+        {
+            static unsigned last_w, last_h, last_off;
+
+            if (fdf.width != last_w || fdf.height != last_h ||
+                fdf.offset[1] != last_off) {
+                last_w = fdf.width; last_h = fdf.height;
+                last_off = fdf.offset[1];
+                av_log(avctx, AV_LOG_VERBOSE,
+                       "nvmpi: DRM_PRIME layout %ux%u pitch=%u/%u off=%u/%u "
+                       "size=%llu (avctx %dx%d)\n", fdf.width, fdf.height,
+                       fdf.pitch[0], fdf.pitch[1], fdf.offset[0],
+                       fdf.offset[1], (unsigned long long)fdf.size,
+                       avctx->width, avctx->height);
+            }
+        }
+
         info->fd           = fdf.fd;
         /* Original-fd hint: libnvmpi 4.3 keeps the buffer valid until the
          * release callback runs (also after decoder close), so scale_vic and

@@ -116,19 +116,35 @@ int scale_vic_filter_frame(AVFilterLink *inlink, AVFrame *in)
            (int)in_desc->layers[0].planes[0].pitch,
            in->width, in->height, outlink->w, outlink->h);
 
+    /* Passthrough (same dimensions): no VIC transform is needed (and a
+     * same-size NvBufSurfTransform deadlocks on JP6), so forward the input
+     * frame untouched. Its descriptor already carries the decoder's REAL
+     * plane layout (pitch + chroma offset, jetson-ffmpeg#131), which every
+     * consumer here honors (encoder fd path reads layers[0].planes[]).
+     * Copying into a registered surface instead would need
+     * nvmpi_surface_copy_from_dmabuf, which hardcodes chroma at
+     * pitch*height and corrupts frames from padded (page-aligned) surfaces.
+     * The hw_frames_ctx on the frame matches outlink's (config_props refs
+     * the input's), so no frame-context mismatch downstream. */
+    if (in->width == outlink->w && in->height == outlink->h) {
+        av_log(avctx, AV_LOG_DEBUG,
+               "scale_vic: passthrough %dx%d (frame forwarded, no copy)\n",
+               in->width, in->height);
+        return ff_filter_frame(outlink, in);
+    }
+
     /* Zero-copy source: frames from the JPEG decoder carry the ORIGINAL
      * NvBufSurface-registered fd as a format-modifier hint (vendor 0x4E, see
      * NVMPI_DRM_MOD_ORIG_FD in nvmpi_dec_drm.h). Valid while this frame is
      * referenced, which it is during this call. VIC reads the surface with
      * its real plane layout, so padded chroma offsets are handled and no CPU
      * copy is needed. If the lookup fails (stale hint, other producer) the
-     * copy path below takes over. Scaling only: a same-size VIC transform
-     * deadlocks on JP6 (see the passthrough branch). */
+     * copy path below takes over. Only reached when scaling: same-size frames
+     * were forwarded above (a same-size VIC transform deadlocks on JP6). */
     mod = in_desc->objects[0].format_modifier;
     if ((mod >> 56) == 0x4E)
         orig_fd = (int)(mod & 0xFFFFFFFFu);
-    if (orig_fd >= 0 &&
-        (in->width != outlink->w || in->height != outlink->h)) {
+    if (orig_fd >= 0) {
         dst_fd = s->out_fds[s->pool_idx];
         if (nvmpi_vic_transform(s->vic_ctx, orig_fd, dst_fd,
                                 in->width, in->height,
@@ -145,9 +161,11 @@ int scale_vic_filter_frame(AVFilterLink *inlink, AVFrame *in)
 
     if (!direct) {
         /* nvmpi_surface_copy_from_dmabuf assumes the chroma plane starts at
-         * pitch * height. Frames whose surface pads the plane height (JPEG
-         * decoder with unaligned sizes) report a larger offset: copying would
-         * silently corrupt the chroma, so refuse them with a clear error. */
+         * pitch * height. Frames whose surface pads the plane height report a
+         * larger offset: copying would silently corrupt the chroma, so refuse
+         * them with a clear error. Only reachable when scaling and the direct
+         * VIC path (original-fd hint) failed or is absent; same-size frames
+         * are forwarded without a copy above. */
         if (in_desc->layers[0].nb_planes > 1 &&
             in_desc->layers[0].planes[1].offset !=
                 (ptrdiff_t)in_desc->layers[0].planes[0].pitch * in->height) {
@@ -185,17 +203,6 @@ int scale_vic_filter_frame(AVFilterLink *inlink, AVFrame *in)
     if (direct) {
         /* Already transformed straight from the decoder's registered
          * surface (dst_fd/dst_pitch set above); nothing left to do. */
-    } else if (in->width == outlink->w && in->height == outlink->h) {
-        /* Passthrough: same dimensions — skip VIC transform entirely.
-         * The registered source buffer already contains the NV12 data;
-         * use it directly as the output.  This avoids the NvBufSurfTransform
-         * identity deadlock (JP6 VIC hangs on same-format same-dimensions)
-         * and eliminates bBlitMode in the downstream MMAP encoder. */
-        dst_fd = src_fd;
-        dst_pitch = in_desc->layers[0].planes[0].pitch;
-        av_log(avctx, AV_LOG_DEBUG,
-               "scale_vic: passthrough %dx%d (CPU copy, no VIC)\n",
-               in->width, in->height);
     } else {
         /* Scaling: use VIC hardware transform NV12 → NV12 at different
          * dimensions.  No identity deadlock because dims differ. */
@@ -255,9 +262,9 @@ int scale_vic_filter_frame(AVFilterLink *inlink, AVFrame *in)
     }
 
     /* NV12 pitch: for scaling cases, the output surface uses outlink->w.
-     * For passthrough, dst_pitch was set from the input descriptor's pitch
-     * (matching the registered source surface).  Both branches above have
-     * already set dst_pitch — do not overwrite here. */
+     * Every branch that reaches here (direct VIC or copy + VIC) has already
+     * set dst_pitch — do not overwrite here. Same-size frames never get here
+     * (forwarded unchanged above). */
 
     /* Single DMA-BUF object, one NV12 layer with luma + chroma planes.
      * format_modifier carries the original NvBufSurface-registered fd
