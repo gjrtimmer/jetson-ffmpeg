@@ -38,7 +38,7 @@ trap 'rm -f "${T}"-* 2>/dev/null || true' EXIT
 echo "== 1. decode: frame count and dimensions =="
 # Stream geometry comes from the IVF header; the decoder itself is forced with
 # ffmpeg (ffprobe on PATH may not be the patched build). 5 packets -> 5 frames.
-dims=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 "$FIX")
+dims=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 "$FIX" 2>/dev/null | tail -n 1)
 [ "$dims" = "${W},${H}" ] || ff_fail "fixture dimensions '${dims}', expected ${W},${H}."
 run_ff_must "decode" -T 60 -c:v av1_nvmpi -i "$FIX" -f null -
 assert_frames "$N" "av1 decode"
