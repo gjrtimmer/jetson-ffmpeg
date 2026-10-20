@@ -64,13 +64,14 @@ discover() {
 }
 # Suites that give meaningful results on the mock (opt-in: a new suite is NOT
 # mockable until listed here). Excluded, with the reason:
-#   decoder-mjpeg, decoder-mjpeg-drmprime,
-#   encoder-jpeg                  NvJPEG is not mocked (link-time stub only)
+#   decoder-mjpeg,
+#   encoder-jpeg                  NvJPEG encode is not mocked (link-time stub only)
 #   encoder-level                 the mock encoder emits a canned SPS (level 4.0)
 #   soak-decode, perf-bench,
 #   perf-mode                     timing/throughput numbers need the engines
 MOCK_SUITES="smoke decoder-blocking-wait decoder-chunk decoder-codecs
-  decoder-downscale decoder-flush decoder-lifecycle decoder-pool encoder-gop
+  decoder-av1 decoder-downscale decoder-flush decoder-lifecycle decoder-mjpeg-drmprime
+  decoder-pool encoder-gop
   encoder-header encoder-modes encoder-pools encoder-thread-safety
   filter-scale-vic format-pixfmt lifecycle-stress rtp-sdp"
 if [ "${NVMPI_MOCK:-0}" = "1" ]; then

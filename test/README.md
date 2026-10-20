@@ -13,9 +13,11 @@ Suites are organized by subsystem in subdirectories:
 test/
 ├── hw-all.sh              # runner: auto-discovers + runs all suites
 ├── gen-samples.sh         # shared sample paths + generators, gen-all
+├── fixtures/              # committed binary fixtures (av1-320x240.ivf)
 ├── lib/common.sh          # shared helpers: run_ff, assert_frames, has_codec, ...
 ├── smoke-all.sh           # full cross-version matrix harness
 ├── decoder/               # NVDEC decoder suites
+│   ├── hw-decoder-av1.sh              # av1_nvmpi (JetPack 6, 320x240 IVF fixture in fixtures/)
 │   ├── hw-decoder-blocking-wait.sh
 │   ├── hw-decoder-chunk.sh
 │   ├── hw-decoder-codecs.sh
@@ -176,8 +178,9 @@ tags (the release gate is real hardware). It catches logic, lifecycle and
 wrapper bugs and, via `auto_cancel`, keeps such failures off the shared Orin.
 
 The mockable list is `MOCK_SUITES` in `hw-all.sh` (opt-in; new suites are not
-mocked until listed). Not mockable: `decoder-mjpeg`, `decoder-mjpeg-drmprime`, `encoder-jpeg` (NvJPEG
-not mocked; the jetson-nvmpi 4.1.0 mock has no JPEG fd model), `encoder-level` (canned SPS), `soak-decode`, `perf-bench`, `perf-mode`
+mocked until listed). Not mockable: `decoder-mjpeg`, `encoder-jpeg` (NvJPEG
+encode/software-frame decode not mocked; `decoder-mjpeg-drmprime` runs on the
+4.2.1 mock via its NvJPEGDecoder model, pixel checks stay hardware only), `encoder-level` (canned SPS), `soak-decode`, `perf-bench`, `perf-mode`
 (timing needs the engines). Inside mockable suites, assertions that need real
 hardware output are guarded with `is_mock` / `mock_skip` (canned HEVC
 parameter sets cannot be muxed; canned slices are not software-decodable; no
