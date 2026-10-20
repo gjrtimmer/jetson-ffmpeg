@@ -38,7 +38,7 @@
 #
 # Quick builds:
 #   scripts/build.sh --ffmpeg 7.1                      # FFmpeg 7.1 + nvmpi, system libnvmpi
-#   scripts/fetch-nvmpi.sh --version 4.0.0 --dest ~/nvmpi
+#   scripts/fetch-nvmpi.sh --version 4.0.2 --dest ~/nvmpi
 #   scripts/build.sh --ffmpeg 7.1 --nvmpi-prefix ~/nvmpi
 #
 # Safe to run from any working directory.
