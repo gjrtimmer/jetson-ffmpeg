@@ -22,6 +22,7 @@ test/
 │   ├── hw-decoder-chunk.sh
 │   ├── hw-decoder-codecs.sh
 │   ├── hw-decoder-downscale.sh
+│   ├── hw-decoder-drmprime-planes.sh  # video DRM_PRIME plane offsets (libnvmpi fd2), res change
 │   ├── hw-decoder-flush.sh
 │   ├── hw-decoder-lifecycle.sh
 │   ├── hw-decoder-mjpeg.sh
