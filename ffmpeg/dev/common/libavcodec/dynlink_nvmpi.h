@@ -195,6 +195,12 @@ typedef int       (*fn_nvmpi_decoder_get_frame_fd)(nvmpictx *ctx,
     int *dmabuf_fd, int *width, int *height, int *pitch,
     int64_t *timestamp, nvmpi_frame_release_cb *release,
     void **opaque, bool wait);
+/* Per-plane geometry variant (libnvmpi >= 4.3.0, optional). Prototype copied
+ * from jetson-nvmpi v4.3.0 include/nvmpi.h; nvmpi_fd_frame is pinned by
+ * the ABI asserts in nvmpi_fd_frame.h. */
+typedef int       (*fn_nvmpi_decoder_get_frame_fd2)(nvmpictx *ctx,
+    nvmpi_fd_frame *frame, nvmpi_frame_release_cb *release,
+    void **opaque, bool wait);
 typedef int       (*fn_nvmpi_encoder_put_frame_fd)(nvmpictx *ctx,
     int dmabuf_fd, int width, int height, int pitch,
     int64_t timestamp);
@@ -242,6 +248,7 @@ static fn_nvmpi_jpeg_decoder_get_frame_fd  nvmpi_jpeg_decoder_get_frame_fd_dl;
 
 /* DMA-BUF fd passthrough (zero-copy) */
 static fn_nvmpi_decoder_get_frame_fd    nvmpi_decoder_get_frame_fd_dl;
+static fn_nvmpi_decoder_get_frame_fd2   nvmpi_decoder_get_frame_fd2_dl;  /* NULL when libnvmpi < 4.3.0 */
 static fn_nvmpi_encoder_put_frame_fd    nvmpi_encoder_put_frame_fd_dl;
 static fn_nvmpi_surface_alloc           nvmpi_surface_alloc_dl;
 static fn_nvmpi_surface_destroy         nvmpi_surface_destroy_dl;
@@ -334,6 +341,9 @@ static int nvmpi_dynlink_load(void)
     NVMPI_LOAD_SYM_OPT(nvmpi_create_jpeg_decoder_fmt_dl,   nvmpi_create_jpeg_decoder_fmt);
     NVMPI_LOAD_SYM_OPT(nvmpi_jpeg_decoder_get_frame_fd_dl, nvmpi_jpeg_decoder_get_frame_fd);
 
+    /* Per-plane decoder fd API (4.3.0+): optional, older libraries keep loading */
+    NVMPI_LOAD_SYM_OPT(nvmpi_decoder_get_frame_fd2_dl, nvmpi_decoder_get_frame_fd2);
+
     return 0;
 
 fail:
@@ -394,6 +404,7 @@ static inline int nvmpi_has_jpeg_fd(void)
 
 /* DMA-BUF fd passthrough (zero-copy) */
 #define nvmpi_decoder_get_frame_fd    nvmpi_decoder_get_frame_fd_dl
+#define nvmpi_decoder_get_frame_fd2   nvmpi_decoder_get_frame_fd2_dl
 #define nvmpi_encoder_put_frame_fd    nvmpi_encoder_put_frame_fd_dl
 #define nvmpi_surface_alloc           nvmpi_surface_alloc_dl
 #define nvmpi_surface_destroy         nvmpi_surface_destroy_dl

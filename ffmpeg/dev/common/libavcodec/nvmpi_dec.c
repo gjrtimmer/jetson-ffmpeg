@@ -47,6 +47,7 @@
 /* DRM_PRIME wrapping (descriptor, release, hw_frames_ctx) is shared with
  * nvmpi_dec_mjpeg.c; DRM_FORMAT_NV12 and NVMPI_DRM_MOD_ORIG_FD live there. */
 #include "nvmpi_dec_drm.h"
+#include "nvmpi_dec_fd2.h"
 
 /*
  * libavcodec 63 (FFmpeg 9.0+): pix_fmts moved from the public AVCodec (.p)
@@ -411,49 +412,29 @@ static int nvmpi_decode(AVCodecContext *avctx, AVFrame *data, int *got_frame, AV
 
 	/* ---- DRM_PRIME path: wrap DMA-BUF fd in AVDRMFrameDescriptor ---- */
 	if (avctx->pix_fmt == AV_PIX_FMT_DRM_PRIME) {
-		int dmabuf_fd, width, height, pitch;
-		int64_t timestamp;
-		nvmpi_frame_release_cb release_cb;
-		void *release_opaque;
-		NvmpiDRMFrameInfo info = {0};
+		NvmpiDRMFrameInfo info;
 
-		res = nvmpi_decoder_get_frame_fd(nvmpi_context->ctx,
-			&dmabuf_fd, &width, &height, &pitch, &timestamp,
-			&release_cb, &release_opaque,
-			avctx->flags & AV_CODEC_FLAG_LOW_DELAY);
-
+		/* Real per-plane layout from libnvmpi >= 4.3.0 (fd2); older libraries
+		 * fall back to pitch*height inside the helper (jetson-ffmpeg#131).
+		 * Returns 1 when no frame is ready, <0 on error (borrow already
+		 * released). */
+		res = nvmpi_dec_get_drm_info(avctx, nvmpi_context->ctx,
+			avctx->flags & AV_CODEC_FLAG_LOW_DELAY, &info);
 		if (res < 0)
+			return res;
+		if (res > 0)
 			return decode_ret;
 
-		/* Single NV12 layer, luma + chroma in one DMA-BUF. The chroma offset
-		 * is pitch*height: this API returns one pitch only (see
-		 * jetson-nvmpi#129 / jetson-ffmpeg#131). No original-fd hint: the
-		 * V4L2 pool is destroyed by decoder close while borrows may still be
-		 * outstanding, so the hint could dangle. The shared helper dup()s the
-		 * fd and releases the borrow exactly once on every path. */
-		info.fd            = dmabuf_fd;
-		info.orig_fd_hint  = 0;
-		info.release       = release_cb;
-		info.opaque        = release_opaque;
-		info.fourcc        = DRM_FORMAT_NV12;
-		info.nb_planes     = 2;
-		info.pitch[0]      = pitch;
-		info.pitch[1]      = pitch;
-		info.offset[0]     = 0;
-		info.offset[1]     = (uint32_t)pitch * height;
-		info.size          = (size_t)pitch * height * 3 / 2;
-		info.width         = width;
-		info.height        = height;
-		info.pts           = timestamp;
-
-		res = nvmpi_drm_wrap_frame(frame, &info, avctx->hw_frames_ctx);
+		/* Resolution change: re-derive avctx size + hw_frames_ctx first. */
+		res = nvmpi_dec_sync_geometry(avctx, &info);
 		if (res < 0)
 			return res;
 
-		if (width && height) {
-			avctx->width  = width;
-			avctx->height = height;
-		}
+		/* The shared helper dup()s the fd and releases the borrow exactly once
+		 * on every path (free order: close dup, release, free). */
+		res = nvmpi_drm_wrap_frame(frame, &info, avctx->hw_frames_ctx);
+		if (res < 0)
+			return res;
 
 		*got_frame = 1;
 		return decode_ret;

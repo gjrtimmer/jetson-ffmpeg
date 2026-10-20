@@ -216,10 +216,10 @@ index e593ad1..aed84fe 100644
  extern const FFCodec ff_vqa_decoder;
 diff --git a/libavcodec/dynlink_nvmpi.h b/libavcodec/dynlink_nvmpi.h
 new file mode 100644
-index 0000000..9d08421
+index 0000000..214e481
 --- /dev/null
 +++ b/libavcodec/dynlink_nvmpi.h
-@@ -0,0 +1,401 @@
+@@ -0,0 +1,412 @@
 +/*
 + * dynlink_nvmpi.h -- Runtime lazy-loading of libnvmpi via dlopen/dlsym.
 + *
@@ -417,6 +417,12 @@ index 0000000..9d08421
 +    int *dmabuf_fd, int *width, int *height, int *pitch,
 +    int64_t *timestamp, nvmpi_frame_release_cb *release,
 +    void **opaque, bool wait);
++/* Per-plane geometry variant (libnvmpi >= 4.3.0, optional). Prototype copied
++ * from jetson-nvmpi v4.3.0 include/nvmpi.h; nvmpi_fd_frame is pinned by
++ * the ABI asserts in nvmpi_fd_frame.h. */
++typedef int       (*fn_nvmpi_decoder_get_frame_fd2)(nvmpictx *ctx,
++    nvmpi_fd_frame *frame, nvmpi_frame_release_cb *release,
++    void **opaque, bool wait);
 +typedef int       (*fn_nvmpi_encoder_put_frame_fd)(nvmpictx *ctx,
 +    int dmabuf_fd, int width, int height, int pitch,
 +    int64_t timestamp);
@@ -464,6 +470,7 @@ index 0000000..9d08421
 +
 +/* DMA-BUF fd passthrough (zero-copy) */
 +static fn_nvmpi_decoder_get_frame_fd    nvmpi_decoder_get_frame_fd_dl;
++static fn_nvmpi_decoder_get_frame_fd2   nvmpi_decoder_get_frame_fd2_dl;  /* NULL when libnvmpi < 4.3.0 */
 +static fn_nvmpi_encoder_put_frame_fd    nvmpi_encoder_put_frame_fd_dl;
 +static fn_nvmpi_surface_alloc           nvmpi_surface_alloc_dl;
 +static fn_nvmpi_surface_destroy         nvmpi_surface_destroy_dl;
@@ -556,6 +563,9 @@ index 0000000..9d08421
 +    NVMPI_LOAD_SYM_OPT(nvmpi_create_jpeg_decoder_fmt_dl,   nvmpi_create_jpeg_decoder_fmt);
 +    NVMPI_LOAD_SYM_OPT(nvmpi_jpeg_decoder_get_frame_fd_dl, nvmpi_jpeg_decoder_get_frame_fd);
 +
++    /* Per-plane decoder fd API (4.3.0+): optional, older libraries keep loading */
++    NVMPI_LOAD_SYM_OPT(nvmpi_decoder_get_frame_fd2_dl, nvmpi_decoder_get_frame_fd2);
++
 +    return 0;
 +
 +fail:
@@ -616,6 +626,7 @@ index 0000000..9d08421
 +
 +/* DMA-BUF fd passthrough (zero-copy) */
 +#define nvmpi_decoder_get_frame_fd    nvmpi_decoder_get_frame_fd_dl
++#define nvmpi_decoder_get_frame_fd2   nvmpi_decoder_get_frame_fd2_dl
 +#define nvmpi_encoder_put_frame_fd    nvmpi_encoder_put_frame_fd_dl
 +#define nvmpi_surface_alloc           nvmpi_surface_alloc_dl
 +#define nvmpi_surface_destroy         nvmpi_surface_destroy_dl
@@ -623,10 +634,10 @@ index 0000000..9d08421
 +#endif /* DYNLINK_NVMPI_H */
 diff --git a/libavcodec/nvmpi_dec.c b/libavcodec/nvmpi_dec.c
 new file mode 100644
-index 0000000..aeadda6
+index 0000000..7d13073
 --- /dev/null
 +++ b/libavcodec/nvmpi_dec.c
-@@ -0,0 +1,613 @@
+@@ -0,0 +1,594 @@
 +/*
 + * nvmpi_dec.c — FFmpeg decoder wrapper for libnvmpi (layer 2 of
 + * jetson-ffmpeg, the FFmpeg integration layer).
@@ -676,6 +687,7 @@ index 0000000..aeadda6
 +/* DRM_PRIME wrapping (descriptor, release, hw_frames_ctx) is shared with
 + * nvmpi_dec_mjpeg.c; DRM_FORMAT_NV12 and NVMPI_DRM_MOD_ORIG_FD live there. */
 +#include "nvmpi_dec_drm.h"
++#include "nvmpi_dec_fd2.h"
 +
 +/*
 + * libavcodec 63 (FFmpeg 9.0+): pix_fmts moved from the public AVCodec (.p)
@@ -1040,49 +1052,29 @@ index 0000000..aeadda6
 +
 +	/* ---- DRM_PRIME path: wrap DMA-BUF fd in AVDRMFrameDescriptor ---- */
 +	if (avctx->pix_fmt == AV_PIX_FMT_DRM_PRIME) {
-+		int dmabuf_fd, width, height, pitch;
-+		int64_t timestamp;
-+		nvmpi_frame_release_cb release_cb;
-+		void *release_opaque;
-+		NvmpiDRMFrameInfo info = {0};
++		NvmpiDRMFrameInfo info;
 +
-+		res = nvmpi_decoder_get_frame_fd(nvmpi_context->ctx,
-+			&dmabuf_fd, &width, &height, &pitch, &timestamp,
-+			&release_cb, &release_opaque,
-+			avctx->flags & AV_CODEC_FLAG_LOW_DELAY);
-+
++		/* Real per-plane layout from libnvmpi >= 4.3.0 (fd2); older libraries
++		 * fall back to pitch*height inside the helper (jetson-ffmpeg#131).
++		 * Returns 1 when no frame is ready, <0 on error (borrow already
++		 * released). */
++		res = nvmpi_dec_get_drm_info(avctx, nvmpi_context->ctx,
++			avctx->flags & AV_CODEC_FLAG_LOW_DELAY, &info);
 +		if (res < 0)
++			return res;
++		if (res > 0)
 +			return decode_ret;
 +
-+		/* Single NV12 layer, luma + chroma in one DMA-BUF. The chroma offset
-+		 * is pitch*height: this API returns one pitch only (see
-+		 * jetson-nvmpi#129 / jetson-ffmpeg#131). No original-fd hint: the
-+		 * V4L2 pool is destroyed by decoder close while borrows may still be
-+		 * outstanding, so the hint could dangle. The shared helper dup()s the
-+		 * fd and releases the borrow exactly once on every path. */
-+		info.fd            = dmabuf_fd;
-+		info.orig_fd_hint  = 0;
-+		info.release       = release_cb;
-+		info.opaque        = release_opaque;
-+		info.fourcc        = DRM_FORMAT_NV12;
-+		info.nb_planes     = 2;
-+		info.pitch[0]      = pitch;
-+		info.pitch[1]      = pitch;
-+		info.offset[0]     = 0;
-+		info.offset[1]     = (uint32_t)pitch * height;
-+		info.size          = (size_t)pitch * height * 3 / 2;
-+		info.width         = width;
-+		info.height        = height;
-+		info.pts           = timestamp;
-+
-+		res = nvmpi_drm_wrap_frame(frame, &info, avctx->hw_frames_ctx);
++		/* Resolution change: re-derive avctx size + hw_frames_ctx first. */
++		res = nvmpi_dec_sync_geometry(avctx, &info);
 +		if (res < 0)
 +			return res;
 +
-+		if (width && height) {
-+			avctx->width  = width;
-+			avctx->height = height;
-+		}
++		/* The shared helper dup()s the fd and releases the borrow exactly once
++		 * on every path (free order: close dup, release, free). */
++		res = nvmpi_drm_wrap_frame(frame, &info, avctx->hw_frames_ctx);
++		if (res < 0)
++			return res;
 +
 +		*got_frame = 1;
 +		return decode_ret;
@@ -1484,6 +1476,211 @@ index 0000000..44bc06b
 +}
 +
 +#endif /* NVMPI_DEC_DRM_H */
+diff --git a/libavcodec/nvmpi_dec_fd2.h b/libavcodec/nvmpi_dec_fd2.h
+new file mode 100644
+index 0000000..0f0ea6e
+--- /dev/null
++++ b/libavcodec/nvmpi_dec_fd2.h
+@@ -0,0 +1,199 @@
++/*
++ * nvmpi_dec_fd2.h -- DRM_PRIME frame description for the V4L2 video decoders
++ * (h264/hevc/vp8/vp9/mpeg2/mpeg4/av1_nvmpi).
++ *
++ * libnvmpi >= 4.3.0 exports nvmpi_decoder_get_frame_fd2, which reports the
++ * REAL per-plane pitch/offset/size of the borrowed surface. Older libraries
++ * only return one pitch, so the chroma offset had to be guessed as
++ * pitch*height, which is wrong whenever the allocator page-aligns the luma
++ * plane (jetson-ffmpeg#131, jetson-nvmpi#129).
++ *
++ * Included by nvmpi_dec.c; static inline, not a separate translation unit
++ * (kept out of nvmpi_dec.c only to bound its size). The fd2 symbol is
++ * OPTIONAL at runtime: a missing symbol selects the legacy pitch*height path
++ * with a one-time warning, so no compile-time dependency on libnvmpi 4.3.
++ */
++#ifndef NVMPI_DEC_FD2_H
++#define NVMPI_DEC_FD2_H
++
++#include <limits.h>
++#include <stdlib.h>
++#include <string.h>
++
++#include "nvmpi_dec_drm.h"
++
++/* True when libnvmpi exports nvmpi_decoder_get_frame_fd2 (>= 4.3.0).
++ * NVMPI_FORCE_NO_FD2=1 (test hook) fakes an older library so the legacy
++ * path stays covered by the hw/mock suites. */
++static inline int nvmpi_has_decoder_fd2(void)
++{
++    const char *force = getenv("NVMPI_FORCE_NO_FD2");
++
++    if (force && force[0] == '1')
++        return 0;
++    return nvmpi_decoder_get_frame_fd2_dl != NULL;
++}
++
++/* Fetch one decoded frame as a borrowed DMA-BUF and describe it for
++ * nvmpi_drm_wrap_frame().
++ *
++ * Returns 0 and fills *info (the borrow is then owned by info->release /
++ * info->opaque and MUST be handed to nvmpi_drm_wrap_frame, which releases it
++ * exactly once on every path), 1 when no frame is ready (nothing borrowed),
++ * or a negative AVERROR (the borrow, if any, was already released here). */
++static inline int nvmpi_dec_get_drm_info(AVCodecContext *avctx, nvmpictx *ctx,
++                                         int wait, NvmpiDRMFrameInfo *info)
++{
++    nvmpi_frame_release_cb release = NULL;
++    void *release_opaque = NULL;
++    int res;
++
++    memset(info, 0, sizeof(*info));
++
++    if (nvmpi_has_decoder_fd2()) {
++        nvmpi_fd_frame fdf = {0};
++        uint64_t chroma_end;
++
++        /* struct_size MUST be set before the call: libnvmpi fills at most
++         * that many bytes (forward/backward ABI) and rejects a smaller
++         * value without consuming a frame. */
++        fdf.struct_size = sizeof(fdf);
++        res = nvmpi_decoder_get_frame_fd2_dl(ctx, &fdf, &release,
++                                             &release_opaque, wait);
++        if (res == NVMPI_ERR_INVAL) {
++            av_log(avctx, AV_LOG_ERROR,
++                   "nvmpi_decoder_get_frame_fd2 rejected its arguments "
++                   "(struct_size/handle mismatch).\n");
++            return AVERROR_EXTERNAL;
++        }
++        if (res < 0)
++            return 1;   /* no frame (non-blocking), timeout or shutdown */
++
++        /* The borrow is ours from here: every early exit must release(). */
++
++        /* The DRM descriptor built below is a single NV12 layer. Another
++         * format (P010 / YUV420) would be mislabelled and read with wrong
++         * strides downstream, so refuse it instead. */
++        if (fdf.format != NV_PIX_NV12 || fdf.num_planes != 2) {
++            av_log(avctx, AV_LOG_ERROR,
++                   "nvmpi: DRM_PRIME output supports NV12 only (format=%d "
++                   "planes=%u)\n", (int)fdf.format, fdf.num_planes);
++            release(release_opaque);
++            return AVERROR_PATCHWELCOME;
++        }
++
++        /* Defensive validation of the library-reported layout: a corrupt
++         * stream or driver glitch must not make a consumer index outside
++         * the dma-buf. The luma plane must fit before the chroma offset and
++         * the chroma plane must end inside `size`; sums use 64 bits so
++         * pitch*height cannot wrap. */
++        chroma_end = (uint64_t)fdf.offset[1] +
++                     (uint64_t)fdf.pitch[1] * ((fdf.height + 1) / 2);
++        if (fdf.fd < 0 || !fdf.width || !fdf.height ||
++            fdf.width > INT_MAX || fdf.height > INT_MAX ||
++            fdf.pitch[0] < fdf.width || fdf.pitch[1] < fdf.width ||
++            (uint64_t)fdf.offset[0] + (uint64_t)fdf.pitch[0] * fdf.height >
++                fdf.offset[1] ||
++            chroma_end > fdf.size) {
++            av_log(avctx, AV_LOG_ERROR,
++                   "nvmpi: inconsistent DMA-BUF layout (%ux%u pitch=%u/%u "
++                   "off=%u/%u size=%llu)\n", fdf.width, fdf.height,
++                   fdf.pitch[0], fdf.pitch[1], fdf.offset[0], fdf.offset[1],
++                   (unsigned long long)fdf.size);
++            release(release_opaque);
++            return AVERROR_INVALIDDATA;
++        }
++
++        info->fd           = fdf.fd;
++        /* Original-fd hint: libnvmpi 4.3 keeps the buffer valid until the
++         * release callback runs (also after decoder close), so scale_vic and
++         * the encoder fd path may use the registered fd and skip the copy.
++         * The dup'd fd in the descriptor stays the owning reference. */
++        info->orig_fd_hint = 1;
++        info->release      = release;
++        info->opaque       = release_opaque;
++        info->fourcc       = DRM_FORMAT_NV12;
++        info->nb_planes    = 2;
++        info->pitch[0]     = fdf.pitch[0];
++        info->pitch[1]     = fdf.pitch[1];
++        info->offset[0]    = fdf.offset[0];
++        info->offset[1]    = fdf.offset[1];
++        info->size         = (size_t)fdf.size;
++        info->width        = (int)fdf.width;
++        info->height       = (int)fdf.height;
++        info->pts          = fdf.timestamp;
++        return 0;
++    } else {
++        /* Legacy path (libnvmpi < 4.3.0): one pitch only, so the chroma
++         * offset is a guess (pitch*height). Wrong when the allocator pads
++         * the luma plane; kept only so older libraries keep working. No
++         * original-fd hint: before 4.3 the pool is destroyed by decoder
++         * close while borrows may be outstanding, so the hint could dangle. */
++        static int warned;
++        int dmabuf_fd = -1, width = 0, height = 0, pitch = 0;
++        int64_t timestamp = 0;
++
++        if (!warned) {
++            warned = 1;
++            av_log(avctx, AV_LOG_WARNING,
++                   "libnvmpi lacks nvmpi_decoder_get_frame_fd2 (needs >= "
++                   "4.3.0): deriving DRM_PRIME plane offsets as pitch*height, "
++                   "which can be wrong on padded surfaces.\n");
++        }
++        res = nvmpi_decoder_get_frame_fd(ctx, &dmabuf_fd, &width, &height,
++                                         &pitch, &timestamp, &release,
++                                         &release_opaque, wait);
++        if (res < 0)
++            return 1;
++
++        /* Borrow is ours: reject nonsense before it reaches the descriptor
++         * (also keeps pitch*height inside 32 bits for offset[1]). */
++        if (dmabuf_fd < 0 || width <= 0 || height <= 0 || pitch < width ||
++            (uint64_t)pitch * height * 3 / 2 > UINT32_MAX) {
++            release(release_opaque);
++            return AVERROR_INVALIDDATA;
++        }
++        info->fd           = dmabuf_fd;
++        info->orig_fd_hint = 0;
++        info->release      = release;
++        info->opaque       = release_opaque;
++        info->fourcc       = DRM_FORMAT_NV12;
++        info->nb_planes    = 2;
++        info->pitch[0]     = pitch;
++        info->pitch[1]     = pitch;
++        info->offset[1]    = (uint32_t)pitch * height;
++        info->size         = (size_t)pitch * height * 3 / 2;
++        info->width        = width;
++        info->height       = height;
++        info->pts          = timestamp;
++        return 0;
++    }
++}
++
++/* Keep avctx and hw_frames_ctx in step with the frame's size (resolution
++ * change mid-stream: libnvmpi starts a new pool generation and frames carry
++ * the new geometry). Must run BEFORE nvmpi_drm_wrap_frame so the frame refs
++ * the matching hw_frames_ctx. On failure releases the borrow in *info. */
++static inline int nvmpi_dec_sync_geometry(AVCodecContext *avctx,
++                                          const NvmpiDRMFrameInfo *info)
++{
++    int ret;
++
++    if (info->width == avctx->width && info->height == avctx->height)
++        return 0;
++
++    avctx->width  = info->width;
++    avctx->height = info->height;
++    if (avctx->hw_frames_ctx) {
++        /* Older frames keep their own refs to the previous context. */
++        av_buffer_unref(&avctx->hw_frames_ctx);
++        ret = nvmpi_drm_init_hw_frames(avctx, AV_PIX_FMT_NV12);
++        if (ret < 0) {
++            info->release(info->opaque);
++            return ret;
++        }
++    }
++    return 0;
++}
++
++#endif /* NVMPI_DEC_FD2_H */
 diff --git a/libavcodec/nvmpi_dec_mjpeg.c b/libavcodec/nvmpi_dec_mjpeg.c
 new file mode 100644
 index 0000000..69f630c
