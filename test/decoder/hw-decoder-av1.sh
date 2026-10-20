@@ -15,10 +15,16 @@ set -eu
 variant="${JETSON_VARIANT:-unknown}"
 echo "=== hw-decoder-av1 on variant: ${variant} ==="
 
+# The v4.2.x mock decoder returns no frames for the AV1 fourcc (0 frames from
+# the fixture through the released libnvmpi), so this suite is hardware only.
+if is_mock; then
+  mock_skip "AV1 decode is not modelled by the mock"
+  exit 0
+fi
 has_codec dec av1_nvmpi || { echo "SKIP: av1_nvmpi not compiled in."; exit 0; }
 
-# JetPack 5 (L4T R35) lacks the V4L2 AV1 pixel format; the mock has no L4T release file.
-if ! is_mock && grep -q 'R35' /etc/nv_tegra_release 2>/dev/null; then
+# JetPack 5 (L4T R35) lacks the V4L2 AV1 pixel format.
+if grep -q 'R35' /etc/nv_tegra_release 2>/dev/null; then
   echo "SKIP: AV1 decode needs JetPack 6 (L4T R36), this is JetPack 5."
   exit 0
 fi

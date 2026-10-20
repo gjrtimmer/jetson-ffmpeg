@@ -64,6 +64,7 @@ discover() {
 }
 # Suites that give meaningful results on the mock (opt-in: a new suite is NOT
 # mockable until listed here). Excluded, with the reason:
+#   decoder-av1                   the mock decoder returns no frames for AV1
 #   decoder-mjpeg,
 #   decoder-mjpeg-drmprime        the released libnvmpi links the real NvJPEGDecoder
 #                                 (libjpeg ABI mismatch against the mock libs)
@@ -72,7 +73,7 @@ discover() {
 #   soak-decode, perf-bench,
 #   perf-mode                     timing/throughput numbers need the engines
 MOCK_SUITES="smoke decoder-blocking-wait decoder-chunk decoder-codecs
-  decoder-av1 decoder-downscale decoder-flush decoder-lifecycle
+  decoder-downscale decoder-flush decoder-lifecycle
   decoder-pool encoder-gop
   encoder-header encoder-modes encoder-pools encoder-thread-safety
   filter-scale-vic format-pixfmt lifecycle-stress rtp-sdp"
