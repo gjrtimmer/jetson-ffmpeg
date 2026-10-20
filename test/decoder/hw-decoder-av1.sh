@@ -6,7 +6,9 @@
 # (InvalidResolution), hence the fixture size.
 # AV1 decode is JetPack 6 only: V4L2_PIX_FMT_AV1 is absent on JetPack 5, where
 # libnvmpi cannot create the decoder, so the suite SKIPs there. Encode is not
-# supported (#69). No rapid open/close loops (Tegra driver segfaults).
+# supported (#69). Decodes use -flags low_delay: ffmpeg drains non-blocking by default
+# and ends a short stream before the asynchronous decoder delivers a frame.
+# No rapid open/close loops (Tegra driver segfaults).
 set -eu
 # shellcheck source-path=SCRIPTDIR/..
 # shellcheck source=lib/common.sh
@@ -15,13 +17,6 @@ set -eu
 variant="${JETSON_VARIANT:-unknown}"
 echo "=== hw-decoder-av1 on variant: ${variant} ==="
 
-# The v4.2.x mock decoder returns no frames for the AV1 fourcc (0 frames from
-# the fixture through the released libnvmpi), so this suite is hardware only.
-# NVMPI_MOCK_AV1=1 forces the suite on the mock (to retest once jetson-nvmpi#139 lands).
-if is_mock && [ "${NVMPI_MOCK_AV1:-0}" != 1 ]; then
-  mock_skip "AV1 decode is not modelled by the mock"
-  exit 0
-fi
 has_codec dec av1_nvmpi || { echo "SKIP: av1_nvmpi not compiled in."; exit 0; }
 
 # JetPack 5 (L4T R35) lacks the V4L2 AV1 pixel format.
