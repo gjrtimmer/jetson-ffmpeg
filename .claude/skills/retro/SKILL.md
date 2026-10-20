@@ -26,7 +26,7 @@ Invoke: **`/retro`** or **`/retro <session-id-prefix>`** (target one session).
 
 ## Skill Version
 
-<!-- retro:version:22 -->
+<!-- retro:version:23 -->
 Track version here. Each self-improvement pass increments this counter and
 logs what changed in the commit message.
 
@@ -247,7 +247,7 @@ For each approved change:
 ### 4d. Commit (one commit per session in iterative mode)
 
 ```bash
-git add -A .claude/skills/ CLAUDE.md
+git add CLAUDE.md .claude/skills/<skill>/SKILL.md   # explicit paths only, never -A
 git commit -m "chore(retro): <session-id> findings, skill vN→vN+1
 
 - [findings applied to CLAUDE.md]
@@ -460,7 +460,7 @@ Create on invocation (normal mode = current session only):
 5. Self-analyze — pattern gaps, false positives
 6. Present findings report — get user approval
 7. Apply approved changes — CLAUDE.md rules + skill improvements (NO memory creation)
-8. Commit with `[ci skip]` (CLAUDE.md + skills only; memory ops are not git)
+8. Commit (no `[ci skip]` in the message); push with `git push origin main -o ci.skip` (CLAUDE.md + skills only; memory ops are not git)
 9. Verify — empty memory dir, rules landed, valid markdown, version bumped
 
 (`--all` backfill only: loop the above over every session once, then stop.)

@@ -47,6 +47,12 @@ scripts/clone-ffmpeg.sh <ver>                    # release/<ver> into $FFMPEG_SR
 scripts/ffpatch.sh "$FFMPEG_SRC_DIR/ffmpeg<ver>" # reports which anchor moved
 ```
 
+macOS host: `ffpatch.sh` and `update_patch.sh` need GNU tools first on PATH
+(`export PATH="/opt/homebrew/opt/gnu-sed/libexec/gnubin:/opt/homebrew/opt/coreutils/libexec/gnubin:$PATH"`).
+Pre-CI compile check without a Jetson: patch the tree, then run
+`./configure --enable-nvmpi && make` in an arm64 `ubuntu:24.04` container, for
+the new version and for 6.0.
+
 `scripts/ffpatch.sh` is the single patch source. It reads `libavcodec/version.h`
 / `version_major.h`, refuses libavcodec < 60, and `sed`-inserts against anchor
 strings in `configure`, `libavcodec/Makefile`, `libavcodec/allcodecs.c`,
@@ -116,6 +122,8 @@ Use these names exactly as they exist today (verify with `grep -n "ffmpeg-9.0"`)
   `test:hw-full:ffmpeg-<old>` twin (`.hw-full-twin`). A new wrapper path adds a
   third carrier instead. Update the stage comments and the `HW_TIER` variable
   description that name 7.1/9.0.
+  Check: `grep -c "test:hw-fast:ffmpeg-<carrier>" .gitlab-ci.yml` must print 0
+  for each carrier (`glab ci lint` does not catch a duplicate fast job).
 - Release gate: add `release:test:ffmpeg-<ver>` (extends
   `["test:hw-full:ffmpeg-<ver>", ".release-gate-job"]`), and list it in
   `.release-gate` and in the `release` job's `needs`. Every version needs a
