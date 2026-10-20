@@ -37,7 +37,7 @@ Add `<ver>` to the version list in each:
 - `test/smoke-all.sh` (`VERSIONS`)
 
 `ffmpeg/dev/copy_files.sh` only refreshes the `6.0` dev overlay: leave it.
-Then `grep -rn "8\.1" --exclude-dir=.git --exclude-dir=.work --exclude=CHANGELOG.md .`
+Then `grep -rn "9\.0" --exclude-dir=.git --exclude-dir=.work --exclude=CHANGELOG.md .`
 (use the current newest version) to catch any list not named above.
 
 ## 2. Clone and patch
@@ -98,22 +98,22 @@ a failed version or suite.
 
 ## 6. CI (`.gitlab-ci.yml`)
 
-Use these names exactly as they exist today (verify with `grep -n "ffmpeg-8.1"`):
+Use these names exactly as they exist today (verify with `grep -n "ffmpeg-9.0"`):
 
 - `FFVER` matrices: `ffmpeg:jp6`, `dist:jp6`, `dist:jp5` get `"<ver>"`.
   `ffmpeg:jp5` is a compile check on the oldest and newest version only
-  (`["6.0", "8.1"]`): replace the newest entry if `<ver>` is newer.
+  (`["6.0", "9.0"]`): replace the newest entry if `<ver>` is newer.
 - New jobs, each with a `needs:` on its own `ffmpeg:jp6` matrix entry (copy the
   8.0 block): `test:stub:ffmpeg-<ver>` (extends `.stub-test`; also needs
   `nvmpi-mock:jp6`), `test:hw-fast:ffmpeg-<ver>` (extends `.hw-fast`) and
   `test:hw-full:ffmpeg-<ver>` (extends `.hw-full-twin`).
-- Full-tier carrier: 7.1 and 8.1 run full in every MR (one per wrapper path).
+- Full-tier carrier: 7.1 and 9.0 run full in every MR (one per wrapper path).
   If `<ver>` shares a path with the current carrier and is newer, move the
   carrier role to it: `test:hw-full:ffmpeg-<ver>` extends `.hw-full`, and the old
   carrier becomes a `test:hw-fast:ffmpeg-<old>` job plus a
   `test:hw-full:ffmpeg-<old>` twin (`.hw-full-twin`). A new wrapper path adds a
   third carrier instead. Update the stage comments and the `HW_TIER` variable
-  description that name 7.1/8.1.
+  description that name 7.1/9.0.
 - Release gate: add `release:test:ffmpeg-<ver>` (extends
   `["test:hw-full:ffmpeg-<ver>", ".release-gate-job"]`), and list it in
   `.release-gate` and in the `release` job's `needs`. Every version needs a
