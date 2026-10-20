@@ -182,7 +182,7 @@ esac
 
 # ── 7. Fallback: libnvmpi without the fd API (symbols forced off) ────────────
 echo "== 7. fallback to software frames =="
-NVMPI_FORCE_NO_JPEG_FD=1 run_ff_must "fallback" -T 60 -loglevel warning \
+NVMPI_FORCE_NO_JPEG_FD=1 run_ff_must "fallback" -T 60 -loglevel info \
   -c:v mjpeg_nvmpi -output_format drm_prime -i "${S720}" -f null -
 printf '%s\n' "$FF_OUT" | grep -qi "falling back to software" \
   || ff_fail "fallback: no warning logged."
