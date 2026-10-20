@@ -153,6 +153,7 @@ subdirectory.
 | `ff_fail MSG` | print `FAIL: MSG` + tail-15 of `FF_OUT`, exit 1 |
 | `assert_frames MIN [label]` | last `frame=` counter in `FF_OUT` must be >= MIN (needs ffmpeg stats, no `-loglevel error`) |
 | `packet_count FILE` | demuxed packets of the first video stream |
+| `plane_psnr REF DEC W H [FIRST] [SCALE_OPTS] [REF_FIRST]` | `Y U V` minimum PSNR over 5 frames, paired by index (not timestamp); use stills, a one-frame shift on moving content costs ~25 dB |
 | `has_codec enc\|dec NAME` | is the codec compiled into ffmpeg? |
 | `device_health [label]` | known-good decode after a stress loop; FAIL if the V4L2 device is stuck |
 | `is_signal_rc RC` | rc in the POSIX signal-kill range 129-159 (real-time signals excluded) |

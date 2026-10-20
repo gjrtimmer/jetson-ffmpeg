@@ -41,18 +41,9 @@ DEC_HW=(-hwaccel nvmpi -c:v mjpeg_nvmpi)
 
 frames_of() { packet_count "$1"; }   # demuxed packet count (0 on error)
 
-# plane_psnr REF DEC W H: prints "Y U V" (minimum PSNR per plane over the
-# compared frames) between two files, both software decoded and treated as full
-# range at WxH. Used to compare the hw path against an encoder-only baseline.
-plane_psnr() {
-  local ref="$1" dec="$2" w="$3" h="$4" log="${T}-psnr.log"
-  run_ff_must "psnr: compare" -T 60 -loglevel error \
-    -i "$ref" -i "$dec" -frames:v 5 \
-    -lavfi "[0:v]scale=${w}:${h}:in_range=pc:out_range=pc,format=yuv420p[a];[1:v]scale=${w}:${h}:in_range=pc:out_range=pc,format=yuv420p[b];[a][b]psnr=stats_file=${log}" \
-    -f null -
-  # stats_file lines: n:1 mse_avg:.. psnr_y:48.3 psnr_u:.. psnr_v:..
-  awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^psnr_[yuv]:/) { split($i, a, ":"); k = substr(a[1], 6, 1); v = (a[2] == "inf") ? 99 : a[2]; if (!(k in m) || v + 0 < m[k] + 0) m[k] = v } } END { printf "%s %s %s\n", m["y"], m["u"], m["v"] }' "$log"
-}
+# plane_psnr (lib/common.sh) compares the hw path with the software decode,
+# both treated as full range.
+mj_psnr() { plane_psnr "$1" "$2" "$3" "$4" 0 "in_range=pc:out_range=pc"; }
 
 # psnr_ok HW BASE LABEL: every plane of the drm_prime path must reach 30 dB
 # against the libjpeg decode. A wrong plane layout or chroma offset turns
@@ -112,8 +103,8 @@ for c in 1280x720:yuvj420p 1000x562:yuvj420p 642x358:yuvj420p \
   run_ff_must "${tag}: baseline encode" -T 60 -loglevel error \
     -c:v mjpeg_nvmpi -i "$in" -vf "scale=in_range=pc:out_range=pc,format=yuv420p" \
     -c:v h264_nvmpi -b:v 20M "${enc}.base.mkv"
-  psnr_ok "$(plane_psnr "$in" "$enc" "${size%x*}" "${size#*x}")" \
-          "$(plane_psnr "$in" "${enc}.base.mkv" "${size%x*}" "${size#*x}")" "$tag"
+  psnr_ok "$(mj_psnr "$in" "$enc" "${size%x*}" "${size#*x}")" \
+          "$(mj_psnr "$in" "${enc}.base.mkv" "${size%x*}" "${size#*x}")" "$tag"
 done
 
 # ── 3. Odd sizes (decode only; H.264 cannot encode them) ─────────────────────

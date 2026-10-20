@@ -27,38 +27,28 @@ trap 'rm -f "${T}"-* 2>/dev/null || true' EXIT
 DEC_HW=(-hwaccel nvmpi -c:v h264_nvmpi)
 FALLBACK_MSG="lacks nvmpi_decoder_get_frame_fd2"
 
-# gen_h264 FILE WxH SECONDS: software-encoded raw Annex B H.264. No B-frames,
-# so decode order equals display order and frame N of the reference is frame N
-# of any decode (the PSNR below pairs frames by index, not by timestamp).
+# gen_h264 FILE WxH SECONDS: software-encoded raw Annex B H.264 of a STILL
+# (frame 0 of testsrc2 repeated, no B-frames). Still content makes every
+# PSNR comparison independent of frame pairing: the hw decode+encode chain may
+# shift, drop or duplicate a frame, and on the moving pattern that alone costs
+# ~25 dB (the first version of this suite measured ~22.8 dB for every variant).
 gen_h264() {
   ffmpeg -y -hide_banner -loglevel error \
-    -f lavfi -i "testsrc2=s=$2:r=30" -t "$3" -pix_fmt yuv420p \
+    -f lavfi -i "testsrc2=s=$2:r=30" \
+    -vf "select='eq(n\,0)',loop=loop=-1:size=1:start=0" -t "$3" -pix_fmt yuv420p \
     -c:v libx264 -g 15 -bf 0 -f h264 "$1"
 }
 
-# min_psnr REF DEC W H: lowest per-plane PSNR (Y, U, V) over the first frames.
-# Frames are paired by index (setpts=N/TB on both sides): the raw Annex B
-# reference carries no timestamps, while the decoded stream carries the
-# decoder's, and psnr pairs by timestamp, so a rate/offset difference would
-# compare different frames of the moving test pattern (all planes drop).
-min_psnr() {
-  local ref="$1" dec="$2" w="$3" h="$4" log="${T}-psnr.log"
-  run_ff_must "psnr compare" -T 60 -loglevel error \
-    -f h264 -i "$ref" -i "$dec" -frames:v 5 \
-    -lavfi "[0:v]setpts=N/TB,scale=${w}:${h},format=yuv420p[a];[1:v]setpts=N/TB,scale=${w}:${h},format=yuv420p[b];[a][b]psnr=stats_file=${log}" \
-    -f null -
-  awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^psnr_[yuv]:/) { split($i, a, ":"); k = substr(a[1], 6, 1); v = (a[2] == "inf") ? 99 : a[2]; if (!(k in m) || v + 0 < m[k] + 0) m[k] = v } } END { printf "%s %s %s\n", m["y"], m["u"], m["v"] }' "$log"
-}
-
+# plane_psnr (lib/common.sh) prints "Y U V" min PSNR over 5 frames.
 # psnr_ok "Y U V" LABEL THRESHOLD: every plane must reach THRESHOLD dB.
 psnr_ok() {
   local vals="$1" label="$2" min="$3"
-  echo "   ${label}: drm_prime Y/U/V = ${vals} dB (min ${min})"
+  echo "   ${label}: Y/U/V = ${vals} dB (min ${min})"
   # shellcheck disable=SC2086
   set -- $vals
   awk -v a="${1:-0}" -v b="${2:-0}" -v c="${3:-0}" -v m="$min" \
     'BEGIN { exit !(a >= m && b >= m && c >= m) }' \
-    || { echo "FAIL(${label}): a plane is below ${min} dB (plane offsets wrong?)."; exit 1; }
+    || { echo "FAIL(${label}): a plane is below ${min} dB."; exit 1; }
 }
 
 dims_of() {
@@ -82,10 +72,12 @@ echo "   fd2 path: output $(dims_of "${T}-fd2.mkv")"
 # 642x358 is even but not 16-aligned: the allocator pads the planes, so a chroma
 # offset of pitch*height lands inside the luma padding. Encode straight from the
 # DRM_PRIME frame (encoder fd path, which reads the descriptor offsets) and
-# compare to the source; a wrong offset drops U/V far below 30 dB.
+# compare to the source; a wrong offset drops U/V far below 30 dB. Primary
+# check: the same decoder's software-frame output through the same encoder
+# (no DRM_PRIME) must match the drm_prime output (>= 40 dB against each other).
 echo "== 2. chroma correctness on a padded size (642x358) =="
 # Control first: a 16-aligned size through the same pipeline and PSNR method.
-# If it is low too, the harness (encoder/pairing) is at fault, not the layout.
+# If it fails, the harness (encoder/decoder chain) is at fault, not the layout.
 SCTL="${T}-ctl.h264"
 gen_h264 "${SCTL}" 640x352 1
 run_ff_must "aligned-size hw decode+encode" -T 60 -loglevel error \
@@ -101,9 +93,10 @@ run_ff_must "odd-size software-frame baseline" -T 60 -loglevel error \
 if is_mock; then
   mock_skip "pixel comparison (canned slices are not software-decodable)"
 else
-  echo "   aligned control 640x352: $(min_psnr "${SCTL}" "${T}-ctl.mkv" 640 352) dB"
-  echo "   odd software-frame baseline 642x358: $(min_psnr "${SODD}" "${T}-odd-sw.mkv" 642 358) dB"
-  psnr_ok "$(min_psnr "${SODD}" "${T}-odd.mkv" 642 358)" "642x358" 30
+  psnr_ok "$(plane_psnr "${SCTL}" "${T}-ctl.mkv" 640 352)" "aligned control 640x352 vs source" 30
+  psnr_ok "$(plane_psnr "${SODD}" "${T}-odd-sw.mkv" 642 358)" "642x358 software-frame vs source" 30
+  psnr_ok "$(plane_psnr "${SODD}" "${T}-odd.mkv" 642 358)" "642x358 drm_prime vs source" 30
+  psnr_ok "$(plane_psnr "${T}-odd-sw.mkv" "${T}-odd.mkv" 642 358)" "642x358 drm_prime vs software-frame" 40
 fi
 
 # ── 3. Resolution change mid-stream ─────────────────────────────────────────
@@ -138,10 +131,12 @@ else
     echo "FAIL(change): ${got:-0}/${exp} frames survived the resolution change."; exit 1
   fi
   echo "   change: ${got}/${exp} frames, ${w_h}"
-  # Chroma of the frames after the change: the whole stream is scaled to
-  # 640x360 by VIC (hw) and swscale (reference), so the bound is loose (25 dB)
-  # but a wrong chroma offset still lands far below it.
-  psnr_ok "$(min_psnr "${SCHG}" "${T}-change.mkv" 640 360)" "change" 25
+  # Chroma after the change: the stream is scaled to 640x360 by VIC (hw) and
+  # swscale (reference), so the bound is loose (25 dB), but a wrong chroma
+  # offset still lands far below it. Frames 45-49 of the output are all the
+  # 642x358 still; the reference is the 642x358 clip alone (a resolution
+  # change inside the reference would reset ffmpeg's frame counter).
+  psnr_ok "$(plane_psnr "${T}-chg-b.h264" "${T}-change.mkv" 640 360 45 "" 15)" "change" 25
 fi
 
 # ── 4. Forced pre-4.3.0 library: legacy path still works, warns once ────────

@@ -11,6 +11,8 @@
 #   ff_fail MSG                print FAIL + tail-15 of FF_OUT, exit 1
 #   assert_frames MIN [LABEL]  parse frame= from FF_OUT, FAIL below MIN
 #   packet_count FILE          demuxed packet count of the first video stream
+#   plane_psnr REF DEC W H [FIRST] [SCALE_OPTS] [REF_FIRST]
+#                              "Y U V" minimum PSNR over 5 frames, paired by index
 #   has_codec enc|dec NAME     is the codec compiled into ffmpeg?
 #   device_health [LABEL]      decode a known-good sample; FAIL if the V4L2
 #                              device is unusable (call after stress loops)
@@ -106,6 +108,29 @@ assert_frames() {
 packet_count() {
   ffprobe -v error -count_packets -select_streams v:0 \
     -show_entries stream=nb_read_packets -of default=nokey=1:nw=1 "$1" 2>/dev/null || echo 0
+}
+
+# plane_psnr REF DEC W H [FIRST] [SCALE_OPTS] [REF_FIRST] : prints "Y U V", the
+# minimum PSNR per plane over 5 frames starting at frame index FIRST (default 0)
+# of DEC and REF_FIRST (default FIRST) of REF, both each scaled to WxH yuv420p (SCALE_OPTS is appended to the scale filter,
+# e.g. in_range=pc:out_range=pc; a resolution change in REF resets ffmpeg's
+# frame counter, so compare against a clip of the post-change part). Frames are paired by index (setpts=N/TB on
+# both sides), not by timestamp: a raw Annex B reference has none and the
+# decoded stream carries the decoder's. Never compare moving content across a
+# decode+encode chain with this: a one-frame shift costs ~25 dB; use stills.
+plane_psnr() {
+  local ref="$1" dec="$2" w="$3" h="$4" first="${5:-0}" opts="${6:-}" rfirst="${7:-${5:-0}}"
+  local log="${PSNR_LOG:-/tmp/nvmpi-psnr-$$.log}"
+  local tail="setpts=N/TB,scale=${w}:${h}${opts:+:${opts}},format=yuv420p"
+  local sa="select='between(n\,${rfirst}\,$((rfirst + 4)))',${tail}"
+  local sb="select='between(n\,${first}\,$((first + 4)))',${tail}"
+  run_ff_must "psnr compare" -T 60 -loglevel error \
+    -i "$ref" -i "$dec" -frames:v 5 \
+    -lavfi "[0:v]${sa}[a];[1:v]${sb}[b];[a][b]psnr=stats_file=${log}" \
+    -f null -
+  # stats_file lines: n:1 mse_avg:.. psnr_y:48.3 psnr_u:.. psnr_v:..
+  awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^psnr_[yuv]:/) { split($i, a, ":"); k = substr(a[1], 6, 1); v = (a[2] == "inf") ? 99 : a[2]; if (!(k in m) || v + 0 < m[k] + 0) m[k] = v } } END { printf "%s %s %s\n", m["y"], m["u"], m["v"] }' "$log"
+  rm -f "$log"
 }
 
 # has_codec enc|dec NAME : is NAME in `ffmpeg -encoders` / `-decoders`?
