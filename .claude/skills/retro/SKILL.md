@@ -26,7 +26,7 @@ Invoke: **`/retro`** or **`/retro <session-id-prefix>`** (target one session).
 
 ## Skill Version
 
-<!-- retro:version:21 -->
+<!-- retro:version:22 -->
 Track version here. Each self-improvement pass increments this counter and
 logs what changed in the commit message.
 
@@ -111,6 +111,11 @@ Also scan for assistant-side signals:
 ## Phase 1: Analyze Existing Memories
 
 Read all memory files from `/home/vscode/.claude/projects/-workspace/memory/`.
+
+> `/home/vscode/.claude/projects/-workspace/` is the devcontainer layout. On a
+> macOS host use `~/.claude/projects/<slug-of-cwd>/` (slug = cwd with `/`
+> replaced by `-`); the hub memory dir may be the start-dir slug (e.g.
+> `-Users-gtimmer-Work-Workspaces-Rockchip`). Applies to Phase 0c too.
 
 For each memory file:
 
@@ -357,7 +362,8 @@ const PATTERNS = {
   premature_action: [
     /\bdo not\s+start\b/i, /\bjust\s+(analyze|plan|check)\b/i,
     /\bprepare.*don'?t\b/i, /\banalyze.*not.*implement\b/i,
-    /\bplan.*wait\b/i, /\bpresent.*wait\b/i
+    /\bplan.*wait\b/i, /\bpresent.*wait\b/i,
+    /\bDO NOT MAKE RELEASE\b/i, /\buntil (I|asked)\b.*\b(ask|order)\b/i
   ],
   cost_concern: [
     /\bcheaper\b/i, /\bwaste.*token/i, /\bsubagent.*model\b/i,
@@ -378,7 +384,8 @@ const PATTERNS = {
     /\bshould we\b/i, /\bwhat if we\b/i, /\bwhat about\b/i,
     /\blet'?s\s+(try|do|use|go with)\b/i, /\bcan we\b.*\binstead\b/i,
     /\bmake it\b.*\bhuman\b/i, /\bsound\b.*\blike me\b/i,
-    /\bmore\s+human\b/i, /\blike a human\b/i
+    /\bmore\s+human\b/i, /\blike a human\b/i,
+    /\bonce a week\b/i, /\bweekly\b.*\bnot nightly\b/i
   ],
   workaround_before_fix: [
     /\bdo we need\b.*\bretry\b/i, /\binstead of.*\bactual fix\b/i,

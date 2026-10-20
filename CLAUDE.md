@@ -131,7 +131,9 @@ HTTP 405 both when no pipeline exists AND when the pipeline exists but is still
 `pending` (no runner assigned yet). Poll
 `glab api projects/.../merge_requests/<iid>` until
 `head_pipeline.status` is `running` (not just non-null) before enabling
-auto-merge.
+auto-merge. With ff merges any push to `main` (docs-only included) makes open
+MRs `need_rebase`, and `--auto-merge` then returns 405 too: push docs to `main`
+only while no MR is mid-pipeline, or fold them into the next MR.
 
 CI fetches the pinned jetson-nvmpi release (`NVMPI_VERSION`), patches/builds the FFmpeg versions on non-Jetson runners, runs the mockable suites against the nvmpi mock (`test:stub`), and hw-tests each version on self-hosted Jetson runners against the real released libnvmpi. **GitLab** (`.gitlab-ci.yml`) is the active pipeline; **GitHub Actions** (`.github/workflows/ci.yml`) is manual-only (`workflow_dispatch`) because it needs self-hosted Jetson runners + arm64 containers.
 
@@ -464,7 +466,9 @@ GitLab also disappears from GitHub.
 
 **Always verify authentication before using them.** Run `glab auth status` /
 `gh auth status` first. If a CLI is **not** authenticated, do **not** improvise
-(e.g. scraping tokens from CI variables) — instead **stop and print a clear
+(e.g. scraping tokens from CI variables; list CI/CD variables by NAME only,
+never print values, and if a value was printed report it as exposed and
+recommend rotation) — instead **stop and print a clear
 message asking the user to authenticate** (`glab auth login` / `gh auth login`)
 and wait for them to confirm before continuing.
 
@@ -543,6 +547,14 @@ default for all sessions in this repo — do not wait for the user to request it
   explicitly on Agent calls — never inherit the parent model by default.
   Wasting tokens on an expensive model for a `glab api` call or file grep
   is a violation of this rule.
+- **No tag, release, or version bump without an explicit order.** Never in any
+  repo unless the user orders that specific release at that moment. Approving a
+  plan does not authorize a release step inside it. Subagent prompts must state
+  "no tags/releases". (jetson-nvmpi v4.0.0 was tagged prematurely by a subagent
+  and had to be deleted, 2026-10-19.)
+- **Agents waiting on pipelines stay until done.** Use `run_in_background` poll
+  loops and wait for the notification. Hand back only when merged + main
+  checked, or blocked >4h; never hand back early "because waiting".
 - **Write specs, design docs, and implementation plans to `.work/`** in the
   repo root (create it if absent) — not `.claude/work/`, `docs/`, or a skill's
   default location. This overrides any skill's default spec path.
@@ -550,7 +562,9 @@ default for all sessions in this repo — do not wait for the user to request it
   fails, investigate the actual code defect first. Only add test-level
   retries, delays, or sleep-based workarounds after confirming the failure is
   a hardware/driver timing issue with no code fix possible. "Add retry logic"
-  is not a fix — it masks the bug.
+  is not a fix — it masks the bug. A "flaky" stub/mock test can be a real
+  libnvmpi race (jetson-nvmpi #111: encoder EOS drain lost tail packets);
+  reproduce under parallel load before calling it flaky.
 - **Diagnosis that reproduces a bug is authorization to write the fix.**
   When a code defect is identified and reproduced, write the fix immediately
   — don't stall on further analysis, re-explain the problem, or wait for
@@ -583,6 +597,9 @@ default for all sessions in this repo — do not wait for the user to request it
   (Sunday 02:00) and web runs set `HW_TIER=full` (every suite × every version on the Orin).
   MRs are merged fast-forward (`merge_method=ff`): rebase the MR branch when
   main moved, then wait for its new head pipeline.
+- **`NVMPI_VERSION` policy.** Bump it only for jetson-nvmpi releases that change
+  libnvmpi itself (`src/`, packaging); mock/test/docs-only releases are not
+  followed.
 - **Pre-tag gate = full-tier pipeline green on the tag's SHA.** Before
   tagging, confirm the latest weekly run (or a web run with `HW_TIER=full`) on
   that exact `main` SHA is `success`; if none exists, start one and wait. A
@@ -679,6 +696,9 @@ default for all sessions in this repo — do not wait for the user to request it
   progress — each call wastes tokens and context. One check to confirm the
   monitor is armed, then stop. If you need interim visibility, set up the
   Monitor with the right grep filter upfront, not by polling manually.
+- **Watcher scripts: no self-matching `pgrep`.** Never `pgrep -f <name>` from a
+  `bash -c` whose command line contains that name (self-match, infinite wait);
+  use `wait <pid>` or `pgrep -f '[n]ame'`. Wrap long `docker run` in `timeout`.
 - **Capture all workflow steps in todo upfront.** When the user gives
   multi-step instructions (comments, patches, issue updates, commits), add
   ALL steps to the todo list immediately — not one at a time as reminders
