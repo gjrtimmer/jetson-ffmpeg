@@ -117,7 +117,7 @@ variables:
   # registry first (job token, same network as the runners), the public GitHub
   # release asset as fallback. To bump: set the new version, check the release
   # has both jetson-nvmpi_<ver>_l4t<tag>_aarch64.tar.gz files, run an MR pipeline.
-  NVMPI_VERSION: "4.3.0"
+  NVMPI_VERSION: "4.3.1"
   # jetson-nvmpi git ref the nvmpi mock is built from: a tag or commit SHA of
   # the public mirror. Defaults to the release tag; pin a SHA to take mock
   # fixes that are not released yet, independent of NVMPI_VERSION.
