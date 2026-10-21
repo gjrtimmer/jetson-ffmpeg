@@ -11,6 +11,11 @@
 #      Back-pressure (jetson-nvmpi#125, jetson-ffmpeg#125): nonblocking never
 #      drops an AU, also with a tiny -packet_pool_size (3), where send and
 #      receive can both see EAGAIN (receive must then wait; no stall).
+#      Blocking mode never drops an AU either (jetson-ffmpeg#133): with
+#      -packet_pool_size 1 the wrapper must hold frames back until FFmpeg has
+#      taken the owed packet; before the fix ~30% of runs lost AUs ("packet
+#      pool empty; encoded frame dropped"). Repeated BLOCKING_RUNS times since
+#      the drop needs the DQ thread to outrun the encode thread.
 #   2. Custom -wait_timeout with low_delay works.
 #   3. Early termination (-t 1) exits cleanly with low_delay and with
 #      -nonblocking 1 (no hang, >0 packets).
@@ -76,6 +81,12 @@ encode_check h264_nvmpi "-nonblocking 1 -flags low_delay" "" "h264 nonblocking/l
 echo "== h264: nonblocking + small packet_pool_size (back-pressure, exact count) =="
 encode_check h264_nvmpi "-nonblocking 1" "-packet_pool_size 3" "h264 nonblocking/pool=3"
 encode_check h264_nvmpi "-nonblocking 1 -flags low_delay" "-packet_pool_size 3" "h264 nonblocking/low_delay/pool=3"
+
+echo "== h264: blocking + packet_pool_size=1 (pool back-pressure, exact count) =="
+BLOCKING_RUNS=10
+for run in $(seq 1 "$BLOCKING_RUNS"); do
+  encode_check h264_nvmpi "" "-packet_pool_size 1" "h264 blocking/pool=1 run ${run}/${BLOCKING_RUNS}"
+done
 
 echo "== hevc: blocking/low_delay, nonblocking =="
 if is_mock; then
