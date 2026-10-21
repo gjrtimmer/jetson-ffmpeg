@@ -83,4 +83,21 @@ else
     || ff_fail "(reschange) a plane is below 30 dB before the change."
 fi
 
+# ── 5. Decode-order output keeps every frame (timestamps) ────────────────────
+# disable_dpb=1 hands frames out in decode order, so their pts go backwards on
+# a B-frame stream. Each output frame must carry an input packet's dts as
+# pkt_dts (as libavcodec stamped it for the old decode callback), so that
+# best_effort_timestamp stays monotonic; without it the CLI drops ~2/3 of the
+# frames when muxing (35/90 seen on the #132 MR pipeline, same on the mock).
+echo "== 5. decode-order output (disable_dpb=1) keeps its frames =="
+OUT5=/tmp/nvmpi-pool-dpb.mkv
+exp=$(packet_count "${SAMPLE_H264_720P}")
+run_ff_must "(dpb) decode with disable_dpb=1" -T 60 -loglevel error \
+  -disable_dpb 1 -c:v h264_nvmpi -i "${SAMPLE_H264_720P}" -c:v ffv1 "${OUT5}"
+got=$(packet_count "${OUT5}")
+rm -f "${OUT5}"
+echo "   disable_dpb: ${got}/${exp} frames (min $((exp * 3 / 4)))"
+[ "${got:-0}" -ge $((exp * 3 / 4)) ] \
+  || ff_fail "(dpb) only ${got:-0}/${exp} frames survived muxing (frame timestamps out of order?)."
+
 echo "OK: hw-decoder-pool passed on ${variant}."
