@@ -22,12 +22,12 @@ test/
 │   ├── hw-decoder-chunk.sh
 │   ├── hw-decoder-codecs.sh
 │   ├── hw-decoder-downscale.sh
-│   ├── hw-decoder-drmprime-planes.sh  # video DRM_PRIME plane offsets (libnvmpi fd2)
+│   ├── hw-decoder-drmprime-planes.sh  # video DRM_PRIME plane offsets (libnvmpi fd2), res change
 │   ├── hw-decoder-flush.sh
 │   ├── hw-decoder-lifecycle.sh
 │   ├── hw-decoder-mjpeg.sh
 │   ├── hw-decoder-mjpeg-drmprime.sh
-│   └── hw-decoder-pool.sh
+│   └── hw-decoder-pool.sh             # frame_pool_size bounds, res change with a full pool (#132)
 ├── encoder/               # NVENC encoder suites
 │   ├── hw-encoder-gop.sh
 │   ├── hw-encoder-header.sh

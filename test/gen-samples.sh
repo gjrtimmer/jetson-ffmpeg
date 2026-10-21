@@ -164,6 +164,28 @@ gen-sample-h264-short() {
     -c:v libx264 "$1"
 }
 
+# Raw Annex B H.264 of a STILL (frame 0 of testsrc2 repeated, no B-frames).
+# Still content makes plane_psnr independent of frame pairing: the hw chain may
+# shift, drop or duplicate a frame, and on moving content that alone costs
+# ~25 dB.
+#   gen-sample-h264-still FILE WxH SECONDS
+gen-sample-h264-still() {
+  ffmpeg -y -hide_banner -loglevel error \
+    -f lavfi -i "testsrc2=s=$2:r=30" \
+    -vf "select='eq(n\,0)',loop=loop=-1:size=1:start=0" -t "$3" -pix_fmt yuv420p \
+    -c:v libx264 -g 15 -bf 0 -f h264 "$1"
+}
+
+# Mid-stream resolution change: 1 s 1280x720 still, then 1 s 642x358 still
+# (new SPS at an IDR), concatenated as one Annex B stream. The parts are kept
+# as FILE-a.h264 / FILE-b.h264 for per-part reference checks.
+#   gen-sample-h264-reschange FILE
+gen-sample-h264-reschange() {
+  gen-sample-h264-still "$1-a.h264" 1280x720 1 &&
+    gen-sample-h264-still "$1-b.h264" 642x358 1 &&
+    cat "$1-a.h264" "$1-b.h264" > "$1"
+}
+
 # has_sw_encoder NAME: true when the software encoder is compiled into ffmpeg
 # (needed to generate samples; the nvmpi codecs under test never fall back).
 has_sw_encoder() {

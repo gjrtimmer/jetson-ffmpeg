@@ -5,7 +5,7 @@
 # chroma offset as pitch*height, which is wrong whenever the allocator pads
 # the luma plane. Covers: fd2 in use (no legacy warning), chroma correctness on
 # a size that is not 16-aligned (encoder fd path reads the descriptor offsets;
-# a wrong chroma offset corrupts U/V) and the
+# a wrong chroma offset corrupts U/V), a resolution change mid-stream, and the
 # forced pre-4.3.0 fallback (NVMPI_FORCE_NO_FD2=1). On the mock the pixel
 # comparisons are skipped (canned slices are not software-decodable; asserted
 # on hardware only). No rapid open/close loops (Tegra driver segfaults).
@@ -27,18 +27,8 @@ trap 'rm -f "${T}"-* 2>/dev/null || true' EXIT
 DEC_HW=(-hwaccel nvmpi -c:v h264_nvmpi)
 FALLBACK_MSG="lacks nvmpi_decoder_get_frame_fd2"
 
-# gen_h264 FILE WxH SECONDS: software-encoded raw Annex B H.264 of a STILL
-# (frame 0 of testsrc2 repeated, no B-frames). Still content makes every
-# PSNR comparison independent of frame pairing: the hw decode+encode chain may
-# shift, drop or duplicate a frame, and on the moving pattern that alone costs
-# ~25 dB (the first version of this suite measured ~22.8 dB for every variant).
-gen_h264() {
-  ffmpeg -y -hide_banner -loglevel error \
-    -f lavfi -i "testsrc2=s=$2:r=30" \
-    -vf "select='eq(n\,0)',loop=loop=-1:size=1:start=0" -t "$3" -pix_fmt yuv420p \
-    -c:v libx264 -g 15 -bf 0 -f h264 "$1"
-}
-
+# Sources are raw Annex B stills (gen-sample-h264-still, test/gen-samples.sh):
+# PSNR comparisons then do not depend on frame pairing.
 # plane_psnr (lib/common.sh) prints "Y U V" min PSNR over 5 frames.
 # psnr_ok "Y U V" LABEL THRESHOLD: every plane must reach THRESHOLD dB.
 psnr_ok() {
@@ -59,7 +49,7 @@ dims_of() {
 # ── 1. fd2 in use: the legacy pitch*height path must not be taken ───────────
 echo "== 1. libnvmpi fd2 API used (no pitch*height fallback) =="
 S720="${T}-720.h264"
-gen_h264 "${S720}" 1280x720 2
+gen-sample-h264-still "${S720}" 1280x720 2
 run_ff_must "fd2 decode" -T 60 -loglevel warning \
   "${DEC_HW[@]}" -f h264 -i "${S720}" -vf scale_vic=640:360 -c:v h264_nvmpi "${T}-fd2.mkv"
 if printf '%s\n' "$FF_OUT" | grep -q "$FALLBACK_MSG"; then
@@ -79,11 +69,11 @@ echo "== 2. chroma correctness on a padded size (642x358) =="
 # Control first: a 16-aligned size through the same pipeline and PSNR method.
 # If it fails, the harness (encoder/decoder chain) is at fault, not the layout.
 SCTL="${T}-ctl.h264"
-gen_h264 "${SCTL}" 640x352 1
+gen-sample-h264-still "${SCTL}" 640x352 1
 run_ff_must "aligned-size hw decode+encode" -T 60 -loglevel error \
   "${DEC_HW[@]}" -f h264 -i "${SCTL}" -c:v h264_nvmpi -b:v 20M "${T}-ctl.mkv"
 SODD="${T}-odd.h264"
-gen_h264 "${SODD}" 642x358 1
+gen-sample-h264-still "${SODD}" 642x358 1
 run_ff_must "odd-size hw decode+encode" -T 60 -loglevel verbose \
   "${DEC_HW[@]}" -f h264 -i "${SODD}" -c:v h264_nvmpi -b:v 20M "${T}-odd.mkv"
 printf '%s\n' "$FF_OUT" | grep "DRM_PRIME layout" | sed 's/^/   /' || true
@@ -99,10 +89,58 @@ else
   psnr_ok "$(plane_psnr "${T}-odd-sw.mkv" "${T}-odd.mkv" 642 358)" "642x358 drm_prime vs software-frame" 40
 fi
 
-# Resolution-change coverage: see #132, blocked by decoder deadlock.
+# ── 3. Resolution change mid-stream (jetson-ffmpeg#132) ─────────────────────
+# One Annex B stream: 1 s 1280x720 still, then 1 s 642x358 still (new SPS at an
+# IDR). This hung before #132 (decoded frames filled libnvmpi's pool and
+# put_packet deadlocked against the capture thread at the change). libnvmpi
+# starts a new pool generation, frames keep their own geometry, and scale_vic
+# reconfigures to the new hw_frames_ctx. Old-size frames not taken yet when
+# the change is serviced are discarded by libnvmpi (by design,
+# jetson-nvmpi#143); every new-size frame must arrive. -noautoscale: after the
+# encoder opened, ffmpeg's graph reinit would otherwise insert a software
+# "auto_scale" behind scale_vic, which cannot convert DRM_PRIME frames.
+echo "== 3. resolution change mid-stream (1280x720 -> 642x358) =="
+SCHG="${T}-change.h264"
+gen-sample-h264-reschange "${SCHG}"
+run_ff_must "resolution-change decode" -T 90 -loglevel verbose \
+  "${DEC_HW[@]}" -f h264 -i "${SCHG}" -vf scale_vic=640:360 -noautoscale \
+  -c:v h264_nvmpi "${T}-change.mkv"
+if printf '%s\n' "$FF_OUT" | grep -qi "inconsistent DMA-BUF layout"; then
+  ff_fail "decoder reported an inconsistent DMA-BUF layout after the resolution change."
+fi
+# Both geometries must reach the DRM_PRIME descriptors (fd2 layout log).
+for g in 1280x720 642x358; do
+  printf '%s\n' "$FF_OUT" | grep -q "DRM_PRIME layout ${g} " \
+    || ff_fail "no DRM_PRIME frame with geometry ${g} across the change."
+done
+count_src() {
+  ffprobe -v error -count_frames -select_streams v:0 \
+    -show_entries stream=nb_read_frames -of default=nokey=1:nw=1 -f h264 "$1"
+}
+exp=$(count_src "${SCHG}")
+min=$(( $(count_src "${SCHG}-b.h264") + 1 ))   # all new-size + >= 1 old-size
+got=$(packet_count "${T}-change.mkv")
+echo "   change: ${got}/${exp} frames (need ${min}..${exp})"
+if [ "${got:-0}" -lt "$min" ] || [ "${got:-0}" -gt "$exp" ]; then
+  echo "FAIL(change): ${got:-0}/${exp} frames across the resolution change."; exit 1
+fi
+if is_mock; then
+  mock_skip "output size and chroma check across the change"
+else
+  w_h=$(dims_of "${T}-change.mkv")
+  if [ "$w_h" != "640x360" ]; then
+    echo "FAIL(change): expected 640x360, got ${w_h:-?}."; exit 1
+  fi
+  # Chroma after the change: the stream is scaled to 640x360 by VIC (hw) and
+  # swscale (reference), so the bound is loose (25 dB), but a wrong chroma
+  # offset still lands far below it. The last 5 output frames are the
+  # 642x358 still; the reference is the 642x358 clip alone (a resolution
+  # change inside the reference would reset ffmpeg's frame counter).
+  psnr_ok "$(plane_psnr "${SCHG}-b.h264" "${T}-change.mkv" 640 360 $((got - 5)) "" 15)" "change" 25
+fi
 
-# ── 3. Forced pre-4.3.0 library: legacy path still works, warns once ────────
-echo "== 3. fallback without nvmpi_decoder_get_frame_fd2 =="
+# ── 4. Forced pre-4.3.0 library: legacy path still works, warns once ────────
+echo "== 4. fallback without nvmpi_decoder_get_frame_fd2 =="
 NVMPI_FORCE_NO_FD2=1 run_ff_must "legacy-path decode" -T 60 -loglevel warning \
   "${DEC_HW[@]}" -f h264 -i "${S720}" -vf scale_vic=640:360 -c:v h264_nvmpi "${T}-legacy.mkv"
 printf '%s\n' "$FF_OUT" | grep -q "$FALLBACK_MSG" \
