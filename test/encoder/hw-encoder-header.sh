@@ -35,13 +35,25 @@ for enc in h264_nvmpi hevc_nvmpi; do
     -f lavfi -i testsrc2=s=1280x720:r=30 \
     -frames:v ${FRAMES} -c:v "$enc" -flags +global_header -b:v 3M \
     /tmp/nvmpi-out-globalheader.mp4
+  # Keep the encoder's stderr: the sw-decode check below overwrites FF_OUT.
+  enc_out="$FF_OUT"
 
   # Roundtrip via the demuxer + software decoder: proves avcC/hvcC (built
   # from extradata) is present and sane — works on every FFmpeg version.
   packets=$(packet_count /tmp/nvmpi-out-globalheader.mp4)
   if [ "${packets:-0}" -ne "${FRAMES}" ]; then
+    # Encoder-side count: libnvmpi logs one "packet pool empty; encoded
+    # frame dropped" line per AU it discards (jetson-ffmpeg#133). If
+    # FRAMES - drops == muxed packets, the loss is in the encoder, not in
+    # mux/demux or extradata.
+    drops=$(printf '%s\n' "$enc_out" | grep -c "encoded frame dropped" || true)
     echo "FAIL: ${enc} mp4 roundtrip returned ${packets:-0}/${FRAMES} packets —"
-    echo "      extradata missing or unusable (avcC/hvcC not built)."
+    echo "      encoder side: $((FRAMES - drops))/${FRAMES} AUs (${drops} dropped by libnvmpi);"
+    echo "      muxed: ${packets:-0}. If both match, the encoder lost AUs;"
+    echo "      otherwise extradata is missing or unusable (avcC/hvcC not built)."
+    echo "--- encoder stderr (libnvmpi + last lines) ---"
+    printf '%s\n' "$enc_out" | grep -v '^\[mock\]' | grep -E "libnvmpi|nvmpi" | head -20 || true
+    printf '%s\n' "$enc_out" | grep -v '^\[mock\]' | tail -10
     echo "--- sw-decode check ---"
     run_ff -T 30 -i /tmp/nvmpi-out-globalheader.mp4 -f null - || true
     printf '%s\n' "$FF_OUT" | tail -10
