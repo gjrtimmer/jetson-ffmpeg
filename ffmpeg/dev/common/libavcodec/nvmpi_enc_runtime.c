@@ -101,6 +101,7 @@ int nvmpi_encode_gen_global_header_extradata(AVCodecContext *avctx, nvEncParam *
 	nvmpictx *_ctx;
 	int i;
 	int ret;
+	int put_ret;
 	int64_t shiftPts = 1000000/param->fps_n;
 
 	/* GLOBAL_HEADER temp encoder: allocate the blank frame as NV12
@@ -112,7 +113,14 @@ int nvmpi_encode_gen_global_header_extradata(AVCodecContext *avctx, nvEncParam *
 
 	if(avctx->codec->id == AV_CODEC_ID_H264) param->codingType = NV_VIDEO_CodingH264;
 	else param->codingType = NV_VIDEO_CodingHEVC;
-	av_image_alloc(dst, linesize, avctx->width, avctx->height, alloc_fmt, 1);
+	/* Blank source frame, freed on every exit below (av_freep(&dst[0])).
+	 * Align 1 still gives every plane at least one full row of bytes, so
+	 * libnvmpi's put_frame linesize check (>= 4.5.0) accepts it. */
+	if (av_image_alloc(dst, linesize, avctx->width, avctx->height, alloc_fmt, 1) < 0)
+	{
+		av_frame_free(&nvmpi_context->frame);
+		return AVERROR(ENOMEM);
+	}
 
 	/* Force blocking mode for the extradata encoder — non-blocking is
 	 * meaningless here (tight loop, no caller to return EAGAIN to) and
@@ -158,9 +166,27 @@ int nvmpi_encode_gen_global_header_extradata(AVCodecContext *avctx, nvEncParam *
 		_nvframe.linesize[2]=linesize[2];
 		_nvframe.timestamp+=shiftPts;
 
-		nvmpi_encoder_put_frame(_ctx,&_nvframe);
+		/* libnvmpi >= 4.5.2 refuses a frame with NVMPI_ERR_EAGAIN (not
+		 * queued) also in blocking mode once every pool packet is owed to
+		 * an in-flight AU: then wait (bounded) for one of those packets
+		 * instead of spinning. Any other error (e.g. NVMPI_ERR_INVAL for
+		 * a rejected frame layout) can never succeed on retry, so fail
+		 * init instead of looping forever. */
+		put_ret = nvmpi_encoder_put_frame(_ctx,&_nvframe);
+		if (put_ret < 0 && put_ret != NVMPI_ERR_EAGAIN)
+		{
+			av_log(avctx, AV_LOG_ERROR,
+			       "nvmpi: extradata encoder rejected a frame (code=%d)\n", put_ret);
+			av_freep(&dst[0]);
+			nvmpienc_deinitPktPool(avctx);
+			nvmpi_encoder_close(nvmpi_context->ctx);
+			nvmpi_context->ctx = NULL;
+			av_frame_free(&nvmpi_context->frame);
+			return AVERROR_EXTERNAL;
+		}
 
-		ret=nvmpi_encoder_get_packet(_ctx,&nPkt, avctx->flags & AV_CODEC_FLAG_LOW_DELAY);
+		ret=nvmpi_encoder_get_packet(_ctx,&nPkt,
+			(avctx->flags & AV_CODEC_FLAG_LOW_DELAY) || put_ret == NVMPI_ERR_EAGAIN);
 
 		if(ret<0)
 			continue;
