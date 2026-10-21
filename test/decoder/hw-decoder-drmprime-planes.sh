@@ -131,6 +131,18 @@ else
   if [ "$w_h" != "640x360" ]; then
     echo "FAIL(change): expected 640x360, got ${w_h:-?}."; exit 1
   fi
+  # Diagnostics (printed, not asserted) to tell a stale picture after the
+  # change from a scale_vic problem on the padded 642x358 surface:
+  #  - the per-geometry DRM_PRIME layouts libnvmpi reported;
+  #  - the last 5 output frames against the OLD (1280x720) still: a high
+  #    value means pre-change content is still being output;
+  #  - the 642x358 still alone through the same decoder + scale_vic +
+  #    encoder chain (no resolution change).
+  printf '%s\n' "$FF_OUT" | grep -E "DRM_PRIME layout|scale_vic" | sort | uniq -c | sed 's/^/   /' || true
+  echo "   diag: last 5 vs old 1280x720 still: Y/U/V = $(plane_psnr "${SCHG}-a.h264" "${T}-change.mkv" 640 360 $((got - 5)) "" 15) dB"
+  run_ff_must "642x358 still alone through scale_vic" -T 60 -loglevel error \
+    "${DEC_HW[@]}" -f h264 -i "${SCHG}-b.h264" -vf scale_vic=640:360 -c:v h264_nvmpi "${T}-bvic.mkv"
+  echo "   diag: 642x358 still alone via scale_vic vs source: Y/U/V = $(plane_psnr "${SCHG}-b.h264" "${T}-bvic.mkv" 640 360 15) dB"
   # Chroma after the change: the stream is scaled to 640x360 by VIC (hw) and
   # swscale (reference), so the bound is loose (25 dB), but a wrong chroma
   # offset still lands far below it. The last 5 output frames are the

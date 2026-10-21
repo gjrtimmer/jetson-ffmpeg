@@ -91,6 +91,15 @@ done
 if is_mock; then
   mock_skip "pixel check before the change (mock frames are not the source picture)"
 else
+  # Diagnostic (printed): software frames keep the 1280x720 allocation after
+  # the change; libnvmpi copies the 642x358 picture into its top-left corner.
+  # Cropped, the last frames show whether the decoder output itself is right
+  # after the change (compare with the DRM_PRIME path in drmprime-planes).
+  n=$(packet_count "${OUT}")
+  run_ff_must "crop software frames after the change" -T 60 -loglevel error \
+    -i "${OUT}" -vf "crop=642:358:0:0" -c:v ffv1 "${OUT%.mkv}-crop.mkv"
+  echo "   diag: sw last 5 (cropped) vs 642x358 still: Y/U/V = $(plane_psnr "${SCHG}-b.h264" "${OUT%.mkv}-crop.mkv" 642 358 $((n - 5)) "" 15) dB"
+  rm -f "${OUT%.mkv}-crop.mkv"
   # Frames 0-4 are the 1280x720 still: decoded pixels must match the source.
   vals=$(plane_psnr "${SCHG}-a.h264" "${OUT}" 1280 720)
   echo "   before the change: Y/U/V = ${vals} dB (min 30)"
