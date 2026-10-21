@@ -38,6 +38,14 @@ typedef struct {
 	int nonblocking;            //non-blocking mode: put_frame returns EAGAIN instead of blocking
 	int encoder_flushing;       //set after EOS was sent to libnvmpi
 	int send_eagain;            //last send_frame returned EAGAIN (back-pressure): receive must wait
+	/* Blocking-mode packet-pool back-pressure: frames accepted by
+	 * put_frame whose packet FFmpeg has not received yet. libnvmpi's DQ
+	 * thread needs one empty pool packet per AU and DROPS the AU when the
+	 * pool is empty; in blocking mode libnvmpi does no admission control,
+	 * so the wrapper keeps aus_owed <= packet_pool_size itself. Reset by
+	 * nvmpi_flush_encoder(). Zeroed with priv_data. */
+	int aus_owed;
+	int owed_wait;              //this call skipped send to wait on owed AUs
 	int dmabuf_input;           //set when pix_fmt is DRM_PRIME (mmap+CPU-read path)
 	int64_t last_bitrate;       //track last-set bitrate for dynamic change detection
 	AVFrame *frame; //tmp frame

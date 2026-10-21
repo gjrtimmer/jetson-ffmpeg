@@ -433,6 +433,14 @@ static int ff_nvmpi_receive_packet(AVCodecContext *avctx, AVPacket *pkt)
 		|| nvmpi_context->send_eagain);
 	if(res<0)
 	{
+		/* Blocking-mode back-pressure wait came back empty: libnvmpi
+		 * returns at once when no AU is in flight, else after
+		 * wait_timeout. Either way our owed count is stale (an AU was
+		 * dropped on an error path, or B-frame delay >= pool size);
+		 * clear it so the pending frame is sent next call instead of
+		 * livelocking on a packet that will never come. */
+		if(res == -1 && nvmpi_context->owed_wait)
+			nvmpi_context->aus_owed = 0;
 		/* -2 = actual EOS from the V4L2 DQ thread (all packets drained).
 		 * -1 = no packet ready yet (DQ thread still processing); return
 		 * EAGAIN so FFmpeg keeps calling receive_packet during flush.
@@ -441,6 +449,10 @@ static int ff_nvmpi_receive_packet(AVCodecContext *avctx, AVPacket *pkt)
 		if(res == -2) return AVERROR_EOF;
 		return AVERROR(EAGAIN);
 	}
+
+	/* One owed AU delivered: its pool packet is recycled below. */
+	if(nvmpi_context->aus_owed > 0)
+		nvmpi_context->aus_owed--;
 
 	aPkt = (AVPacket*)(nPkt->privData);
 	//aPkt->dts=aPkt->pts=nPkt->pts;
@@ -489,6 +501,28 @@ int ff_nvmpi_receive_packet_async(AVCodecContext *avctx, AVPacket *pkt)
 
 	/* Cleared every call; set below only if this call's send is refused. */
 	nvmpi_context->send_eagain = 0;
+	nvmpi_context->owed_wait = 0;
+
+	/* Blocking-mode packet-pool back-pressure. Every AU needs one empty
+	 * pool packet when libnvmpi's DQ thread dequeues it, and with the pool
+	 * empty the AU is DROPPED (frames missing from the output). In blocking
+	 * mode put_frame only blocks on OUTPUT-plane buffers, so up to
+	 * 2 * num_capture_buffers AUs (OUTPUT + CAPTURE queues) can be in
+	 * flight when this thread is starved of CPU while the DQ thread runs:
+	 * more than the default packet_pool_size (10). Never let more frames
+	 * be in flight than the pool holds: keep the frame pending (it stays in
+	 * nvmpi_context->frame for the next call) and wait for a packet
+	 * instead. Non-blocking mode needs no check here: libnvmpi refuses
+	 * the frame itself (EAGAIN) under the same condition. EOS (frame==NULL)
+	 * yields no AU and is never held back. */
+	if(needSendFrame && frame && !nvmpi_context->nonblocking &&
+	   nvmpi_context->aus_owed >= nvmpi_context->packet_pool_size)
+	{
+		needSendFrame = false;
+		nvmpi_context->send_eagain = 1;  //receive_packet waits for a packet
+		nvmpi_context->owed_wait = 1;
+	}
+
 	if(needSendFrame)
 	{
 		res = ff_nvmpi_send_frame(avctx, frame);
@@ -498,7 +532,12 @@ int ff_nvmpi_receive_packet_async(AVCodecContext *avctx, AVPacket *pkt)
 			if(res == AVERROR(EAGAIN)) nvmpi_context->send_eagain = 1;
 			if(res != AVERROR_EOF && res != AVERROR(EAGAIN)) return res;
 		}
-		else av_frame_unref(frame);
+		else
+		{
+			/* A real frame now owes one AU (and one pool packet). */
+			if(frame) nvmpi_context->aus_owed++;
+			av_frame_unref(frame);
+		}
 	}
 
 	res = ff_nvmpi_receive_packet(avctx, pkt);
@@ -522,4 +561,7 @@ void nvmpi_flush_encoder(AVCodecContext *avctx)
     /* Clear the FFmpeg-side flushing flag so send_frame accepts frames. */
     nvmpi_context->encoder_flushing = 0;
     nvmpi_context->send_eagain = 0;
+    /* STREAMOFF discarded every in-flight AU: nothing is owed any more. */
+    nvmpi_context->aus_owed = 0;
+    nvmpi_context->owed_wait = 0;
 }
