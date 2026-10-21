@@ -176,13 +176,14 @@ gen-sample-h264-still() {
     -c:v libx264 -g 15 -bf 0 -f h264 "$1"
 }
 
-# Mid-stream resolution change: 1 s 1280x720 still, then 1 s 642x358 still
-# (new SPS at an IDR), concatenated as one Annex B stream. The parts are kept
-# as FILE-a.h264 / FILE-b.h264 for per-part reference checks.
-#   gen-sample-h264-reschange FILE
+# Mid-stream resolution change: 1 s 1280x720 still, then 1 s still of WxH
+# (default 642x358, not 16-aligned; new SPS at an IDR), concatenated as one
+# Annex B stream. The parts are kept as FILE-a.h264 / FILE-b.h264 for
+# per-part reference checks.
+#   gen-sample-h264-reschange FILE [WxH]
 gen-sample-h264-reschange() {
   gen-sample-h264-still "$1-a.h264" 1280x720 1 &&
-    gen-sample-h264-still "$1-b.h264" 642x358 1 &&
+    gen-sample-h264-still "$1-b.h264" "${2:-642x358}" 1 &&
     cat "$1-a.h264" "$1-b.h264" > "$1"
 }
 

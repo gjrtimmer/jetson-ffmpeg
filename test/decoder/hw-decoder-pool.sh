@@ -49,26 +49,44 @@ pool_decode max 32
 # ffv1 (lossless) keeps the decoded pixels for the PSNR check.
 echo "== 4. resolution change mid-stream, software frames (1280x720 -> 642x358) =="
 SCHG=/tmp/nvmpi-pool-reschange.h264
+SCTL=/tmp/nvmpi-pool-reschange-ctl.h264
 OUT=/tmp/nvmpi-pool-reschange.mkv
-trap 'rm -f "${SCHG}" "${SCHG}"-?.h264 "${OUT}" 2>/dev/null || true' EXIT
+trap 'rm -f "${SCHG}" "${SCHG}"-?.h264 "${SCTL}" "${SCTL}"-?.h264 "${OUT}" 2>/dev/null || true' EXIT
 gen-sample-h264-reschange "${SCHG}"
+# Control: same change to a 16-aligned size, to tell alignment/crop problems
+# at the change from general loss.
+gen-sample-h264-reschange "${SCTL}" 640x352
 count_src() {
   ffprobe -v error -count_frames -select_streams v:0 \
     -show_entries stream=nb_read_frames -of default=nokey=1:nw=1 -f h264 "$1"
 }
-exp=$(count_src "${SCHG}")
+# reschange_case LABEL CLIP POOL: decode once to count what the decoder
+# returns (showinfo, timestamps passed through, no muxer checks), once to
+# ffv1/mkv (what survives the CLI's timestamp handling); both are printed so
+# a failure says whether frames were lost in the decoder or dropped later.
 # Floor: every new-size frame plus at least one old-size frame.
-min=$(( $(count_src "${SCHG}-b.h264") + 1 ))
-for pool in 1 5; do
-  run_ff_must "(reschange) decode with frame_pool_size=${pool}" -T 60 -loglevel error \
-    -frame_pool_size:v "$pool" -c:v h264_nvmpi -f h264 -i "${SCHG}" -c:v ffv1 "${OUT}"
+reschange_case() {
+  local label="$1" clip="$2" pool="$3" exp min dec got w_h
+  exp=$(count_src "$clip")
+  min=$(( $(count_src "${clip}-b.h264") + 1 ))
+  run_ff_must "(${label}) decoder-side count, pool ${pool}" -T 60 -loglevel info \
+    -frame_pool_size:v "$pool" -c:v h264_nvmpi -f h264 -i "$clip" \
+    -vf showinfo -fps_mode passthrough -f null -
+  dec=$(printf '%s\n' "$FF_OUT" | grep -c 'Parsed_showinfo.* n: *[0-9]' || true)
+  printf '%s\n' "$FF_OUT" | grep -iE 'transform|NvBufSurf|dropp|error' | head -5 | sed 's/^/   log: /' || true
+  run_ff_must "(${label}) decode with frame_pool_size=${pool}" -T 60 -loglevel error \
+    -frame_pool_size:v "$pool" -c:v h264_nvmpi -f h264 -i "$clip" -c:v ffv1 "${OUT}"
   got=$(packet_count "${OUT}")
   w_h=$(ffprobe -v error -select_streams v:0 -show_entries stream=width,height \
     -of csv=p=0:s=x "${OUT}")
-  echo "   pool ${pool}: ${got}/${exp} frames, ${w_h}"
-  [ "${got:-0}" -ge "$min" ] && [ "${got:-0}" -le "$exp" ] \
-    || ff_fail "(reschange) pool ${pool}: ${got:-0}/${exp} frames (need ${min}..${exp})."
-  [ "$w_h" = "1280x720" ] || ff_fail "(reschange) pool ${pool}: expected 1280x720 frames, got ${w_h:-?}."
+  echo "   ${label} pool ${pool}: decoded ${dec}, muxed ${got}/${exp} frames (need ${min}..${exp}), ${w_h}"
+  [ "${dec:-0}" -ge "$min" ] && [ "${got:-0}" -ge "$min" ] && [ "${got:-0}" -le "$exp" ] \
+    || ff_fail "(${label}) pool ${pool}: decoded ${dec:-0}, muxed ${got:-0}/${exp} (need ${min}..${exp})."
+  [ "$w_h" = "1280x720" ] || ff_fail "(${label}) pool ${pool}: expected 1280x720 frames, got ${w_h:-?}."
+}
+reschange_case aligned-ctl "${SCTL}" 5
+for pool in 1 5; do
+  reschange_case reschange "${SCHG}" "$pool"
 done
 if is_mock; then
   mock_skip "pixel check before the change (mock frames are not the source picture)"
