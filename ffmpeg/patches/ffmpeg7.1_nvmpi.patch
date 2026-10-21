@@ -634,10 +634,10 @@ index 0000000..214e481
 +#endif /* DYNLINK_NVMPI_H */
 diff --git a/libavcodec/nvmpi_dec.c b/libavcodec/nvmpi_dec.c
 new file mode 100644
-index 0000000..2b4665f
+index 0000000..c6eecd5
 --- /dev/null
 +++ b/libavcodec/nvmpi_dec.c
-@@ -0,0 +1,686 @@
+@@ -0,0 +1,719 @@
 +/*
 + * nvmpi_dec.c — FFmpeg decoder wrapper for libnvmpi (layer 2 of
 + * jetson-ffmpeg, the FFmpeg integration layer).
@@ -726,6 +726,10 @@ index 0000000..2b4665f
 +//Per-instance private context (priv_data of the AVCodecContext).
 +//AVClass must stay discoverable for the AVOption system; resize_expr and
 +//frame_pool_size are set via AVOptions before init.
++//Ring size for the pkt_dts hints: well above libnvmpi's frame pool (<= 32)
++//plus its V4L2 queues, so live entries are never overwritten in normal use.
++#define NVMPI_DTS_FIFO 128
++
 +typedef struct {
 +	char eos_reached;      //unused at present
 +	nvmpictx* ctx;         //libnvmpi decoder handle
@@ -733,6 +737,11 @@ index 0000000..2b4665f
 +	AVFrame *bufFrame;     //pre-allocated frame the next decode copies into
 +	AVPacket *pkt;         //input holder for ff_decode_get_packet(); empty between calls
 +	int draining;          //ff_decode_get_packet() hit EOF; cleared by flush
++	/* pkt_dts hints for output frames: FIFO of the dts of every packet put,
++	 * one popped per output frame (see nvmpi_receive_frame). Fixed ring,
++	 * oldest entry overwritten when full (frames libnvmpi dropped). */
++	int64_t dts_fifo[NVMPI_DTS_FIFO];
++	unsigned dts_rd, dts_wr; //free-running indices; count = dts_wr - dts_rd
 +	char *resize_expr;     //"-resize WxH" option (hw downscale in libnvmpi)
 +	int frame_pool_size;   //"-frame_pool_size N" option
 +	int chunk_size;        //"-chunk_size N" option (bytes; 0 = auto)
@@ -795,6 +804,7 @@ index 0000000..2b4665f
 +	if (!nvmpi_context->pkt)
 +		return AVERROR(ENOMEM);
 +	nvmpi_context->draining = 0;
++	nvmpi_context->dts_rd = nvmpi_context->dts_wr = 0;
 +
 +	param.codingType =nvmpi_get_codingtype(avctx);
 +	if (param.codingType == NV_VIDEO_CodingUnused)
@@ -1142,14 +1152,13 @@ index 0000000..2b4665f
 +
 +	packet.payload_size=size;
 +	packet.payload=pkt->data;
-+	/* Raw elementary streams (e.g. Annex B .h264) reach the decoder
-+	 * without a pts; the FFmpeg 6.x CLI only fills in a dts. The old
-+	 * decode callback got best_effort_timestamp from that dts (libavcodec
-+	 * stamped the output frame with the input packet's dts); receive_frame
-+	 * frames carry only what libnvmpi hands back, so pass the dts through
-+	 * the V4L2 timestamp when there is no pts. Otherwise every frame is
-+	 * NOPTS and the 6.x CLI drops most of them. */
-+	packet.pts = (pkt->pts != AV_NOPTS_VALUE) ? pkt->pts : pkt->dts;
++	packet.pts=pkt->pts;
++	/* Queue this packet's dts as the pkt_dts hint of a later output frame
++	 * (nvmpi_receive_frame). Ring full: drop the oldest hint, so indexing
++	 * stays inside dts_fifo whatever the input. */
++	if (nvmpi_context->dts_wr - nvmpi_context->dts_rd >= NVMPI_DTS_FIFO)
++		nvmpi_context->dts_rd++;
++	nvmpi_context->dts_fifo[nvmpi_context->dts_wr++ % NVMPI_DTS_FIFO] = pkt->dts;
 +
 +	res=nvmpi_decoder_put_packet(nvmpi_context->ctx,&packet);
 +	av_packet_unref(pkt);   //single release point of the pending packet
@@ -1166,7 +1175,8 @@ index 0000000..2b4665f
 +	return 0;
 +}
 +
-+//receive_frame callback (FF_CODEC_RECEIVE_FRAME_CB, libavcodec 60-63):
++//Core of the receive_frame callback (FF_CODEC_RECEIVE_FRAME_CB,
++//libavcodec 60-63), wrapped by nvmpi_receive_frame below:
 +//the decoder pulls its own input with ff_decode_get_packet(), which also
 +//runs the codec's bsfs (h264/hevc mp4toannexb). Order per iteration:
 +//  1. return a ready frame if there is one (non-blocking get);
@@ -1177,7 +1187,7 @@ index 0000000..2b4665f
 +//building up lag. The old decode callback (one packet in, at most one
 +//frame out) let it fill the whole frame pool; a resolution change at that
 +//point deadlocked put_packet against the capture thread (jetson-ffmpeg#132).
-+static int nvmpi_receive_frame(AVCodecContext *avctx, AVFrame *frame)
++static int nvmpi_receive_frame_core(AVCodecContext *avctx, AVFrame *frame)
 +{
 +	nvmpiDecodeContext *nvmpi_context = avctx->priv_data;
 +	int low_delay = !!(avctx->flags & AV_CODEC_FLAG_LOW_DELAY);
@@ -1224,6 +1234,28 @@ index 0000000..2b4665f
 +
 +
 +
++//receive_frame callback: core + timestamp hint. The old decode callback
++//let libavcodec stamp each output frame's pkt_dts with the dts of an input
++//packet (one packet per call, so strictly increasing); best_effort_timestamp
++//falls back to that dts whenever the frame pts is missing or out of order
++//(raw elementary streams without pts, disable_dpb decode-order output,
++//timestamps a driver does not carry through). receive_frame frames get no
++//stamp from libavcodec, so pair each output frame with the next queued
++//packet dts here (AV_NOPTS_VALUE when none is queued). Without it the
++//ffmpeg CLI drops out-of-order frames (jetson-ffmpeg#132 MR pipeline).
++static int nvmpi_receive_frame(AVCodecContext *avctx, AVFrame *frame)
++{
++	nvmpiDecodeContext *c = avctx->priv_data;
++	int ret = nvmpi_receive_frame_core(avctx, frame);
++
++	if (ret == 0) {
++		frame->pkt_dts = AV_NOPTS_VALUE;
++		if (c->dts_wr != c->dts_rd)
++			frame->pkt_dts = c->dts_fifo[c->dts_rd++ % NVMPI_DTS_FIFO];
++	}
++	return ret;
++}
++
 +//AVCodec/FFCodec .flush callback: reset the libnvmpi decoder pipeline
 +//(stops capture thread, drains stale frames, restarts) and re-prime
 +//the hardware with extradata (SPS/PPS) so it can reconfigure its capture
@@ -1237,6 +1269,7 @@ index 0000000..2b4665f
 +	/* Seek/restart: input is live again. The packet holder is always
 +	 * empty between receive_frame calls; unref is a defensive no-op. */
 +	nvmpi_context->draining = 0;
++	nvmpi_context->dts_rd = nvmpi_context->dts_wr = 0;   //drop stale hints
 +	av_packet_unref(nvmpi_context->pkt);
 +
 +	if(avctx->extradata && avctx->extradata_size >= 4 &&
