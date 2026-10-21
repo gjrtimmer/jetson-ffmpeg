@@ -502,7 +502,14 @@ static int nvmpi_dec_put_pkt(AVCodecContext *avctx)
 
 	packet.payload_size=size;
 	packet.payload=pkt->data;
-	packet.pts=pkt->pts;
+	/* Raw elementary streams (e.g. Annex B .h264) reach the decoder
+	 * without a pts; the FFmpeg 6.x CLI only fills in a dts. The old
+	 * decode callback got best_effort_timestamp from that dts (libavcodec
+	 * stamped the output frame with the input packet's dts); receive_frame
+	 * frames carry only what libnvmpi hands back, so pass the dts through
+	 * the V4L2 timestamp when there is no pts. Otherwise every frame is
+	 * NOPTS and the 6.x CLI drops most of them. */
+	packet.pts = (pkt->pts != AV_NOPTS_VALUE) ? pkt->pts : pkt->dts;
 
 	res=nvmpi_decoder_put_packet(nvmpi_context->ctx,&packet);
 	av_packet_unref(pkt);   //single release point of the pending packet

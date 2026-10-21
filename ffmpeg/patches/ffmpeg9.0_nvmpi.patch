@@ -635,10 +635,10 @@ index 0000000..214e481
 +#endif /* DYNLINK_NVMPI_H */
 diff --git a/libavcodec/nvmpi_dec.c b/libavcodec/nvmpi_dec.c
 new file mode 100644
-index 0000000..810bf55
+index 0000000..2b4665f
 --- /dev/null
 +++ b/libavcodec/nvmpi_dec.c
-@@ -0,0 +1,679 @@
+@@ -0,0 +1,686 @@
 +/*
 + * nvmpi_dec.c — FFmpeg decoder wrapper for libnvmpi (layer 2 of
 + * jetson-ffmpeg, the FFmpeg integration layer).
@@ -1143,7 +1143,14 @@ index 0000000..810bf55
 +
 +	packet.payload_size=size;
 +	packet.payload=pkt->data;
-+	packet.pts=pkt->pts;
++	/* Raw elementary streams (e.g. Annex B .h264) reach the decoder
++	 * without a pts; the FFmpeg 6.x CLI only fills in a dts. The old
++	 * decode callback got best_effort_timestamp from that dts (libavcodec
++	 * stamped the output frame with the input packet's dts); receive_frame
++	 * frames carry only what libnvmpi hands back, so pass the dts through
++	 * the V4L2 timestamp when there is no pts. Otherwise every frame is
++	 * NOPTS and the 6.x CLI drops most of them. */
++	packet.pts = (pkt->pts != AV_NOPTS_VALUE) ? pkt->pts : pkt->dts;
 +
 +	res=nvmpi_decoder_put_packet(nvmpi_context->ctx,&packet);
 +	av_packet_unref(pkt);   //single release point of the pending packet
