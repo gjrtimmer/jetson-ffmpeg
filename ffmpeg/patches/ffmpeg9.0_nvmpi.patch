@@ -635,10 +635,10 @@ index 0000000..214e481
 +#endif /* DYNLINK_NVMPI_H */
 diff --git a/libavcodec/nvmpi_dec.c b/libavcodec/nvmpi_dec.c
 new file mode 100644
-index 0000000..7d13073
+index 0000000..810bf55
 --- /dev/null
 +++ b/libavcodec/nvmpi_dec.c
-@@ -0,0 +1,594 @@
+@@ -0,0 +1,679 @@
 +/*
 + * nvmpi_dec.c — FFmpeg decoder wrapper for libnvmpi (layer 2 of
 + * jetson-ffmpeg, the FFmpeg integration layer).
@@ -732,6 +732,8 @@ index 0000000..7d13073
 +	nvmpictx* ctx;         //libnvmpi decoder handle
 +	AVClass *av_class;
 +	AVFrame *bufFrame;     //pre-allocated frame the next decode copies into
++	AVPacket *pkt;         //input holder for ff_decode_get_packet(); empty between calls
++	int draining;          //ff_decode_get_packet() hit EOF; cleared by flush
 +	char *resize_expr;     //"-resize WxH" option (hw downscale in libnvmpi)
 +	int frame_pool_size;   //"-frame_pool_size N" option
 +	int chunk_size;        //"-chunk_size N" option (bytes; 0 = auto)
@@ -786,6 +788,14 @@ index 0000000..7d13073
 +		       dlerror());
 +		return AVERROR_EXTERNAL;
 +	}
++
++	/* Packet holder for the receive_frame callback. Allocated here; freed
++	 * in nvmpi_close(), which FF_CODEC_CAP_INIT_CLEANUP also runs when a
++	 * later init step fails. */
++	nvmpi_context->pkt = av_packet_alloc();
++	if (!nvmpi_context->pkt)
++		return AVERROR(ENOMEM);
++	nvmpi_context->draining = 0;
 +
 +	param.codingType =nvmpi_get_codingtype(avctx);
 +	if (param.codingType == NV_VIDEO_CodingUnused)
@@ -921,10 +931,10 @@ index 0000000..7d13073
 +
 +	/* DRM_PRIME frames carry a DMA-BUF fd, not pixel data — no
 +	 * pre-allocated output buffer needed. Each frame is built
-+	 * on-the-fly in nvmpi_decode from the fd returned by libnvmpi. */
++	 * on-the-fly in nvmpi_dec_output_frame from the fd returned by libnvmpi. */
 +	if (avctx->pix_fmt != AV_PIX_FMT_DRM_PRIME) {
 +		/* Pre-allocate the destination frame via FFmpeg's buffer pool so
-+		 * nvmpi_decode() can copy decoded planes straight into it. A fresh
++		 * nvmpi_dec_output_frame() can copy decoded planes straight into it. A fresh
 +		 * bufFrame is re-acquired after each frame is handed to the user. */
 +		nvmpi_context->bufFrame = av_frame_alloc();
 +		/* Guard against av_frame_alloc OOM — dereferencing NULL here
@@ -998,6 +1008,8 @@ index 0000000..7d13073
 +static int nvmpi_close(AVCodecContext *avctx)
 +{
 +	nvmpiDecodeContext *nvmpi_context = avctx->priv_data;
++	/* Single release point of the packet holder (NULL-safe). */
++	av_packet_free(&nvmpi_context->pkt);
 +	if(nvmpi_context->bufFrame)
 +	{
 +		av_frame_free(&(nvmpi_context->bufFrame));
@@ -1011,45 +1023,17 @@ index 0000000..7d13073
 +	return nvmpi_decoder_close(nvmpi_context->ctx);
 +}
 +
-+//Classic .decode callback (wired up via FF_CODEC_DECODE_CB on >= 60):
-+//one call feeds one compressed packet to libnvmpi and, if a decoded frame
-+//is already available, returns it via *data/got_frame. Asymmetric latency
-+//(decoder pipeline depth) is absorbed by libnvmpi's frame pool.
-+//Signature: libavcodec 60 changed the decode callback's output argument
-+//from void* to a typed AVFrame*; since 6.0+ is required, we use AVFrame*.
-+static int nvmpi_decode(AVCodecContext *avctx, AVFrame *data, int *got_frame, AVPacket *avpkt)
++/* Fetch ONE decoded frame from libnvmpi into *frame, if one is ready.
++ * wait=0: non-blocking. wait=1: bounded blocking wait (libnvmpi's
++ * wait_timeout, default 500 ms), so this never hangs.
++ * Returns 0 when *frame holds a frame, 1 when no frame is ready (nothing
++ * consumed, *frame untouched), or a negative AVERROR. */
++static int nvmpi_dec_output_frame(AVCodecContext *avctx, AVFrame *frame, int wait)
 +{
 +	nvmpiDecodeContext *nvmpi_context = avctx->priv_data;
-+	AVFrame *frame = data;
 +	AVFrame *bufFrame = nvmpi_context->bufFrame;
 +	nvFrame _nvframe={0};
-+	nvPacket packet;
 +	int res;
-+	int decode_ret = avpkt->size;
-+
-+	//Feed the compressed packet (if any — FFmpeg sends empty packets while
-+	//draining). libnvmpi memcpy's the payload, so avpkt stays caller-owned.
-+	if(avpkt->size)
-+	{
-+		packet.payload_size=avpkt->size;
-+		packet.payload=avpkt->data;
-+		packet.pts=avpkt->pts;
-+
-+		res=nvmpi_decoder_put_packet(nvmpi_context->ctx,&packet);
-+		if(res < 0)
-+		{
-+			//A decode callback must never return AVERROR(EAGAIN) for a
-+			//consumed packet — libavcodec >= 6.1 asserts on it
-+			//(decode.c: "Assertion consumed != AVERROR(EAGAIN)").
-+			//-3 = packet exceeds chunk_size: invalid input data, the
-+			//decoder stays usable. Anything else is a V4L2 queue/dequeue
-+			//failure.
-+			av_log(avctx, AV_LOG_ERROR,
-+			       "nvmpi_decoder_put_packet failed (code=%d, packet=%d bytes).\n",
-+			       res, avpkt->size);
-+			return (res == -3) ? AVERROR_INVALIDDATA : AVERROR_EXTERNAL;
-+		}
-+	}
 +
 +	/* ---- DRM_PRIME path: wrap DMA-BUF fd in AVDRMFrameDescriptor ---- */
 +	if (avctx->pix_fmt == AV_PIX_FMT_DRM_PRIME) {
@@ -1059,12 +1043,9 @@ index 0000000..7d13073
 +		 * fall back to pitch*height inside the helper (jetson-ffmpeg#131).
 +		 * Returns 1 when no frame is ready, <0 on error (borrow already
 +		 * released). */
-+		res = nvmpi_dec_get_drm_info(avctx, nvmpi_context->ctx,
-+			avctx->flags & AV_CODEC_FLAG_LOW_DELAY, &info);
-+		if (res < 0)
++		res = nvmpi_dec_get_drm_info(avctx, nvmpi_context->ctx, wait, &info);
++		if (res != 0)
 +			return res;
-+		if (res > 0)
-+			return decode_ret;
 +
 +		/* Resolution change: re-derive avctx size + hw_frames_ctx first. */
 +		res = nvmpi_dec_sync_geometry(avctx, &info);
@@ -1073,12 +1054,7 @@ index 0000000..7d13073
 +
 +		/* The shared helper dup()s the fd and releases the borrow exactly once
 +		 * on every path (free order: close dup, release, free). */
-+		res = nvmpi_drm_wrap_frame(frame, &info, avctx->hw_frames_ctx);
-+		if (res < 0)
-+			return res;
-+
-+		*got_frame = 1;
-+		return decode_ret;
++		return nvmpi_drm_wrap_frame(frame, &info, avctx->hw_frames_ctx);
 +	}
 +
 +	/* ---- Software-frame path: copy decoded pixels into bufFrame ---- */
@@ -1096,6 +1072,10 @@ index 0000000..7d13073
 +
 +	//Point the nvFrame at bufFrame's pre-allocated planes; on success
 +	//libnvmpi copies the decoded frame directly into FFmpeg-owned memory.
++	//Known limit (libnvmpi API): the copying get_frame does not report the
++	//frame geometry, so after a mid-stream resolution change software
++	//frames keep the allocation size; only DRM_PRIME frames carry the new
++	//size (fd2). See jetson-ffmpeg#132.
 +	_nvframe.payload[0] = bufFrame->data[0];
 +	_nvframe.payload[1] = bufFrame->data[1];
 +	_nvframe.payload[2] = bufFrame->data[2];
@@ -1103,12 +1083,17 @@ index 0000000..7d13073
 +	_nvframe.linesize[1] = bufFrame->linesize[1];
 +	_nvframe.linesize[2] = bufFrame->linesize[2];
 +
-+	res=nvmpi_decoder_get_frame(nvmpi_context->ctx,&_nvframe,avctx->flags & AV_CODEC_FLAG_LOW_DELAY);
++	res=nvmpi_decoder_get_frame(nvmpi_context->ctx,&_nvframe,wait);
 +
 +	if(res<0)
++		return 1;   //no decoded frame ready (or bounded wait timed out)
++	if(res>0)
 +	{
-+		//no decoded frame ready yet — not an error, just got_frame == 0
-+		return decode_ret;
++		//A frame was dequeued but the CPU map for the copy failed: the
++		//frame is lost (libnvmpi recycled its buffer); bufFrame holds
++		//undefined pixels, so it must not be handed out.
++		av_log(avctx, AV_LOG_ERROR, "nvmpi_decoder_get_frame: buffer map failed (%d).\n", res);
++		return AVERROR_EXTERNAL;
 +	}
 +
 +	//Hand the filled bufFrame to the caller (zero-copy move of the ref).
@@ -1119,22 +1104,116 @@ index 0000000..7d13073
 +	bufFrame->pkt_dts = AV_NOPTS_VALUE;
 +	av_frame_move_ref(frame, bufFrame);
 +
-+	*got_frame = 1;
-+
-+	//...and immediately acquire a fresh buffer for the next decode call.
++	//...and immediately acquire a fresh buffer for the next frame. On
++	//failure bufFrame stays empty and is re-acquired at the top of the
++	//next call; the frame already handed out is still valid.
 +	bufFrame->width = avctx->width;
 +	bufFrame->height = avctx->height;
 +	if (ff_get_buffer(avctx, bufFrame, 0) < 0)
-+	{
-+		av_log(avctx, AV_LOG_ERROR, "ff_get_buffer failed\n");
-+		return AVERROR(ENOMEM);
-+	}
++		av_log(avctx, AV_LOG_WARNING, "ff_get_buffer failed, retrying on the next frame\n");
 +
 +	//keep the metadata that belonged to the returned frame, not the new one
 +	frame->metadata = bufFrame->metadata;
 +	bufFrame->metadata = NULL;
 +
-+	return decode_ret;
++	return 0;
++}
++
++/* Feed the packet just pulled into nvmpi_context->pkt to libnvmpi and drop
++ * our reference (libnvmpi memcpy's the payload into its V4L2 OUTPUT buffer,
++ * so the packet is unref'd here on every path). Blocks while every
++ * OUTPUT buffer is in flight; the caller only gets here after draining
++ * the filled-frame queue, so the capture thread is never back-pressured
++ * by frames this thread still has to collect (jetson-ffmpeg#132). */
++static int nvmpi_dec_put_pkt(AVCodecContext *avctx)
++{
++	nvmpiDecodeContext *nvmpi_context = avctx->priv_data;
++	AVPacket *pkt = nvmpi_context->pkt;
++	nvPacket packet = {0};
++	int size = pkt->size;
++	int res;
++
++	/* An empty payload is libnvmpi's EOS marker, which stops its capture
++	 * loop at once (in-flight frames lost). Never forward one: draining
++	 * is done by the bounded blocking get in nvmpi_receive_frame. */
++	if (!size) {
++		av_packet_unref(pkt);
++		return 0;
++	}
++
++	packet.payload_size=size;
++	packet.payload=pkt->data;
++	packet.pts=pkt->pts;
++
++	res=nvmpi_decoder_put_packet(nvmpi_context->ctx,&packet);
++	av_packet_unref(pkt);   //single release point of the pending packet
++	if(res < 0)
++	{
++		//-3 = packet exceeds chunk_size: invalid input data, the packet
++		//is dropped and the decoder stays usable. Anything else is a V4L2
++		//queue/dequeue failure.
++		av_log(avctx, AV_LOG_ERROR,
++		       "nvmpi_decoder_put_packet failed (code=%d, packet=%d bytes).\n",
++		       res, size);
++		return (res == -3) ? AVERROR_INVALIDDATA : AVERROR_EXTERNAL;
++	}
++	return 0;
++}
++
++//receive_frame callback (FF_CODEC_RECEIVE_FRAME_CB, libavcodec 60-63):
++//the decoder pulls its own input with ff_decode_get_packet(), which also
++//runs the codec's bsfs (h264/hevc mp4toannexb). Order per iteration:
++//  1. return a ready frame if there is one (non-blocking get);
++//  2. at end of input, wait (bounded) for frames still in the hw pipeline,
++//     then report AVERROR_EOF;
++//  3. otherwise take the next packet (AVERROR(EAGAIN) = feed me) and put it.
++//Draining before every put keeps libnvmpi's filled-frame queue from
++//building up lag. The old decode callback (one packet in, at most one
++//frame out) let it fill the whole frame pool; a resolution change at that
++//point deadlocked put_packet against the capture thread (jetson-ffmpeg#132).
++static int nvmpi_receive_frame(AVCodecContext *avctx, AVFrame *frame)
++{
++	nvmpiDecodeContext *nvmpi_context = avctx->priv_data;
++	int low_delay = !!(avctx->flags & AV_CODEC_FLAG_LOW_DELAY);
++	int ret;
++
++	for (;;) {
++		ret = nvmpi_dec_output_frame(avctx, frame, 0);
++		if (ret <= 0)
++			return ret;   //got a frame (0) or an error (<0)
++
++		if (nvmpi_context->draining) {
++			//Input exhausted: frames may still be in the hw pipeline. Wait
++			//for each with libnvmpi's bounded timeout; a timeout ends the
++			//stream. libavcodec stops calling after AVERROR_EOF until
++			//flush, which clears draining.
++			ret = nvmpi_dec_output_frame(avctx, frame, 1);
++			return (ret == 1) ? AVERROR_EOF : ret;
++		}
++
++		//No frame ready: only now pull the next packet. nvmpi_context->pkt
++		//is a reusable holder; nvmpi_dec_put_pkt() releases it on
++		//every path, so no packet stays pending across calls.
++		ret = ff_decode_get_packet(avctx, nvmpi_context->pkt);
++		if (ret == AVERROR_EOF) {
++			nvmpi_context->draining = 1;
++			continue;
++		}
++		if (ret < 0)
++			return ret;   //AVERROR(EAGAIN): caller must send a packet
++
++		ret = nvmpi_dec_put_pkt(avctx);
++		if (ret < 0)
++			return ret;
++
++		//Low-delay: wait (bounded) for this packet's frame right away,
++		//as the old decode callback did, instead of returning EAGAIN.
++		if (low_delay) {
++			ret = nvmpi_dec_output_frame(avctx, frame, 1);
++			if (ret <= 0)
++				return ret;
++		}
++	}
 +}
 +
 +
@@ -1148,6 +1227,11 @@ index 0000000..7d13073
 +	nvmpiDecodeContext *nvmpi_context = avctx->priv_data;
 +
 +	nvmpi_decoder_flush(nvmpi_context->ctx);
++
++	/* Seek/restart: input is live again. The packet holder is always
++	 * empty between receive_frame calls; unref is a defensive no-op. */
++	nvmpi_context->draining = 0;
++	av_packet_unref(nvmpi_context->pkt);
 +
 +	if(avctx->extradata && avctx->extradata_size >= 4 &&
 +	   avctx->extradata_size < (1 << 20) &&
@@ -1210,7 +1294,8 @@ index 0000000..7d13073
 +		.priv_data_size = sizeof(nvmpiDecodeContext), \
 +		.init           = nvmpi_init_decoder, \
 +		.close          = nvmpi_close, \
-+		FF_CODEC_DECODE_CB(nvmpi_decode), \
++		/* receive_frame: drain-before-put, see nvmpi_receive_frame (#132) */ \
++		FF_CODEC_RECEIVE_FRAME_CB(nvmpi_receive_frame), \
 +		.flush          = nvmpi_flush_decoder, \
 +		.p.priv_class     = &nvmpi_##NAME##_dec_class, \
 +		.p.capabilities   = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_AVOID_PROBING | AV_CODEC_CAP_HARDWARE, \
