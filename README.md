@@ -34,8 +34,9 @@ Additional low-latency options: `disable_dpb` (decoder) skips picture-buffer
 reordering, `poc_type=2` (encoder) removes reorder latency for H.264 streams.
 
 Once installed, any FFmpeg-based application can offload H.264, HEVC, MPEG-2,
-MPEG-4, VP8, and VP9 decoding — and H.264/HEVC encoding — to the Jetson's
-hardware engines, leaving the CPU free for your actual workload:
+MPEG-4, VP8, VP9, MJPEG, and AV1 decoding — and H.264/HEVC/MJPEG encoding — to
+the Jetson's hardware engines (AV1 is decode-only, Orin on JetPack 6, and needs
+jetson-nvmpi 4.2.0 or newer), leaving the CPU free for your actual workload:
 
 ```bash
 ffmpeg -c:v h264_nvmpi -i input.mp4 -c:v hevc_nvmpi -b:v 4M output.mp4
@@ -44,9 +45,10 @@ ffmpeg -c:v h264_nvmpi -i input.mp4 -c:v hevc_nvmpi -b:v 4M output.mp4
 ## Compatibility
 
 jetson-ffmpeg targets Jetson platforms from the Xavier family (JetPack 5.x)
-through the Orin family (JetPack 5.x/6.x) and supports FFmpeg **6.0 up to
-8.0+**. Users on Nano or TX1 (JetPack 4.x only) should use the v2.x release
-series, which supports FFmpeg 4.2 and 4.4. Hardware testing currently covers
+through the Orin family (JetPack 5.x/6.x) and supports FFmpeg **6.0, 6.1,
+7.0, 7.1, 8.0, 8.1, and 9.0** (9.0 first supported in v4.0.0). Users on Nano
+or TX1 (JetPack 4.x only) should use the v2.x release series, which supports
+FFmpeg 4.2 and 4.4. Hardware testing currently covers
 Orin NX on JetPack 6; other platforms are expected to work but are untested.
 
 See the **[Compatibility](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Compatibility)**
