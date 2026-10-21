@@ -91,15 +91,20 @@ done
 if is_mock; then
   mock_skip "pixel check before the change (mock frames are not the source picture)"
 else
-  # Diagnostic (printed): software frames keep the 1280x720 allocation after
-  # the change; libnvmpi copies the 642x358 picture into its top-left corner.
-  # Cropped, the last frames show whether the decoder output itself is right
-  # after the change (compare with the DRM_PRIME path in drmprime-planes).
+  # Software frames keep the 1280x720 allocation after the change; libnvmpi
+  # copies the 642x358 picture into the top-left corner. Cropped, the last
+  # frames must match the new still: the decoder output after the change.
   n=$(packet_count "${OUT}")
   run_ff_must "crop software frames after the change" -T 60 -loglevel error \
     -i "${OUT}" -vf "crop=642:358:0:0" -c:v ffv1 "${OUT%.mkv}-crop.mkv"
-  echo "   diag: sw last 5 (cropped) vs 642x358 still: Y/U/V = $(plane_psnr "${SCHG}-b.h264" "${OUT%.mkv}-crop.mkv" 642 358 $((n - 5)) "" 15) dB"
+  vals=$(plane_psnr "${SCHG}-b.h264" "${OUT%.mkv}-crop.mkv" 642 358 $((n - 5)) "" 15)
   rm -f "${OUT%.mkv}-crop.mkv"
+  echo "   after the change (cropped): Y/U/V = ${vals} dB (min 30)"
+  # shellcheck disable=SC2086
+  set -- $vals
+  awk -v a="${1:-0}" -v b="${2:-0}" -v c="${3:-0}" \
+    'BEGIN { exit !(a >= 30 && b >= 30 && c >= 30) }' \
+    || ff_fail "(reschange) a plane is below 30 dB after the change."
   # Frames 0-4 are the 1280x720 still: decoded pixels must match the source.
   vals=$(plane_psnr "${SCHG}-a.h264" "${OUT}" 1280 720)
   echo "   before the change: Y/U/V = ${vals} dB (min 30)"

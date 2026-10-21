@@ -125,30 +125,35 @@ if [ "${got:-0}" -lt "$min" ] || [ "${got:-0}" -gt "$exp" ]; then
   echo "FAIL(change): ${got:-0}/${exp} frames across the resolution change."; exit 1
 fi
 if is_mock; then
-  mock_skip "output size and chroma check across the change"
+  mock_skip "output size check across the change"
 else
   w_h=$(dims_of "${T}-change.mkv")
   if [ "$w_h" != "640x360" ]; then
     echo "FAIL(change): expected 640x360, got ${w_h:-?}."; exit 1
   fi
-  # Diagnostics (printed, not asserted) to tell a stale picture after the
-  # change from a scale_vic problem on the padded 642x358 surface:
-  #  - the per-geometry DRM_PRIME layouts libnvmpi reported;
-  #  - the last 5 output frames against the OLD (1280x720) still: a high
-  #    value means pre-change content is still being output;
-  #  - the 642x358 still alone through the same decoder + scale_vic +
-  #    encoder chain (no resolution change).
-  printf '%s\n' "$FF_OUT" | grep -E "DRM_PRIME layout|scale_vic" | sort | uniq -c | sed 's/^/   /' || true
-  echo "   diag: last 5 vs old 1280x720 still: Y/U/V = $(plane_psnr "${SCHG}-a.h264" "${T}-change.mkv" 640 360 $((got - 5)) "" 15) dB"
-  run_ff_must "642x358 still alone through scale_vic" -T 60 -loglevel error \
-    "${DEC_HW[@]}" -f h264 -i "${SCHG}-b.h264" -vf scale_vic=640:360 -c:v h264_nvmpi "${T}-bvic.mkv"
-  echo "   diag: 642x358 still alone via scale_vic vs source: Y/U/V = $(plane_psnr "${SCHG}-b.h264" "${T}-bvic.mkv" 640 360 15) dB"
-  # Chroma after the change: the stream is scaled to 640x360 by VIC (hw) and
-  # swscale (reference), so the bound is loose (25 dB), but a wrong chroma
-  # offset still lands far below it. The last 5 output frames are the
-  # 642x358 still; the reference is the 642x358 clip alone (a resolution
-  # change inside the reference would reset ffmpeg's frame counter).
-  psnr_ok "$(plane_psnr "${SCHG}-b.h264" "${T}-change.mkv" 640 360 $((got - 5)) "" 15)" "change" 25
+fi
+
+# ── 3b. Pixels across the change (16-aligned, unpadded new size) ────────────
+# 1280x720 -> 1024x512, scaled to 1024:512: the new-size frames are forwarded
+# by scale_vic untouched (same size) into the encoder fd path, which reads the
+# descriptor offsets, so this checks the decoder's DRM_PRIME frames after the
+# change without a VIC transform. scale_vic on padded surfaces (642x358 ->
+# 640x360) is broken independently of the change: jetson-ffmpeg#135.
+echo "== 3b. pixels across a resolution change (1280x720 -> 1024x512) =="
+SALN="${T}-change-aligned.h264"
+gen-sample-h264-reschange "${SALN}" 1024x512
+run_ff_must "aligned resolution-change decode" -T 90 -loglevel warning \
+  "${DEC_HW[@]}" -f h264 -i "${SALN}" -vf scale_vic=1024:512 -noautoscale \
+  -c:v h264_nvmpi -b:v 20M "${T}-change-aligned.mkv"
+got=$(packet_count "${T}-change-aligned.mkv")
+min=$(( $(count_src "${SALN}-b.h264") + 1 ))
+echo "   aligned change: ${got} frames (need >= ${min})"
+[ "${got:-0}" -ge "$min" ] || { echo "FAIL(change-aligned): ${got:-0} frames."; exit 1; }
+if is_mock; then
+  mock_skip "pixel check after the change"
+else
+  # Last 5 output frames are the new still; stills make pairing irrelevant.
+  psnr_ok "$(plane_psnr "${SALN}-b.h264" "${T}-change-aligned.mkv" 1024 512 $((got - 5)) "" 15)" "after the change" 30
 fi
 
 # ── 4. Forced pre-4.3.0 library: legacy path still works, warns once ────────
