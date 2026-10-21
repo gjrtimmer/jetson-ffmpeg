@@ -1,5 +1,141 @@
 # Changelog
 
+## 4.0.0 - 2026-10-21
+
+**Breaking:** libnvmpi is no longer built from this repository. It lives in
+[jetson-nvmpi](https://github.com/gjrtimmer/jetson-nvmpi); install a released
+package (`libnvmpi1` deb or `scripts/fetch-nvmpi.sh`) next to the patched
+FFmpeg. This release is tested against jetson-nvmpi 4.3.1. New: FFmpeg 9.0,
+`av1_nvmpi` decoder (Orin, JetPack 6), DRM_PRIME output for `mjpeg_nvmpi`, and
+real DRM_PRIME plane offsets for the video decoders.
+
+### Bug Fixes
+
+
+**ci**
+
+
+- Pin mc from GitHub releases, dl.min.io gone
+
+
+**ffmpeg**
+
+
+- Dlopen libnvmpi.so.1 with fallback
+- Wait for packet after nonblocking send back-pressure
+- Scale_vic reads JPEG frames via the fd hint
+- Take DRM_PRIME plane offsets from libnvmpi fd2
+- Forward same-size frames in scale_vic
+- Bound in-flight AUs by packet pool in blocking mode
+
+
+**scripts**
+
+
+- Fetch-nvmpi falls back to wget and python3
+
+
+**test**
+
+
+- Give low_delay wait_timeout encode a 240s budget
+- Write encoder-modes output to mp4 like the replaced suites
+
+
+### Build
+
+
+**ci**
+
+
+- Consume jetson-nvmpi 4.0.1, add NVMPI_MOCK_REF
+- Bump libnvmpi pin to 4.0.2
+- Pin libnvmpi 4.1.0
+
+
+### Features
+
+
+**ffmpeg**
+
+
+- Add FFmpeg 9.0 support
+- DRM_PRIME output for mjpeg_nvmpi
+- Add av1_nvmpi decoder
+
+
+**scripts**
+
+
+- Fetch-nvmpi default to public GitHub release
+
+
+**skills**
+
+
+- Add add-ffmpeg-version checklist
+
+
+### Refactor
+
+
+**nvmpi**
+
+
+- Consume released jetson-nvmpi, drop in-repo libnvmpi
+
+
+**test**
+
+
+- Shared test lib, one-time sample generation
+- Condense lifecycle stress suites
+- Merge encoder modes, condense blocking-wait and soak
+
+
+### Testing
+
+
+**decoder**
+
+
+- Add mjpeg drm_prime suite
+- Compare mjpeg drm_prime PSNR to an encoder baseline
+- Static mjpeg sample, skip unsupported chroma formats
+- Baseline mjpeg drm_prime against the hw software-frame path
+- Use an absolute PSNR floor for mjpeg drm_prime
+- Skip pixel check on unaligned mjpeg sizes (jetson-nvmpi#135)
+- Use hw-decodable odd sizes (width >= 33)
+- Read mjpeg drm_prime range from the filter graph log
+- Log frame stats in the mjpeg fallback case
+- Add av1_nvmpi decoder suite
+- Run mjpeg drm_prime and av1 suites on the mock
+- Fix av1 suite on the mock, keep mjpeg drm_prime hw-only
+- Keep the av1 suite hardware-only
+- Read av1 fixture size from ffprobe stdout only
+- 30-frame av1 fixture, low_delay drain, opt-in mock run
+- Run the av1 suite on the mock again
+- Add video DRM_PRIME plane layout suite
+- Disable autoscale in the resolution-change case
+- Use -noautoscale, -autoscale takes no argument
+- Pair frames by index in drmprime-planes psnr
+- Measure drmprime-planes PSNR on stills
+- Drop drmprime-planes resolution-change case
+
+
+**encoder**
+
+
+- Nonblocking exact packet counts with small packet_pool_size
+- Assert exact count in blocking mode with pool=1
+- Print encoder-side AU count on header mismatch
+
+
+**hw-all**
+
+
+- Add HW_SUITES_EXCLUDE to skip suites
+
 ## 3.10.0 - 2026-07-07
 
 ### Bug Fixes
