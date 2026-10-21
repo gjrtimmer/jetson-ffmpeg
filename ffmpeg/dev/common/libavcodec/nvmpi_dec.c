@@ -90,6 +90,14 @@
 //plus its V4L2 queues, so live entries are never overwritten in normal use.
 #define NVMPI_DTS_FIFO 128
 
+//Stand-in for AV_NOPTS_VALUE on its way through the V4L2 buffer timestamp.
+//libnvmpi splits the pts into a timeval; the Tegra kernel keeps it as u64
+//nanoseconds, so INT64_MIN overflows and comes back as an arbitrary value
+//(frames then carry bogus pts and the CLI drops them; the mock keeps the
+//timeval verbatim and hides this). INT32_MAX seconds survives sec*1e9 and
+//the round trip; no real stream timestamp gets near it (68 years in us).
+#define NVMPI_DEC_NOPTS_US ((int64_t)INT32_MAX * 1000000)
+
 typedef struct {
 	char eos_reached;      //unused at present
 	nvmpictx* ctx;         //libnvmpi decoder handle
@@ -512,7 +520,7 @@ static int nvmpi_dec_put_pkt(AVCodecContext *avctx)
 
 	packet.payload_size=size;
 	packet.payload=pkt->data;
-	packet.pts=pkt->pts;
+	packet.pts = (pkt->pts != AV_NOPTS_VALUE) ? pkt->pts : NVMPI_DEC_NOPTS_US;
 	/* Queue this packet's dts as the pkt_dts hint of a later output frame
 	 * (nvmpi_receive_frame). Ring full: drop the oldest hint, so indexing
 	 * stays inside dts_fifo whatever the input. */
@@ -609,6 +617,10 @@ static int nvmpi_receive_frame(AVCodecContext *avctx, AVFrame *frame)
 	int ret = nvmpi_receive_frame_core(avctx, frame);
 
 	if (ret == 0) {
+		//Packet had no pts (raw elementary stream): report none, so the
+		//caller derives one (best_effort_timestamp / CLI estimation).
+		if (frame->pts == NVMPI_DEC_NOPTS_US)
+			frame->pts = AV_NOPTS_VALUE;
 		frame->pkt_dts = AV_NOPTS_VALUE;
 		if (c->dts_wr != c->dts_rd)
 			frame->pkt_dts = c->dts_fifo[c->dts_rd++ % NVMPI_DTS_FIFO];
