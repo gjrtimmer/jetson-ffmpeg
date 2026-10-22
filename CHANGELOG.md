@@ -1,15 +1,46 @@
 # Changelog
 
-## 4.0.1 - 2026-10-22
+## 4.0.2 - 2026-10-22
 
-**Security:** fixes a heap buffer overflow when a stream changes to a larger
-resolution mid-stream while decoding to software frames (#137, upstream
-gjrtimmer/jetson-nvmpi#149). **Software-frame decoding now requires
-jetson-nvmpi 4.6.0 or newer**; with an older libnvmpi it is refused at
-startup with a clear error (DRM_PRIME output keeps working). Release archives
-bundle jetson-nvmpi 4.6.0. Also fixes a decoder deadlock on mid-stream
-resolution changes (#132; needs jetson-nvmpi >= 4.5.1) and lost frames for
-raw elementary-stream input and decode-order (`disable_dpb`) output.
+Fixes encoding at odd frame sizes: plane payload sizes now round the chroma
+rows up (#138), and with jetson-nvmpi 4.6.3 (bundled) the last chroma column
+and row of odd-width/odd-height frames are encoded correctly
+(gjrtimmer/jetson-nvmpi#154). H.264 and HEVC code odd sizes as the next even
+size (a limit of 4:2:0 cropping); MP4/MKV keep the original size. New
+hw-encoder-oddsize suite. Tag pipelines now package in parallel with the
+hardware release gate (#140).
+
+### Bug Fixes
+
+
+**ffmpeg**
+
+
+- Size encoder plane payloads from real plane extents
+
+
+**test**
+
+
+- Exact crop for odd-size encoder PSNR
+
+
+### Testing
+
+
+**encoder**
+
+
+- Add odd-size encode suite
+- Xfail odd-width nv12 chroma PSNR
+- Expect even decoded size for hevc
+- Xfail hevc odd height decoded as h+1
+- Expect even-rounded size, crop for PSNR
+- Define DEC and clean up raw outputs
+- Per codec+pix_fmt xfail for nvmpi#154
+- Drop jetson-nvmpi#154 xfails
+
+## 4.0.1 - 2026-10-22
 
 ### Bug Fixes
 
