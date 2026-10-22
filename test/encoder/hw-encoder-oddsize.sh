@@ -10,8 +10,7 @@
 #   2. Real hardware only (the mock emits a canned bitstream): the output
 #      decodes to FRAMES frames of the input size and the luma/chroma PSNR of a
 #      still source stays above PSNR_MIN, i.e. the last chroma row is encoded.
-#      Odd-width NV12 is an explicit XFAIL (jetson-nvmpi#154); hevc odd height
-#      (decodes at h+1) is an XFAIL (jetson-nvmpi#TBD); XPASS fails.
+#      Odd-width NV12 is an explicit XFAIL (jetson-nvmpi#154), XPASS fails.
 # Code under test: ffmpeg/dev/common/libavcodec/nvmpi_enc_runtime.c
 #   (nvmpienc_fill_plane_sizes, extradata blank frame, software send path)
 # Issue: gjrtimmer/jetson-ffmpeg#138
@@ -27,8 +26,7 @@ FRAMES=10
 PSNR_MIN=30
 OUT=/tmp/nvmpi-out-oddsize.mp4
 REF=/tmp/nvmpi-ref-oddsize.mkv
-DEC=/tmp/nvmpi-dec-oddsize.mkv
-trap 'rm -f "$OUT" "$REF" "$DEC"' EXIT
+trap 'rm -f "$OUT" "$REF"' EXIT
 
 # odd_check ENC SIZE PIXFMT: encode a still FRAMES times, check count (+ quality on hw).
 odd_check() {
@@ -55,31 +53,17 @@ odd_check() {
   run_ff_must "${label} decode" -T 60 -i "$OUT" -f null -
   dec_frames=$(ffprobe -v error -count_frames -select_streams v:0 \
     -show_entries stream=nb_read_frames,width,height -of csv=p=0 "$OUT")
-  # Width and frame count are always exact. Known defect (jetson-nvmpi#TBD):
-  # the HEVC encoder rounds an odd HEIGHT up and emits no conformance-window
-  # crop, so the stream decodes at h+1. XFAIL for hevc only; decoding at the
-  # right height (XPASS) is a hard failure so the marker gets removed.
-  local dec_ref="$OUT" dh
-  dh="${dec_frames#*,}"; dh="${dh%,*}"
-  if [ "${dec_frames%%,*}" != "$w" ] || [ "${dec_frames##*,}" != "$FRAMES" ]; then
-    ff_fail "${label}: decoded ${dec_frames}, expected ${w},*,${FRAMES}."
-  fi
-  if [ "$dh" != "$h" ]; then
-    if [ "${enc#hevc}" != "$enc" ] && [ $((h % 2)) -eq 1 ] && [ "$dh" -eq $((h + 1)) ]; then
-      echo "   XFAIL: hevc odd height coded as h+1, jetson-nvmpi#TBD (${label}: ${dec_frames})"
-      # Compare the top h rows only, so the chroma/payload check still runs.
-      run_ff_must "${label} crop" -T 60 -i "$OUT" -vf "crop=${w}:${h}:0:0" -c:v ffv1 "$DEC"
-      dec_ref="$DEC"
-    else
-      ff_fail "${label}: decoded ${dec_frames}, expected ${w},${h},${FRAMES}."
-    fi
-  elif [ "${enc#hevc}" != "$enc" ] && [ $((h % 2)) -eq 1 ]; then
-    ff_fail "${label}: XPASS - hevc odd height decodes at ${h}; drop the jetson-nvmpi#TBD XFAIL."
+  # HEVC 4:2:0 signals cropping in 2-luma-pixel units, so an odd size is not
+  # representable: the stream decodes at the next even size. H.264 keeps it.
+  local ew="$w" eh="$h"
+  case "$enc" in hevc*) ew=$(( (w + 1) / 2 * 2 )); eh=$(( (h + 1) / 2 * 2 )) ;; esac
+  if [ "$dec_frames" != "${ew},${eh},${FRAMES}" ]; then
+    ff_fail "${label}: decoded ${dec_frames}, expected ${ew},${eh},${FRAMES}."
   fi
 
   run_ff_must "${label} reference" -T 60 \
     -f lavfi -i "smptebars=s=${size}:r=30" -frames:v ${FRAMES} -c:v ffv1 "$REF"
-  psnr=$(plane_psnr "$REF" "$dec_ref" "$w" "$h")
+  psnr=$(plane_psnr "$REF" "$OUT" "$w" "$h")
   echo "   ${label}: PSNR Y/U/V = ${psnr}"
   local ok=1
   echo "$psnr" | awk -v m="$PSNR_MIN" '{ exit !($1 >= m && $2 >= m && $3 >= m) }' || ok=0
