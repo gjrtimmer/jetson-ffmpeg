@@ -27,7 +27,7 @@ test/
 │   ├── hw-decoder-lifecycle.sh
 │   ├── hw-decoder-mjpeg.sh
 │   ├── hw-decoder-mjpeg-drmprime.sh
-│   └── hw-decoder-pool.sh             # frame_pool_size bounds, res change with a full pool (#132)
+│   └── hw-decoder-pool.sh             # frame_pool_size bounds, res change both ways, sw frame resize (#132, #137)
 ├── encoder/               # NVENC encoder suites
 │   ├── hw-encoder-gop.sh
 │   ├── hw-encoder-header.sh

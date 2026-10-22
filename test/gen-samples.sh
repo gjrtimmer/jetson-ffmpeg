@@ -176,15 +176,36 @@ gen-sample-h264-still() {
     -c:v libx264 -g 15 -bf 0 -f h264 "$1"
 }
 
-# Mid-stream resolution change: 1 s 1280x720 still, then 1 s still of WxH
-# (default 642x358, not 16-aligned; new SPS at an IDR), concatenated as one
-# Annex B stream. The parts are kept as FILE-a.h264 / FILE-b.h264 for
-# per-part reference checks.
-#   gen-sample-h264-reschange FILE [WxH]
+# Raw MJPEG stream whose image size GROWS mid-stream: 1 s of 640x360, then
+# 1 s of 1280x720 (still pictures), concatenated JPEGs (demux with -f mjpeg).
+# The parts are kept as FILE-a.mkv / FILE-b.mkv for per-part checks
+# (jetson-ffmpeg#137: the software frame must be re-allocated, not overrun).
+#   gen-sample-mjpeg-grow FILE
+gen-sample-mjpeg-grow() {
+  gen-sample-mjpeg-fmt "$1-a.mkv" 640x360 yuvj420p 1 &&
+    gen-sample-mjpeg-fmt "$1-b.mkv" 1280x720 yuvj420p 1 &&
+    ffmpeg -y -hide_banner -loglevel error -i "$1-a.mkv" -c copy -f mjpeg "$1-a.mjpeg" &&
+    ffmpeg -y -hide_banner -loglevel error -i "$1-b.mkv" -c copy -f mjpeg "$1-b.mjpeg" &&
+    cat "$1-a.mjpeg" "$1-b.mjpeg" > "$1" &&
+    rm -f "$1-a.mjpeg" "$1-b.mjpeg"
+}
+
+# Mid-stream resolution change: 1 s still of FROM (default 1280x720), then
+# 1 s still of WxH (default 642x358, not 16-aligned; new SPS at an IDR),
+# concatenated as one Annex B stream. The parts are kept as FILE-a.h264 /
+# FILE-b.h264 for per-part reference checks.
+#   gen-sample-h264-reschange FILE [WxH] [FROM]
 gen-sample-h264-reschange() {
-  gen-sample-h264-still "$1-a.h264" 1280x720 1 &&
+  gen-sample-h264-still "$1-a.h264" "${3:-1280x720}" 1 &&
     gen-sample-h264-still "$1-b.h264" "${2:-642x358}" 1 &&
     cat "$1-a.h264" "$1-b.h264" > "$1"
+}
+
+# Resolution INCREASE mid-stream (642x358 -> 1280x720): software frames must
+# be re-allocated at the bigger size (jetson-ffmpeg#137).
+#   gen-sample-h264-upsize FILE
+gen-sample-h264-upsize() {
+  gen-sample-h264-reschange "$1" 1280x720 642x358
 }
 
 # has_sw_encoder NAME: true when the software encoder is compiled into ffmpeg

@@ -2,8 +2,8 @@
 # MJPEG hardware decoder test suite: exercises the mjpeg_nvmpi decoder path
 # which uses NvJPEGDecoder (synchronous per-frame decode) rather than the V4L2
 # M2M pipeline used by other codecs. Tests: basic decode, frame count accuracy,
-# PSNR correctness vs software decode, multi-stream concurrency, and
-# resolution-change handling.
+# PSNR correctness vs software decode, multi-stream concurrency,
+# resolution-change handling and a growing image size (#137).
 set -eu
 # shellcheck source-path=SCRIPTDIR/..
 # shellcheck source=lib/common.sh
@@ -127,8 +127,48 @@ if [ "${actual:-0}" -lt "$min_total" ]; then
 fi
 echo "   resolution-change: ${actual}/${total_expected} frames decoded"
 
+# ── 6. Image size grows mid-stream (#137) ───────────────────────────────────
+# A larger JPEG must not be copied into the smaller software frame: libnvmpi
+# >= 4.6.0 refuses it (NVMPI_ERR_FRAME_SIZE, image size reported), the
+# decoder re-allocates and decodes the packet again. JPEG decode is
+# synchronous, so every frame must come out, each at its own size: the raw
+# output (-noautoscale) is exactly n_a small frames plus n_b large ones.
+echo "== 6. Image size grows mid-stream (640x360 -> 1280x720) =="
+grow="/tmp/nvmpi-mjpeg-grow.mjpeg"
+grow_raw="/tmp/nvmpi-mjpeg-grow.yuv"
+gen-sample-mjpeg-grow "$grow"
+n_a=$(packet_count "${grow}-a.mkv")
+n_b=$(packet_count "${grow}-b.mkv")
+sz_a=$((640 * 360 * 3 / 2))
+sz_b=$((1280 * 720 * 3 / 2))
+run_ff_must "grow: decode, every frame at its own size" -T 60 -loglevel error \
+  -c:v mjpeg_nvmpi -f mjpeg -i "$grow" -noautoscale -fps_mode passthrough \
+  -pix_fmt yuv420p -f rawvideo "$grow_raw"
+bytes=$(stat -c%s "$grow_raw")
+echo "   grow: raw ${bytes} bytes, expected ${n_a} x 640x360 + ${n_b} x 1280x720 = $((n_a * sz_a + n_b * sz_b))"
+if [ "$bytes" -ne $((n_a * sz_a + n_b * sz_b)) ]; then
+  echo "FAIL(grow): raw output is not ${n_a} x 640x360 + ${n_b} x 1280x720 frames."
+  exit 1
+fi
+# The 1280x720 frames (tail) against the software decode of the same images.
+tail -c $((n_b * sz_b)) "$grow_raw" > "${grow_raw}.b"
+run_ff_must "grow: sw decode of the 1280x720 part" -T 60 -loglevel error \
+  -c:v mjpeg -i "${grow}-b.mkv" -pix_fmt yuv420p -f rawvideo "$sw_raw"
+run_ff_must "grow: psnr filter" -T 60 -loglevel error \
+  -f rawvideo -pix_fmt yuv420p -s 1280x720 -i "${grow_raw}.b" \
+  -f rawvideo -pix_fmt yuv420p -s 1280x720 -i "$sw_raw" \
+  -lavfi "psnr=stats_file=${psnr_log}" -f null -
+avg_psnr=$(tail -1 "$psnr_log" | grep -oP 'psnr_avg:\K[0-9.]+' || echo "0")
+psnr_int=${avg_psnr%%.*}
+if [ "${psnr_int:-0}" -lt 25 ]; then
+  echo "FAIL(grow): 1280x720 frames avg PSNR ${avg_psnr} dB < 25 dB threshold."
+  exit 1
+fi
+echo "   grow: 1280x720 frames avg PSNR ${avg_psnr} dB (>= 25 dB threshold)"
+
 # ── Cleanup ──────────────────────────────────────────────────────────────────
 rm -f "$hw_raw" "$sw_raw" "$psnr_log" "$tmpout" "$concat_file" "$concat_out" \
+      "$grow" "${grow}"-?.mkv "$grow_raw" "${grow_raw}.b" \
       /tmp/nvmpi-dec-mjpeg-*.mkv 2>/dev/null || true
 
 echo "OK: hw-decoder-mjpeg passed on ${variant}."
