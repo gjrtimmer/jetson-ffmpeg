@@ -53,8 +53,12 @@ odd_check() {
   run_ff_must "${label} decode" -T 60 -i "$OUT" -f null -
   dec_frames=$(ffprobe -v error -count_frames -select_streams v:0 \
     -show_entries stream=nb_read_frames,width,height -of csv=p=0 "$OUT")
-  if [ "$dec_frames" != "${w},${h},${FRAMES}" ]; then
-    ff_fail "${label}: decoded ${dec_frames}, expected ${w},${h},${FRAMES}."
+  # HEVC 4:2:0 signals cropping in 2-luma-pixel units, so an odd size is not
+  # representable: the stream decodes at the next even size. H.264 keeps it.
+  local ew="$w" eh="$h"
+  case "$enc" in hevc*) ew=$(( (w + 1) / 2 * 2 )); eh=$(( (h + 1) / 2 * 2 )) ;; esac
+  if [ "$dec_frames" != "${ew},${eh},${FRAMES}" ]; then
+    ff_fail "${label}: decoded ${dec_frames}, expected ${ew},${eh},${FRAMES}."
   fi
 
   run_ff_must "${label} reference" -T 60 \
