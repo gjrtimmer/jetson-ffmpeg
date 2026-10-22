@@ -1,13 +1,44 @@
 # Changelog
 
-## 4.0.0 - 2026-10-21
+## 4.0.1 - 2026-10-22
 
-**Breaking:** libnvmpi is no longer built from this repository. It lives in
-[jetson-nvmpi](https://github.com/gjrtimmer/jetson-nvmpi); install a released
-package (`libnvmpi1` deb or `scripts/fetch-nvmpi.sh`) next to the patched
-FFmpeg. This release is tested against jetson-nvmpi 4.3.1. New: FFmpeg 9.0,
-`av1_nvmpi` decoder (Orin, JetPack 6), DRM_PRIME output for `mjpeg_nvmpi`, and
-real DRM_PRIME plane offsets for the video decoders.
+**Security:** fixes a heap buffer overflow when a stream changes to a larger
+resolution mid-stream while decoding to software frames (#137, upstream
+gjrtimmer/jetson-nvmpi#149). **Software-frame decoding now requires
+jetson-nvmpi 4.6.0 or newer**; with an older libnvmpi it is refused at
+startup with a clear error (DRM_PRIME output keeps working). Release archives
+bundle jetson-nvmpi 4.6.0. Also fixes a decoder deadlock on mid-stream
+resolution changes (#132; needs jetson-nvmpi >= 4.5.1) and lost frames for
+raw elementary-stream input and decode-order (`disable_dpb`) output.
+
+### Bug Fixes
+
+
+**ffmpeg**
+
+
+- Drain decoded frames before each put (receive_frame)
+- Stop extradata encode loop on put_frame errors
+- Pass dts as decoder timestamp when pts is unset
+- Stamp decoder frames with input packet dts
+- Keep AV_NOPTS_VALUE intact through the V4L2 timestamp
+- Bound software-frame copy by buffer capacity
+
+
+### Testing
+
+
+**decoder**
+
+
+- Cover mid-stream resolution change (#132)
+- Check decode-order output keeps its frames
+- Report decoder-side frame count at res change
+- Print diagnostics for pixels after the res change
+- Check res-change pixels without scale_vic on padded size
+- Software frames across size changes both ways
+
+## 4.0.0 - 2026-10-21
 
 ### Bug Fixes
 
