@@ -4,7 +4,7 @@
 # timmertech/jetson-nvmpi releases, pinned by NVMPI_VERSION below).
 #
 # CI images (builders, hw runtime, release tools) are built and published by
-# timmertech/jetson-builder; this pipeline pins immutable tags (JETSON_BUILDER_SHA).
+# timmertech/jetson-docker; this pipeline pins immutable tags (JETSON_DOCKER_SHA).
 #
 # Two kinds of pipeline:
 #
@@ -126,14 +126,14 @@ variables:
   L4T_TAG_JP5: "r35.4.1"
   NVMPI_PREFIX: "${CI_PROJECT_DIR}/_nvmpi"
   FFMPEG_PREFIX: "${CI_PROJECT_DIR}/_ffmpeg"
-  # Images are built by timmertech/jetson-builder. Immutable tags are
-  # <tag>-<sha8> of the jetson-builder commit that built them; bump
-  # JETSON_BUILDER_SHA to adopt new images (cached by if-not-present).
-  JETSON_BUILDER_SHA: "ffd27ba0"
-  BUILDER_IMAGE: "harbor.local/jetson/jetson-ffmpeg-builder:${L4T_TAG}-${JETSON_BUILDER_SHA}"
-  BUILDER_IMAGE_JP5: "harbor.local/jetson/jetson-ffmpeg-builder-jp5:${L4T_TAG_JP5}-${JETSON_BUILDER_SHA}"
-  RUNTIME_IMAGE: "harbor.local/jetson/l4t-jetpack6:${L4T_TAG}-${JETSON_BUILDER_SHA}"
-  RELEASE_IMAGE: "harbor.local/jetson/jetson-ffmpeg-release-tools:latest-${JETSON_BUILDER_SHA}"
+  # Images are built by timmertech/jetson-docker. Immutable tags are
+  # <tag>-<sha8> of the jetson-docker commit that built them; bump
+  # JETSON_DOCKER_SHA to adopt new images (cached by if-not-present).
+  JETSON_DOCKER_SHA: "746b2413"
+  BUILDER_IMAGE: "harbor.local/jetson/jetson-ffmpeg-builder:${L4T_TAG}-${JETSON_DOCKER_SHA}"
+  BUILDER_IMAGE_JP5: "harbor.local/jetson/jetson-ffmpeg-builder-jp5:${L4T_TAG_JP5}-${JETSON_DOCKER_SHA}"
+  RUNTIME_IMAGE: "harbor.local/jetson/l4t-jetpack6:${L4T_TAG}-${JETSON_DOCKER_SHA}"
+  RELEASE_IMAGE: "harbor.local/jetson/jetson-ffmpeg-release-tools:latest-${JETSON_DOCKER_SHA}"
 
 # Reusable pipeline rules:
 #   .not-on-tag — branch/MR work; skipped on tag pipelines
@@ -182,7 +182,7 @@ ci:docs-only:
   script:
     - echo "docs-only change - no build or hardware test needed"
 
-# ccache for compile jobs (guaranteed in the jetson-builder builder images).
+# ccache for compile jobs (guaranteed in the jetson-docker builder images).
 .ccache:
   variables:
     CCACHE_DIR: "${CI_PROJECT_DIR}/.ccache"
