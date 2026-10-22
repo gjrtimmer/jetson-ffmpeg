@@ -104,6 +104,7 @@ typedef struct {
 } nvmpiDecodeContext;
 
 #include "nvmpi_dec_mjpeg_fd.h"
+#include "nvmpi_dec_sw.h"
 
 /* ------------------------------------------------------------------ */
 /* MJPEG-specific callbacks (NvJPEGDecoder, not V4L2)                  */
@@ -146,6 +147,12 @@ static int nvmpi_init_mjpeg_decoder(AVCodecContext *avctx)
 
 	avctx->pix_fmt = AV_PIX_FMT_YUV420P;
 
+	/* The software path needs libnvmpi's capacity-checked JPEG copy, which
+	 * ships with get_frame2 (>= 4.6.0); refused otherwise (#137). */
+	ret = nvmpi_dec_sw_check_support(avctx);
+	if (ret < 0)
+		return ret;
+
 	nvmpi_context->bufFrame = av_frame_alloc();
 	if (!nvmpi_context->bufFrame)
 		return AVERROR(ENOMEM);
@@ -183,7 +190,7 @@ static int nvmpi_decode_mjpeg(AVCodecContext *avctx, AVFrame *data, int *got_fra
 	AVFrame *frame = data;
 	nvFrame _nvframe = {0};
 	nvPacket packet;
-	int res;
+	int res, attempt;
 
 	if (nvmpi_context->drm_out)
 		return nvmpi_decode_mjpeg_fd(avctx, frame, got_frame, avpkt);
@@ -222,44 +229,35 @@ static int nvmpi_decode_mjpeg(AVCodecContext *avctx, AVFrame *data, int *got_fra
 			return AVERROR(ENOMEM);
 	}
 
-	_nvframe.payload[0] = bufFrame->data[0];
-	_nvframe.payload[1] = bufFrame->data[1];
-	_nvframe.payload[2] = bufFrame->data[2];
-	_nvframe.linesize[0] = bufFrame->linesize[0];
-	_nvframe.linesize[1] = bufFrame->linesize[1];
-	_nvframe.linesize[2] = bufFrame->linesize[2];
-
-	res = nvmpi_jpeg_decoder_get_frame(nvmpi_context->ctx, &_nvframe, 1);
-	if (res < 0)
+	//libnvmpi copies the image only if it fits bufFrame's planes (their
+	//capacity is passed in payload_size, #137). A larger image is dropped
+	//with NVMPI_ERR_FRAME_SIZE and its size reported (no frame is held, unlike
+	//the V4L2 decoders): re-allocate at that size and decode the packet again.
+	for (attempt = 0; ; attempt++)
 	{
-		*got_frame = 0;
-		return avpkt->size;
-	}
-
-	//Update avctx dimensions from the decoded frame (JPEG is self-describing).
-	if (_nvframe.width && _nvframe.height &&
-	    ((int)_nvframe.width != avctx->width || (int)_nvframe.height != avctx->height))
-	{
-		avctx->width = _nvframe.width;
-		avctx->height = _nvframe.height;
-
-		//Reallocate bufFrame at new resolution.
-		av_frame_unref(bufFrame);
-		bufFrame->format = avctx->pix_fmt;
-		bufFrame->width = avctx->width;
-		bufFrame->height = avctx->height;
-		if (ff_get_buffer(avctx, bufFrame, 0) < 0)
-			return AVERROR(ENOMEM);
-
-		//Re-decode into new buffer.
-		_nvframe.payload[0] = bufFrame->data[0];
-		_nvframe.payload[1] = bufFrame->data[1];
-		_nvframe.payload[2] = bufFrame->data[2];
-		_nvframe.linesize[0] = bufFrame->linesize[0];
-		_nvframe.linesize[1] = bufFrame->linesize[1];
-		_nvframe.linesize[2] = bufFrame->linesize[2];
-
-		//Re-submit the same packet and get the frame at the correct resolution.
+		memset(&_nvframe, 0, sizeof(_nvframe));
+		res = nvmpi_dec_sw_bind(avctx, bufFrame, &_nvframe);
+		if (res < 0)
+			return res;
+		res = nvmpi_jpeg_decoder_get_frame(nvmpi_context->ctx, &_nvframe, 1);
+		if (res != NVMPI_ERR_FRAME_SIZE)
+			break;
+		//Still refused after re-allocating at the reported size: the size
+		//report is inconsistent, fail instead of looping.
+		if (attempt)
+		{
+			av_log(avctx, AV_LOG_ERROR,
+			       "nvmpi_jpeg_decoder_get_frame: image still does not fit at %dx%d.\n",
+			       avctx->width, avctx->height);
+			return AVERROR_EXTERNAL;
+		}
+		//Untrusted size from the bitstream: validated before avctx changes.
+		res = nvmpi_dec_sw_set_size(avctx, _nvframe.width, _nvframe.height);
+		if (res < 0)
+			return res;
+		res = nvmpi_dec_sw_alloc(avctx, bufFrame);
+		if (res < 0)
+			return res;
 		res = nvmpi_jpeg_decoder_put_packet(nvmpi_context->ctx, &packet);
 		if (res < 0)
 		{
@@ -267,15 +265,25 @@ static int nvmpi_decode_mjpeg(AVCodecContext *avctx, AVFrame *data, int *got_fra
 			       "nvmpi_jpeg_decoder_put_packet failed on resolution-change re-decode (code=%d).\n", res);
 			return AVERROR_EXTERNAL;
 		}
-		res = nvmpi_jpeg_decoder_get_frame(nvmpi_context->ctx, &_nvframe, 1);
-		if (res < 0)
-		{
-			av_log(avctx, AV_LOG_ERROR,
-			       "nvmpi_jpeg_decoder_get_frame failed on resolution-change re-decode (code=%d).\n", res);
-			*got_frame = 0;
-			return avpkt->size;
-		}
 	}
+	if (res == NVMPI_ERR_INVAL)
+	{
+		av_log(avctx, AV_LOG_ERROR, "nvmpi_jpeg_decoder_get_frame rejected its arguments.\n");
+		return AVERROR_EXTERNAL;
+	}
+	if (res < 0)
+	{
+		*got_frame = 0;
+		return avpkt->size;
+	}
+
+	//The image fit; it may be smaller than bufFrame: the output frame and
+	//avctx carry the decoded size (JPEG is self-describing).
+	res = nvmpi_dec_sw_set_size(avctx, _nvframe.width, _nvframe.height);
+	if (res < 0)
+		return res;
+	bufFrame->width = (int)_nvframe.width;
+	bufFrame->height = (int)_nvframe.height;
 
 	bufFrame->format = avctx->pix_fmt;
 	bufFrame->pts = _nvframe.timestamp;

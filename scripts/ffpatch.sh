@@ -468,6 +468,7 @@ cp "${REPO_ROOT}/ffmpeg/dev/common/libavcodec/nvmpi_dec_mjpeg.c" ${FF_DIR_LIBAVC
 cp "${REPO_ROOT}/ffmpeg/dev/common/libavcodec/nvmpi_dec_mjpeg_fd.h" ${FF_DIR_LIBAVCODEC}"/nvmpi_dec_mjpeg_fd.h"
 cp "${REPO_ROOT}/ffmpeg/dev/common/libavcodec/nvmpi_dec_drm.h" ${FF_DIR_LIBAVCODEC}"/nvmpi_dec_drm.h"
 cp "${REPO_ROOT}/ffmpeg/dev/common/libavcodec/nvmpi_dec_fd2.h" ${FF_DIR_LIBAVCODEC}"/nvmpi_dec_fd2.h"
+cp "${REPO_ROOT}/ffmpeg/dev/common/libavcodec/nvmpi_dec_sw.h" ${FF_DIR_LIBAVCODEC}"/nvmpi_dec_sw.h"
 cp "${REPO_ROOT}/ffmpeg/dev/common/libavcodec/nvmpi_fd_frame.h" ${FF_DIR_LIBAVCODEC}"/nvmpi_fd_frame.h"
 cp "${REPO_ROOT}/ffmpeg/dev/common/libavcodec/nvmpi_enc.c" ${FF_DIR_LIBAVCODEC}"/nvmpi_enc.c"
 cp "${REPO_ROOT}/ffmpeg/dev/common/libavcodec/nvmpi_enc_runtime.c" ${FF_DIR_LIBAVCODEC}"/nvmpi_enc_runtime.c"

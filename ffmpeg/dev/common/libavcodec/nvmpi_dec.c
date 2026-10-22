@@ -48,6 +48,7 @@
  * nvmpi_dec_mjpeg.c; DRM_FORMAT_NV12 and NVMPI_DRM_MOD_ORIG_FD live there. */
 #include "nvmpi_dec_drm.h"
 #include "nvmpi_dec_fd2.h"
+#include "nvmpi_dec_sw.h"
 
 /*
  * libavcodec 63 (FFmpeg 9.0+): pix_fmts moved from the public AVCodec (.p)
@@ -310,6 +311,11 @@ static int nvmpi_init_decoder(AVCodecContext *avctx)
 	 * pre-allocated output buffer needed. Each frame is built
 	 * on-the-fly in nvmpi_dec_output_frame from the fd returned by libnvmpi. */
 	if (avctx->pix_fmt != AV_PIX_FMT_DRM_PRIME) {
+		/* Software frames need libnvmpi's capacity-checked copy (>= 4.6.0);
+		 * refused otherwise, see nvmpi_dec_sw_check_support(). */
+		int sret = nvmpi_dec_sw_check_support(avctx);
+		if (sret < 0)
+			return sret;
 		/* Pre-allocate the destination frame via FFmpeg's buffer pool so
 		 * nvmpi_dec_output_frame() can copy decoded planes straight into it. A fresh
 		 * bufFrame is re-acquired after each frame is handed to the user. */
@@ -409,7 +415,7 @@ static int nvmpi_dec_output_frame(AVCodecContext *avctx, AVFrame *frame, int wai
 {
 	nvmpiDecodeContext *nvmpi_context = avctx->priv_data;
 	AVFrame *bufFrame = nvmpi_context->bufFrame;
-	nvFrame _nvframe={0};
+	int64_t pts = 0;
 	int res;
 
 	/* ---- DRM_PRIME path: wrap DMA-BUF fd in AVDRMFrameDescriptor ---- */
@@ -437,47 +443,24 @@ static int nvmpi_dec_output_frame(AVCodecContext *avctx, AVFrame *frame, int wai
 	/* ---- Software-frame path: copy decoded pixels into bufFrame ---- */
 
 	/* Re-acquire bufFrame if a prior ff_get_buffer failure left it without
-	 * backing store.  Without this guard, the payload[] assignments below
-	 * copy NULL pointers into nvframe and libnvmpi writes to address 0. */
+	 * backing store (get_frame2 needs a capacity for every plane). */
 	if (bufFrame && !bufFrame->data[0]) {
-		bufFrame->width  = avctx->width;
-		bufFrame->height = avctx->height;
-		bufFrame->format = avctx->pix_fmt;
-		if (ff_get_buffer(avctx, bufFrame, 0) < 0)
+		if (nvmpi_dec_sw_alloc(avctx, bufFrame) < 0)
 			return AVERROR(ENOMEM);
 	}
 
-	//Point the nvFrame at bufFrame's pre-allocated planes; on success
-	//libnvmpi copies the decoded frame directly into FFmpeg-owned memory.
-	//Known limit (libnvmpi API): the copying get_frame does not report the
-	//frame geometry, so after a mid-stream resolution change software
-	//frames keep the allocation size; only DRM_PRIME frames carry the new
-	//size (fd2). See jetson-ffmpeg#132.
-	_nvframe.payload[0] = bufFrame->data[0];
-	_nvframe.payload[1] = bufFrame->data[1];
-	_nvframe.payload[2] = bufFrame->data[2];
-	_nvframe.linesize[0] = bufFrame->linesize[0];
-	_nvframe.linesize[1] = bufFrame->linesize[1];
-	_nvframe.linesize[2] = bufFrame->linesize[2];
-
-	res=nvmpi_decoder_get_frame(nvmpi_context->ctx,&_nvframe,wait);
-
-	if(res<0)
-		return 1;   //no decoded frame ready (or bounded wait timed out)
-	if(res>0)
-	{
-		//A frame was dequeued but the CPU map for the copy failed: the
-		//frame is lost (libnvmpi recycled its buffer); bufFrame holds
-		//undefined pixels, so it must not be handed out.
-		av_log(avctx, AV_LOG_ERROR, "nvmpi_decoder_get_frame: buffer map failed (%d).\n", res);
-		return AVERROR_EXTERNAL;
-	}
+	//libnvmpi copies the decoded frame into bufFrame's planes, bounded by
+	//their capacity; a bigger frame after a resolution change resizes
+	//avctx + bufFrame and is fetched again (jetson-ffmpeg#137).
+	res = nvmpi_dec_sw_get_frame(avctx, nvmpi_context->ctx, bufFrame, wait, &pts);
+	if (res != 0)
+		return res;   //1: no frame ready; <0: error
 
 	//Hand the filled bufFrame to the caller (zero-copy move of the ref).
 	//Output format mirrors the negotiated avctx->pix_fmt (YUV420P / NV12 /
 	//P010LE) — the bufFrame was allocated against it via ff_get_buffer.
 	bufFrame->format=avctx->pix_fmt;
-	bufFrame->pts=_nvframe.timestamp;
+	bufFrame->pts=pts;
 	bufFrame->pkt_dts = AV_NOPTS_VALUE;
 	av_frame_move_ref(frame, bufFrame);
 

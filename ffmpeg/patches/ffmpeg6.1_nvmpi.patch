@@ -216,10 +216,10 @@ index 5136a56..8db7142 100644
  extern const FFCodec ff_vqa_decoder;
 diff --git a/libavcodec/dynlink_nvmpi.h b/libavcodec/dynlink_nvmpi.h
 new file mode 100644
-index 0000000..214e481
+index 0000000..842da74
 --- /dev/null
 +++ b/libavcodec/dynlink_nvmpi.h
-@@ -0,0 +1,412 @@
+@@ -0,0 +1,430 @@
 +/*
 + * dynlink_nvmpi.h -- Runtime lazy-loading of libnvmpi via dlopen/dlsym.
 + *
@@ -264,6 +264,13 @@ index 0000000..214e481
 +
 +/* Encoder would block: drain output packets and retry (Linux EAGAIN). */
 +#define NVMPI_ERR_EAGAIN (-11)
++
++/* The decoded frame does not fit the caller's buffers (libnvmpi >= 4.6.0:
++ * nvmpi_decoder_get_frame2, nvmpi_decoder_get_frame,
++ * nvmpi_jpeg_decoder_get_frame). Nothing was written into the caller's
++ * planes; width/height/type report the frame's size. get_frame2 holds the
++ * frame for the next call; the JPEG decoder drops the image (re-submit). */
++#define NVMPI_ERR_FRAME_SIZE (-90)
 +
 +/* Opaque context handle.  Decoder and encoder each define their own
 + * internal struct; a handle must only be passed back to the API family
@@ -380,6 +387,10 @@ index 0000000..214e481
 +typedef nvmpictx* (*fn_nvmpi_create_decoder)(nvDecParam *param);
 +typedef int       (*fn_nvmpi_decoder_put_packet)(nvmpictx *ctx, nvPacket *packet);
 +typedef int       (*fn_nvmpi_decoder_get_frame)(nvmpictx *ctx, nvFrame *frame, bool wait);
++/* Capacity-checked copy (libnvmpi >= 4.6.0, optional): payload_size[p] IN =
++ * capacity of plane p; returns NVMPI_ERR_FRAME_SIZE when the frame does not
++ * fit (jetson-nvmpi#149). */
++typedef int       (*fn_nvmpi_decoder_get_frame2)(nvmpictx *ctx, nvFrame *frame, bool wait);
 +typedef int       (*fn_nvmpi_decoder_flush)(nvmpictx *ctx);
 +typedef int       (*fn_nvmpi_decoder_close)(nvmpictx *ctx);
 +
@@ -438,6 +449,7 @@ index 0000000..214e481
 +static fn_nvmpi_create_decoder           nvmpi_create_decoder_dl;
 +static fn_nvmpi_decoder_put_packet       nvmpi_decoder_put_packet_dl;
 +static fn_nvmpi_decoder_get_frame        nvmpi_decoder_get_frame_dl;
++static fn_nvmpi_decoder_get_frame2       nvmpi_decoder_get_frame2_dl;  /* NULL when libnvmpi < 4.6.0 */
 +static fn_nvmpi_decoder_flush            nvmpi_decoder_flush_dl;
 +static fn_nvmpi_decoder_close            nvmpi_decoder_close_dl;
 +
@@ -566,6 +578,11 @@ index 0000000..214e481
 +    /* Per-plane decoder fd API (4.3.0+): optional, older libraries keep loading */
 +    NVMPI_LOAD_SYM_OPT(nvmpi_decoder_get_frame_fd2_dl, nvmpi_decoder_get_frame_fd2);
 +
++    /* Capacity-checked software-frame copy (4.6.0+): optional so older
++     * libraries keep loading; without it the decoders refuse software-frame
++     * output (nvmpi_dec_sw.h, jetson-ffmpeg#137). */
++    NVMPI_LOAD_SYM_OPT(nvmpi_decoder_get_frame2_dl, nvmpi_decoder_get_frame2);
++
 +    return 0;
 +
 +fail:
@@ -598,6 +615,7 @@ index 0000000..214e481
 +#define nvmpi_create_decoder          nvmpi_create_decoder_dl
 +#define nvmpi_decoder_put_packet      nvmpi_decoder_put_packet_dl
 +#define nvmpi_decoder_get_frame       nvmpi_decoder_get_frame_dl
++#define nvmpi_decoder_get_frame2      nvmpi_decoder_get_frame2_dl
 +#define nvmpi_decoder_flush           nvmpi_decoder_flush_dl
 +#define nvmpi_decoder_close           nvmpi_decoder_close_dl
 +
@@ -634,10 +652,10 @@ index 0000000..214e481
 +#endif /* DYNLINK_NVMPI_H */
 diff --git a/libavcodec/nvmpi_dec.c b/libavcodec/nvmpi_dec.c
 new file mode 100644
-index 0000000..807e146
+index 0000000..e51562a
 --- /dev/null
 +++ b/libavcodec/nvmpi_dec.c
-@@ -0,0 +1,731 @@
+@@ -0,0 +1,714 @@
 +/*
 + * nvmpi_dec.c — FFmpeg decoder wrapper for libnvmpi (layer 2 of
 + * jetson-ffmpeg, the FFmpeg integration layer).
@@ -688,6 +706,7 @@ index 0000000..807e146
 + * nvmpi_dec_mjpeg.c; DRM_FORMAT_NV12 and NVMPI_DRM_MOD_ORIG_FD live there. */
 +#include "nvmpi_dec_drm.h"
 +#include "nvmpi_dec_fd2.h"
++#include "nvmpi_dec_sw.h"
 +
 +/*
 + * libavcodec 63 (FFmpeg 9.0+): pix_fmts moved from the public AVCodec (.p)
@@ -950,6 +969,11 @@ index 0000000..807e146
 +	 * pre-allocated output buffer needed. Each frame is built
 +	 * on-the-fly in nvmpi_dec_output_frame from the fd returned by libnvmpi. */
 +	if (avctx->pix_fmt != AV_PIX_FMT_DRM_PRIME) {
++		/* Software frames need libnvmpi's capacity-checked copy (>= 4.6.0);
++		 * refused otherwise, see nvmpi_dec_sw_check_support(). */
++		int sret = nvmpi_dec_sw_check_support(avctx);
++		if (sret < 0)
++			return sret;
 +		/* Pre-allocate the destination frame via FFmpeg's buffer pool so
 +		 * nvmpi_dec_output_frame() can copy decoded planes straight into it. A fresh
 +		 * bufFrame is re-acquired after each frame is handed to the user. */
@@ -1049,7 +1073,7 @@ index 0000000..807e146
 +{
 +	nvmpiDecodeContext *nvmpi_context = avctx->priv_data;
 +	AVFrame *bufFrame = nvmpi_context->bufFrame;
-+	nvFrame _nvframe={0};
++	int64_t pts = 0;
 +	int res;
 +
 +	/* ---- DRM_PRIME path: wrap DMA-BUF fd in AVDRMFrameDescriptor ---- */
@@ -1077,47 +1101,24 @@ index 0000000..807e146
 +	/* ---- Software-frame path: copy decoded pixels into bufFrame ---- */
 +
 +	/* Re-acquire bufFrame if a prior ff_get_buffer failure left it without
-+	 * backing store.  Without this guard, the payload[] assignments below
-+	 * copy NULL pointers into nvframe and libnvmpi writes to address 0. */
++	 * backing store (get_frame2 needs a capacity for every plane). */
 +	if (bufFrame && !bufFrame->data[0]) {
-+		bufFrame->width  = avctx->width;
-+		bufFrame->height = avctx->height;
-+		bufFrame->format = avctx->pix_fmt;
-+		if (ff_get_buffer(avctx, bufFrame, 0) < 0)
++		if (nvmpi_dec_sw_alloc(avctx, bufFrame) < 0)
 +			return AVERROR(ENOMEM);
 +	}
 +
-+	//Point the nvFrame at bufFrame's pre-allocated planes; on success
-+	//libnvmpi copies the decoded frame directly into FFmpeg-owned memory.
-+	//Known limit (libnvmpi API): the copying get_frame does not report the
-+	//frame geometry, so after a mid-stream resolution change software
-+	//frames keep the allocation size; only DRM_PRIME frames carry the new
-+	//size (fd2). See jetson-ffmpeg#132.
-+	_nvframe.payload[0] = bufFrame->data[0];
-+	_nvframe.payload[1] = bufFrame->data[1];
-+	_nvframe.payload[2] = bufFrame->data[2];
-+	_nvframe.linesize[0] = bufFrame->linesize[0];
-+	_nvframe.linesize[1] = bufFrame->linesize[1];
-+	_nvframe.linesize[2] = bufFrame->linesize[2];
-+
-+	res=nvmpi_decoder_get_frame(nvmpi_context->ctx,&_nvframe,wait);
-+
-+	if(res<0)
-+		return 1;   //no decoded frame ready (or bounded wait timed out)
-+	if(res>0)
-+	{
-+		//A frame was dequeued but the CPU map for the copy failed: the
-+		//frame is lost (libnvmpi recycled its buffer); bufFrame holds
-+		//undefined pixels, so it must not be handed out.
-+		av_log(avctx, AV_LOG_ERROR, "nvmpi_decoder_get_frame: buffer map failed (%d).\n", res);
-+		return AVERROR_EXTERNAL;
-+	}
++	//libnvmpi copies the decoded frame into bufFrame's planes, bounded by
++	//their capacity; a bigger frame after a resolution change resizes
++	//avctx + bufFrame and is fetched again (jetson-ffmpeg#137).
++	res = nvmpi_dec_sw_get_frame(avctx, nvmpi_context->ctx, bufFrame, wait, &pts);
++	if (res != 0)
++		return res;   //1: no frame ready; <0: error
 +
 +	//Hand the filled bufFrame to the caller (zero-copy move of the ref).
 +	//Output format mirrors the negotiated avctx->pix_fmt (YUV420P / NV12 /
 +	//P010LE) — the bufFrame was allocated against it via ff_get_buffer.
 +	bufFrame->format=avctx->pix_fmt;
-+	bufFrame->pts=_nvframe.timestamp;
++	bufFrame->pts=pts;
 +	bufFrame->pkt_dts = AV_NOPTS_VALUE;
 +	av_frame_move_ref(frame, bufFrame);
 +
@@ -1839,10 +1840,10 @@ index 0000000..501b2ca
 +#endif /* NVMPI_DEC_FD2_H */
 diff --git a/libavcodec/nvmpi_dec_mjpeg.c b/libavcodec/nvmpi_dec_mjpeg.c
 new file mode 100644
-index 0000000..69f630c
+index 0000000..fc85ae8
 --- /dev/null
 +++ b/libavcodec/nvmpi_dec_mjpeg.c
-@@ -0,0 +1,355 @@
+@@ -0,0 +1,363 @@
 +/*
 + * nvmpi_dec_mjpeg.c — FFmpeg MJPEG decoder wrapper for libnvmpi's JPEG
 + * decoder (layer 2 of jetson-ffmpeg, the FFmpeg integration layer).
@@ -1949,6 +1950,7 @@ index 0000000..69f630c
 +} nvmpiDecodeContext;
 +
 +#include "nvmpi_dec_mjpeg_fd.h"
++#include "nvmpi_dec_sw.h"
 +
 +/* ------------------------------------------------------------------ */
 +/* MJPEG-specific callbacks (NvJPEGDecoder, not V4L2)                  */
@@ -1991,6 +1993,12 @@ index 0000000..69f630c
 +
 +	avctx->pix_fmt = AV_PIX_FMT_YUV420P;
 +
++	/* The software path needs libnvmpi's capacity-checked JPEG copy, which
++	 * ships with get_frame2 (>= 4.6.0); refused otherwise (#137). */
++	ret = nvmpi_dec_sw_check_support(avctx);
++	if (ret < 0)
++		return ret;
++
 +	nvmpi_context->bufFrame = av_frame_alloc();
 +	if (!nvmpi_context->bufFrame)
 +		return AVERROR(ENOMEM);
@@ -2028,7 +2036,7 @@ index 0000000..69f630c
 +	AVFrame *frame = data;
 +	nvFrame _nvframe = {0};
 +	nvPacket packet;
-+	int res;
++	int res, attempt;
 +
 +	if (nvmpi_context->drm_out)
 +		return nvmpi_decode_mjpeg_fd(avctx, frame, got_frame, avpkt);
@@ -2067,44 +2075,35 @@ index 0000000..69f630c
 +			return AVERROR(ENOMEM);
 +	}
 +
-+	_nvframe.payload[0] = bufFrame->data[0];
-+	_nvframe.payload[1] = bufFrame->data[1];
-+	_nvframe.payload[2] = bufFrame->data[2];
-+	_nvframe.linesize[0] = bufFrame->linesize[0];
-+	_nvframe.linesize[1] = bufFrame->linesize[1];
-+	_nvframe.linesize[2] = bufFrame->linesize[2];
-+
-+	res = nvmpi_jpeg_decoder_get_frame(nvmpi_context->ctx, &_nvframe, 1);
-+	if (res < 0)
++	//libnvmpi copies the image only if it fits bufFrame's planes (their
++	//capacity is passed in payload_size, #137). A larger image is dropped
++	//with NVMPI_ERR_FRAME_SIZE and its size reported (no frame is held, unlike
++	//the V4L2 decoders): re-allocate at that size and decode the packet again.
++	for (attempt = 0; ; attempt++)
 +	{
-+		*got_frame = 0;
-+		return avpkt->size;
-+	}
-+
-+	//Update avctx dimensions from the decoded frame (JPEG is self-describing).
-+	if (_nvframe.width && _nvframe.height &&
-+	    ((int)_nvframe.width != avctx->width || (int)_nvframe.height != avctx->height))
-+	{
-+		avctx->width = _nvframe.width;
-+		avctx->height = _nvframe.height;
-+
-+		//Reallocate bufFrame at new resolution.
-+		av_frame_unref(bufFrame);
-+		bufFrame->format = avctx->pix_fmt;
-+		bufFrame->width = avctx->width;
-+		bufFrame->height = avctx->height;
-+		if (ff_get_buffer(avctx, bufFrame, 0) < 0)
-+			return AVERROR(ENOMEM);
-+
-+		//Re-decode into new buffer.
-+		_nvframe.payload[0] = bufFrame->data[0];
-+		_nvframe.payload[1] = bufFrame->data[1];
-+		_nvframe.payload[2] = bufFrame->data[2];
-+		_nvframe.linesize[0] = bufFrame->linesize[0];
-+		_nvframe.linesize[1] = bufFrame->linesize[1];
-+		_nvframe.linesize[2] = bufFrame->linesize[2];
-+
-+		//Re-submit the same packet and get the frame at the correct resolution.
++		memset(&_nvframe, 0, sizeof(_nvframe));
++		res = nvmpi_dec_sw_bind(avctx, bufFrame, &_nvframe);
++		if (res < 0)
++			return res;
++		res = nvmpi_jpeg_decoder_get_frame(nvmpi_context->ctx, &_nvframe, 1);
++		if (res != NVMPI_ERR_FRAME_SIZE)
++			break;
++		//Still refused after re-allocating at the reported size: the size
++		//report is inconsistent, fail instead of looping.
++		if (attempt)
++		{
++			av_log(avctx, AV_LOG_ERROR,
++			       "nvmpi_jpeg_decoder_get_frame: image still does not fit at %dx%d.\n",
++			       avctx->width, avctx->height);
++			return AVERROR_EXTERNAL;
++		}
++		//Untrusted size from the bitstream: validated before avctx changes.
++		res = nvmpi_dec_sw_set_size(avctx, _nvframe.width, _nvframe.height);
++		if (res < 0)
++			return res;
++		res = nvmpi_dec_sw_alloc(avctx, bufFrame);
++		if (res < 0)
++			return res;
 +		res = nvmpi_jpeg_decoder_put_packet(nvmpi_context->ctx, &packet);
 +		if (res < 0)
 +		{
@@ -2112,15 +2111,25 @@ index 0000000..69f630c
 +			       "nvmpi_jpeg_decoder_put_packet failed on resolution-change re-decode (code=%d).\n", res);
 +			return AVERROR_EXTERNAL;
 +		}
-+		res = nvmpi_jpeg_decoder_get_frame(nvmpi_context->ctx, &_nvframe, 1);
-+		if (res < 0)
-+		{
-+			av_log(avctx, AV_LOG_ERROR,
-+			       "nvmpi_jpeg_decoder_get_frame failed on resolution-change re-decode (code=%d).\n", res);
-+			*got_frame = 0;
-+			return avpkt->size;
-+		}
 +	}
++	if (res == NVMPI_ERR_INVAL)
++	{
++		av_log(avctx, AV_LOG_ERROR, "nvmpi_jpeg_decoder_get_frame rejected its arguments.\n");
++		return AVERROR_EXTERNAL;
++	}
++	if (res < 0)
++	{
++		*got_frame = 0;
++		return avpkt->size;
++	}
++
++	//The image fit; it may be smaller than bufFrame: the output frame and
++	//avctx carry the decoded size (JPEG is self-describing).
++	res = nvmpi_dec_sw_set_size(avctx, _nvframe.width, _nvframe.height);
++	if (res < 0)
++		return res;
++	bufFrame->width = (int)_nvframe.width;
++	bufFrame->height = (int)_nvframe.height;
 +
 +	bufFrame->format = avctx->pix_fmt;
 +	bufFrame->pts = _nvframe.timestamp;
@@ -2405,6 +2414,264 @@ index 0000000..814da97
 +}
 +
 +#endif /* NVMPI_DEC_MJPEG_FD_H */
+diff --git a/libavcodec/nvmpi_dec_sw.h b/libavcodec/nvmpi_dec_sw.h
+new file mode 100644
+index 0000000..7b5a44c
+--- /dev/null
++++ b/libavcodec/nvmpi_dec_sw.h
+@@ -0,0 +1,252 @@
++/*
++ * nvmpi_dec_sw.h -- software-frame (copy) output for the V4L2 video decoders
++ * (h264/hevc/vp8/vp9/mpeg2/mpeg4/av1_nvmpi).
++ *
++ * libnvmpi copies each decoded frame into FFmpeg-owned planes (bufFrame).
++ * Before libnvmpi 4.6.0 the copying get_frame knew neither the capacity of
++ * those planes nor told the caller the frame geometry, so a mid-stream
++ * resolution INCREASE overflowed the heap buffer (jetson-ffmpeg#137,
++ * jetson-nvmpi#149). libnvmpi >= 4.6.0 exports nvmpi_decoder_get_frame2: the
++ * caller passes every plane's capacity, and a frame that does not fit is
++ * refused (NVMPI_ERR_FRAME_SIZE), kept pending and reported with its size.
++ *
++ * Included by nvmpi_dec.c; static inline, not a separate translation unit
++ * (kept out of nvmpi_dec.c only to bound its size).
++ */
++#ifndef NVMPI_DEC_SW_H
++#define NVMPI_DEC_SW_H
++
++#include <limits.h>
++#include <stdint.h>
++#include <stdlib.h>
++
++#include "libavutil/frame.h"
++#include "libavutil/imgutils.h"
++#include "libavutil/pixdesc.h"
++
++/* True when libnvmpi exports nvmpi_decoder_get_frame2 (>= 4.6.0).
++ * NVMPI_FORCE_NO_GET_FRAME2=1 (test hook) fakes an older library so the
++ * init-time refusal stays covered by the mock/hw suites. */
++static inline int nvmpi_has_decoder_get_frame2(void)
++{
++    const char *force = getenv("NVMPI_FORCE_NO_GET_FRAME2");
++
++    if (force && force[0] == '1')
++        return 0;
++    return nvmpi_decoder_get_frame2_dl != NULL;
++}
++
++/* Init-time gate for software-frame output (pix_fmt != DRM_PRIME).
++ *
++ * Also gates the mjpeg_nvmpi software path: its capacity-checked JPEG copy
++ * ships in the same libnvmpi release, so get_frame2 marks it as present.
++ *
++ * Without get_frame2 the copy cannot be bounded: the old get_frame writes
++ * the decoded geometry into the planes without knowing their size, and the
++ * only call that reports geometry first (get_frame_fd2) consumes the frame,
++ * so a size increase cannot be detected before the overflow. Software
++ * frames are therefore refused on libnvmpi < 4.6.0 instead of risking heap
++ * corruption on a crafted or resolution-switching stream. DRM_PRIME output
++ * (-hwaccel nvmpi) copies nothing and keeps working on older libraries. */
++static inline int nvmpi_dec_sw_check_support(AVCodecContext *avctx)
++{
++    if (nvmpi_has_decoder_get_frame2())
++        return 0;
++    av_log(avctx, AV_LOG_ERROR,
++           "libnvmpi lacks nvmpi_decoder_get_frame2 (needs >= 4.6.0): "
++           "software-frame output cannot bound the frame copy and is "
++           "disabled (jetson-ffmpeg#137). Upgrade libnvmpi, or use DRM_PRIME "
++           "output (-hwaccel nvmpi or -output_format drm_prime).\n");
++    return AVERROR(ENOSYS);
++}
++
++/* Capacity in bytes of plane p of f: from data[p] to the end of the
++ * AVBufferRef that holds it, clamped at the start of any later plane in the
++ * same buffer (custom get_buffer2 callbacks may pack all planes into one
++ * buffer; the clamp keeps one plane's copy out of its neighbour). Returns 0
++ * when no buffer holds data[p]: the capacity is then unknown and the caller
++ * must refuse the copy. Pointer math is done on uintptr_t so a plane outside
++ * a buffer is never turned into a negative/garbage size. */
++static inline size_t nvmpi_dec_sw_plane_cap(const AVFrame *f, int p, int nb_planes)
++{
++    uintptr_t start = (uintptr_t)f->data[p];
++    size_t cap = 0;
++    int i;
++
++    if (!f->data[p])
++        return 0;
++    for (i = 0; i < AV_NUM_DATA_POINTERS && f->buf[i]; i++) {
++        uintptr_t lo = (uintptr_t)f->buf[i]->data;
++        uintptr_t hi = lo + f->buf[i]->size;
++
++        /* hi < lo would mean a wrapped buffer range: never trust it. */
++        if (hi >= lo && start >= lo && start < hi) {
++            cap = hi - start;
++            break;
++        }
++    }
++    if (!cap)
++        return 0;
++    for (i = 0; i < nb_planes; i++) {
++        uintptr_t q = (uintptr_t)f->data[i];
++
++        if (i != p && q > start && q - start < cap)
++            cap = q - start;
++    }
++    return cap;
++}
++
++/* Point nf at bufFrame's planes and pass each plane's capacity (get_frame2
++ * contract: payload non-NULL and payload_size non-zero for every plane of
++ * the format). Returns 0 or AVERROR_BUG when a capacity is unknown. */
++static inline int nvmpi_dec_sw_bind(AVCodecContext *avctx, const AVFrame *f,
++                                    nvFrame *nf)
++{
++    int nb_planes = av_pix_fmt_count_planes(f->format);
++    int p;
++
++    /* nvFrame carries at most three planes (YUV420P 3, NV12/P010 2). */
++    if (nb_planes <= 0 || nb_planes > 3)
++        return AVERROR_BUG;
++    for (p = 0; p < nb_planes; p++) {
++        size_t cap = nvmpi_dec_sw_plane_cap(f, p, nb_planes);
++
++        /* Negative linesizes (bottom-up layouts) cannot be expressed in the
++         * unsigned nvFrame linesize; an unknown capacity cannot be bounded. */
++        if (!cap || f->linesize[p] <= 0) {
++            av_log(avctx, AV_LOG_ERROR,
++                   "nvmpi: cannot bound the frame copy (plane %d: cap=%zu "
++                   "linesize=%d)\n", p, cap, f->linesize[p]);
++            return AVERROR_BUG;
++        }
++        nf->payload[p]      = f->data[p];
++        nf->linesize[p]     = (unsigned int)f->linesize[p];
++        nf->payload_size[p] = cap;   /* size_t and unsigned long: 64 bit on aarch64 */
++    }
++    return 0;
++}
++
++/* (Re)acquire bufFrame at the current avctx size. ff_get_buffer() refuses
++ * a frame that still holds data, so any old buffer is dropped first. */
++static inline int nvmpi_dec_sw_alloc(AVCodecContext *avctx, AVFrame *f)
++{
++    av_frame_unref(f);
++    f->width  = avctx->width;
++    f->height = avctx->height;
++    f->format = avctx->pix_fmt;
++    return ff_get_buffer(avctx, f, 0);
++}
++
++/* Adopt the size libnvmpi reported for the decoded frame. The size comes
++ * from the (untrusted) bitstream, so it is checked against FFmpeg's image
++ * limits and avctx->max_pixels BEFORE avctx is touched (ff_set_dimensions
++ * zeroes avctx's size on failure, which would wedge later allocations). */
++static inline int nvmpi_dec_sw_set_size(AVCodecContext *avctx,
++                                        unsigned int w, unsigned int h)
++{
++    if (!w || !h || w > INT_MAX || h > INT_MAX ||
++        av_image_check_size2(w, h, avctx->max_pixels, avctx->pix_fmt, 0,
++                             avctx) < 0) {
++        av_log(avctx, AV_LOG_ERROR, "nvmpi: invalid decoded size %ux%u\n", w, h);
++        return AVERROR_INVALIDDATA;
++    }
++    if ((int)w == avctx->width && (int)h == avctx->height)
++        return 0;
++    av_log(avctx, AV_LOG_VERBOSE, "nvmpi: frame size %dx%d -> %ux%u\n",
++           avctx->width, avctx->height, w, h);
++    return ff_set_dimensions(avctx, (int)w, (int)h);
++}
++
++/* Drop the frame libnvmpi keeps pending after NVMPI_ERR_FRAME_SIZE when it
++ * cannot be taken (size invalid, or still refused after re-allocating).
++ * Without this every later call would hit the same frame and fail again, so
++ * decoding could never move past it. get_frame_fd2 returns the pending frame
++ * first; borrowing and releasing it at once discards it. */
++static inline void nvmpi_dec_sw_drop_pending(AVCodecContext *avctx, nvmpictx *ctx)
++{
++    nvmpi_frame_release_cb release = NULL;
++    void *opaque = NULL;
++    nvmpi_fd_frame fdf = {0};
++
++    if (!nvmpi_decoder_get_frame_fd2_dl)
++        return;
++    /* struct_size before the call: libnvmpi fills at most that many bytes. */
++    fdf.struct_size = sizeof(fdf);
++    if (nvmpi_decoder_get_frame_fd2_dl(ctx, &fdf, &release, &opaque, false) == 0 &&
++        release) {
++        release(opaque);
++        av_log(avctx, AV_LOG_WARNING, "nvmpi: dropped a frame that cannot be output.\n");
++    }
++}
++
++/* Copy ONE decoded frame into bufFrame (allocated by the caller).
++ * Returns 0 when bufFrame holds the frame (its width/height set to the
++ * decoded size), 1 when no frame is ready, or a negative AVERROR.
++ * On NVMPI_ERR_FRAME_SIZE (frame larger than bufFrame, kept pending by
++ * libnvmpi) avctx and bufFrame are resized and the call retried ONCE; the
++ * pending frame is returned first, so no frame is lost. */
++static inline int nvmpi_dec_sw_get_frame(AVCodecContext *avctx, nvmpictx *ctx,
++                                         AVFrame *bufFrame, int wait,
++                                         int64_t *pts)
++{
++    int attempt, res;
++
++    for (attempt = 0; attempt < 2; attempt++) {
++        nvFrame nf = {0};
++
++        res = nvmpi_dec_sw_bind(avctx, bufFrame, &nf);
++        if (res < 0)
++            return res;
++        res = nvmpi_decoder_get_frame2(ctx, &nf, wait);
++        if (res == 0) {
++            /* The frame fit; it may be smaller than bufFrame (shrink): the
++             * output frame and avctx carry the decoded size. */
++            res = nvmpi_dec_sw_set_size(avctx, nf.width, nf.height);
++            if (res < 0)
++                return res;
++            bufFrame->width  = (int)nf.width;
++            bufFrame->height = (int)nf.height;
++            *pts = nf.timestamp;
++            return 0;
++        }
++        if (res != NVMPI_ERR_FRAME_SIZE)
++            break;
++        /* Frame does not fit (resolution increase): nothing was copied and
++         * libnvmpi keeps it pending. A second refusal after re-allocating
++         * at the reported size would mean the size report is inconsistent:
++         * fail instead of looping. */
++        if (attempt)
++            break;
++        res = nvmpi_dec_sw_set_size(avctx, nf.width, nf.height);
++        if (res < 0) {
++            nvmpi_dec_sw_drop_pending(avctx, ctx);
++            return res;
++        }
++        /* Allocation failure keeps the frame pending: the next call
++         * re-allocates at the (already updated) avctx size and takes it. */
++        res = nvmpi_dec_sw_alloc(avctx, bufFrame);
++        if (res < 0)
++            return res;
++    }
++
++    if (res == NVMPI_ERR_FRAME_SIZE) {
++        av_log(avctx, AV_LOG_ERROR,
++               "nvmpi_decoder_get_frame2: frame still does not fit after "
++               "re-allocating at %dx%d.\n", avctx->width, avctx->height);
++        nvmpi_dec_sw_drop_pending(avctx, ctx);
++        return AVERROR_EXTERNAL;
++    }
++    if (res == NVMPI_ERR_INVAL) {
++        av_log(avctx, AV_LOG_ERROR,
++               "nvmpi_decoder_get_frame2 rejected its arguments.\n");
++        return AVERROR_EXTERNAL;
++    }
++    if (res < 0)
++        return 1;   /* no decoded frame ready (or bounded wait timed out) */
++    /* res > 0: a frame was dequeued but the CPU map for the copy failed; the
++     * frame is lost and bufFrame holds undefined pixels. */
++    av_log(avctx, AV_LOG_ERROR, "nvmpi_decoder_get_frame2: buffer map failed (%d).\n", res);
++    return AVERROR_EXTERNAL;
++}
++
++#endif /* NVMPI_DEC_SW_H */
 diff --git a/libavcodec/nvmpi_enc.c b/libavcodec/nvmpi_enc.c
 new file mode 100644
 index 0000000..62c699d

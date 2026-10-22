@@ -43,6 +43,13 @@
 /* Encoder would block: drain output packets and retry (Linux EAGAIN). */
 #define NVMPI_ERR_EAGAIN (-11)
 
+/* The decoded frame does not fit the caller's buffers (libnvmpi >= 4.6.0:
+ * nvmpi_decoder_get_frame2, nvmpi_decoder_get_frame,
+ * nvmpi_jpeg_decoder_get_frame). Nothing was written into the caller's
+ * planes; width/height/type report the frame's size. get_frame2 holds the
+ * frame for the next call; the JPEG decoder drops the image (re-submit). */
+#define NVMPI_ERR_FRAME_SIZE (-90)
+
 /* Opaque context handle.  Decoder and encoder each define their own
  * internal struct; a handle must only be passed back to the API family
  * (decoder_* or encoder_*) that created it. */
@@ -158,6 +165,10 @@ typedef void (*nvmpi_frame_release_cb)(void *opaque);
 typedef nvmpictx* (*fn_nvmpi_create_decoder)(nvDecParam *param);
 typedef int       (*fn_nvmpi_decoder_put_packet)(nvmpictx *ctx, nvPacket *packet);
 typedef int       (*fn_nvmpi_decoder_get_frame)(nvmpictx *ctx, nvFrame *frame, bool wait);
+/* Capacity-checked copy (libnvmpi >= 4.6.0, optional): payload_size[p] IN =
+ * capacity of plane p; returns NVMPI_ERR_FRAME_SIZE when the frame does not
+ * fit (jetson-nvmpi#149). */
+typedef int       (*fn_nvmpi_decoder_get_frame2)(nvmpictx *ctx, nvFrame *frame, bool wait);
 typedef int       (*fn_nvmpi_decoder_flush)(nvmpictx *ctx);
 typedef int       (*fn_nvmpi_decoder_close)(nvmpictx *ctx);
 
@@ -216,6 +227,7 @@ typedef int       (*fn_nvmpi_surface_destroy)(int dmabuf_fd);
 static fn_nvmpi_create_decoder           nvmpi_create_decoder_dl;
 static fn_nvmpi_decoder_put_packet       nvmpi_decoder_put_packet_dl;
 static fn_nvmpi_decoder_get_frame        nvmpi_decoder_get_frame_dl;
+static fn_nvmpi_decoder_get_frame2       nvmpi_decoder_get_frame2_dl;  /* NULL when libnvmpi < 4.6.0 */
 static fn_nvmpi_decoder_flush            nvmpi_decoder_flush_dl;
 static fn_nvmpi_decoder_close            nvmpi_decoder_close_dl;
 
@@ -344,6 +356,11 @@ static int nvmpi_dynlink_load(void)
     /* Per-plane decoder fd API (4.3.0+): optional, older libraries keep loading */
     NVMPI_LOAD_SYM_OPT(nvmpi_decoder_get_frame_fd2_dl, nvmpi_decoder_get_frame_fd2);
 
+    /* Capacity-checked software-frame copy (4.6.0+): optional so older
+     * libraries keep loading; without it the decoders refuse software-frame
+     * output (nvmpi_dec_sw.h, jetson-ffmpeg#137). */
+    NVMPI_LOAD_SYM_OPT(nvmpi_decoder_get_frame2_dl, nvmpi_decoder_get_frame2);
+
     return 0;
 
 fail:
@@ -376,6 +393,7 @@ static inline int nvmpi_has_jpeg_fd(void)
 #define nvmpi_create_decoder          nvmpi_create_decoder_dl
 #define nvmpi_decoder_put_packet      nvmpi_decoder_put_packet_dl
 #define nvmpi_decoder_get_frame       nvmpi_decoder_get_frame_dl
+#define nvmpi_decoder_get_frame2      nvmpi_decoder_get_frame2_dl
 #define nvmpi_decoder_flush           nvmpi_decoder_flush_dl
 #define nvmpi_decoder_close           nvmpi_decoder_close_dl
 
