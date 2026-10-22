@@ -22,6 +22,7 @@
 #include "libavutil/imgutils.h"
 #include "libavutil/log.h"
 #include "libavutil/mem.h"
+#include "libavutil/pixdesc.h"
 /* AVDRMFrameDescriptor: extracts DMA-BUF fd + pitch from DRM_PRIME input
  * frames. DRM_PRIME frames are mmap'd for CPU read and fed through the
  * regular MMAP encoder path (put_frame) — this avoids DMABUF-mode driver
@@ -47,6 +48,52 @@
 //libnvmpi exchanges timestamps in microseconds; used with av_rescale_q to
 //convert to/from the stream's AVCodecContext time_base.
 static const AVRational NVENC_TIMEBASE = {1, 1000000};
+
+/* Fill nvFrame payload_size[]/linesize[] for a software frame, per plane:
+ * rows = ceil(height / 2^log2_chroma_h) for chroma planes (a floor would
+ * drop the last chroma row of odd-height frames), size = (rows-1)*linesize
+ * + row_bytes, i.e. the tight extent libnvmpi >= 4.6.1 put_frame checks
+ * and that is always inside the frame's buffer. Unused planes (NV12 plane
+ * 2) get 0. Overflow-checked: linesize and dimensions come from the caller's
+ * frame, so a hostile/corrupt value must not wrap size_t into an undersized
+ * claim. Returns 0, or AVERROR(EINVAL) on a bad format/stride. */
+static int nvmpienc_fill_plane_sizes(nvFrame *nvf, enum AVPixelFormat fmt,
+                                     int width, int height, const int linesize[4])
+{
+	const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(fmt);
+	int p;
+
+	if (!desc || width <= 0 || height <= 0)
+		return AVERROR(EINVAL);
+
+	for (p = 0; p < 3; p++) {
+		size_t rows, row_bytes, size;
+		int row_len;
+
+		nvf->linesize[p] = 0;
+		nvf->payload_size[p] = 0;
+		if (p >= av_pix_fmt_count_planes(fmt))
+			continue;
+
+		/* Negative/zero stride: bottom-up or unset layout, not supported. */
+		if (linesize[p] <= 0)
+			return AVERROR(EINVAL);
+		row_len = av_image_get_linesize(fmt, width, p);
+		if (row_len <= 0 || linesize[p] < row_len)
+			return AVERROR(EINVAL);
+
+		rows = (p == 0) ? (size_t)height
+		               : (size_t)AV_CEIL_RSHIFT(height, desc->log2_chroma_h);
+		row_bytes = (size_t)row_len;
+		if (__builtin_mul_overflow(rows - 1, (size_t)linesize[p], &size) ||
+		    __builtin_add_overflow(size, row_bytes, &size))
+			return AVERROR(EINVAL);
+
+		nvf->linesize[p] = linesize[p];
+		nvf->payload_size[p] = size;
+	}
+	return 0;
+}
 
 //Free one pool packet: both the backing AVPacket and the nvPacket shell.
 //(nvmpienc_nvPacket_alloc lives in nvmpi_enc.c with the other pool setup.)
@@ -158,12 +205,18 @@ int nvmpi_encode_gen_global_header_extradata(AVCodecContext *avctx, nvEncParam *
 		_nvframe.payload[0]=dst[0];
 		_nvframe.payload[1]=dst[1];
 		_nvframe.payload[2]=dst[2];
-		_nvframe.payload_size[0]=linesize[0]*avctx->height;
-		_nvframe.payload_size[1]=linesize[1]*avctx->height/2;
-		_nvframe.payload_size[2]=linesize[2]*avctx->height/2;
-		_nvframe.linesize[0]=linesize[0];
-		_nvframe.linesize[1]=linesize[1];
-		_nvframe.linesize[2]=linesize[2];
+		/* Tight per-plane sizes (ceil chroma rows): see the helper. */
+		if (nvmpienc_fill_plane_sizes(&_nvframe, alloc_fmt, avctx->width,
+		                              avctx->height, linesize) < 0)
+		{
+			av_log(avctx, AV_LOG_ERROR,
+			       "nvmpi: extradata encoder: bad blank frame layout\n");
+			av_freep(&dst[0]);
+			nvmpi_encoder_close(nvmpi_context->ctx);
+			nvmpi_context->ctx = NULL;
+			av_frame_free(&nvmpi_context->frame);
+			return AVERROR(EINVAL);
+		}
 		_nvframe.timestamp+=shiftPts;
 
 		/* libnvmpi >= 4.5.2 refuses a frame with NVMPI_ERR_EAGAIN (not
@@ -314,7 +367,7 @@ static int ff_nvmpi_send_frame(AVCodecContext *avctx,const AVFrame *frame)
 			AVDRMFrameDescriptor *desc = (AVDRMFrameDescriptor *)frame->data[0];
 			int drm_fd;
 			int pitch;
-			size_t y_size, uv_size, uv_off, total_size;
+			size_t y_size, uv_size, uv_off, total_size, uv_rows;
 			void *map;
 			struct dma_buf_sync sync;
 
@@ -333,9 +386,19 @@ static int ff_nvmpi_send_frame(AVCodecContext *avctx,const AVFrame *frame)
 			 * odd/unaligned sizes) report an offset above pitch * height.
 			 * Video-decoder frames report exactly pitch * height, so their
 			 * behaviour is unchanged. */
-			y_size  = (size_t)pitch * frame->height;
-			uv_size = (size_t)pitch * frame->height / 2;
-			uv_off  = y_size;
+			/* Tight extents (last row = width bytes, chroma = ceil(h/2)
+			 * rows): same contract as nvmpienc_fill_plane_sizes(). */
+			if (pitch <= 0 || pitch < frame->width ||
+			    frame->width <= 0 || frame->height <= 0) {
+				av_log(avctx, AV_LOG_ERROR,
+				       "nvmpi: DRM_PRIME frame has an invalid pitch\n");
+				return AVERROR(EINVAL);
+			}
+			uv_rows = (size_t)AV_CEIL_RSHIFT(frame->height, 1);
+			y_size  = (size_t)pitch * (frame->height - 1) + frame->width;
+			uv_size = (size_t)pitch * (uv_rows - 1) +
+			          2 * (size_t)AV_CEIL_RSHIFT(frame->width, 1);
+			uv_off  = (size_t)pitch * frame->height;
 			if (desc->nb_layers > 0 && desc->layers[0].nb_planes > 1 &&
 			    desc->layers[0].planes[1].offset > 0)
 				uv_off = (size_t)desc->layers[0].planes[1].offset;
@@ -396,13 +459,14 @@ static int ff_nvmpi_send_frame(AVCodecContext *avctx,const AVFrame *frame)
 		_nvframe.payload[1]=frame->data[1];
 		_nvframe.payload[2]=frame->data[2];
 
-		_nvframe.payload_size[0]=frame->linesize[0]*frame->height;
-		_nvframe.payload_size[1]=frame->linesize[1]*frame->height/2;
-		_nvframe.payload_size[2]=frame->linesize[2]*frame->height/2;
-
-		_nvframe.linesize[0]=frame->linesize[0];
-		_nvframe.linesize[1]=frame->linesize[1];
-		_nvframe.linesize[2]=frame->linesize[2];
+		/* Odd heights: chroma has ceil(h/2) rows; a floor here makes libnvmpi
+		 * (>= 4.6.1) refuse the frame with NVMPI_ERR_INVAL (#138). */
+		res = nvmpienc_fill_plane_sizes(&_nvframe, frame->format, frame->width,
+		                                frame->height, frame->linesize);
+		if (res < 0) {
+			av_log(avctx, AV_LOG_ERROR, "nvmpi: unsupported frame layout\n");
+			return res;
+		}
 
 		_nvframe.timestamp=av_rescale_q(frame->pts, avctx->time_base, NVENC_TIMEBASE);
 
