@@ -10,6 +10,7 @@
 #   2. Real hardware only (the mock emits a canned bitstream): the output
 #      decodes to FRAMES frames of the input size and the luma/chroma PSNR of a
 #      still source stays above PSNR_MIN, i.e. the last chroma row is encoded.
+#      Odd-width NV12 is an explicit XFAIL (jetson-nvmpi#154), XPASS fails.
 # Code under test: ffmpeg/dev/common/libavcodec/nvmpi_enc_runtime.c
 #   (nvmpienc_fill_plane_sizes, extradata blank frame, software send path)
 # Issue: gjrtimmer/jetson-ffmpeg#138
@@ -60,7 +61,20 @@ odd_check() {
     -f lavfi -i "smptebars=s=${size}:r=30" -frames:v ${FRAMES} -c:v ffv1 "$REF"
   psnr=$(plane_psnr "$REF" "$OUT" "$w" "$h")
   echo "   ${label}: PSNR Y/U/V = ${psnr}"
-  if ! echo "$psnr" | awk -v m="$PSNR_MIN" '{ exit !($1 >= m && $2 >= m && $3 >= m) }'; then
+  local ok=1
+  echo "$psnr" | awk -v m="$PSNR_MIN" '{ exit !($1 >= m && $2 >= m && $3 >= m) }' || ok=0
+  # Known libnvmpi defect (jetson-nvmpi#154): the MMAP copy uses NvBuffer's
+  # floored chroma geometry, so the last chroma column of an odd-WIDTH NV12
+  # frame is never copied. Expected to fail; a pass (XPASS) is a hard failure
+  # so the marker is removed once a fixed libnvmpi is pinned.
+  if [ "$pf" = nv12 ] && [ $((w % 2)) -eq 1 ]; then
+    if [ "$ok" -eq 1 ]; then
+      ff_fail "${label}: XPASS - jetson-nvmpi#154 looks fixed; drop the XFAIL for odd-width NV12."
+    fi
+    echo "   XFAIL: chroma edge, jetson-nvmpi#154 (${label}, PSNR ${psnr})"
+    return 0
+  fi
+  if [ "$ok" -eq 0 ]; then
     ff_fail "${label}: PSNR below ${PSNR_MIN} dB (${psnr})."
   fi
 }
