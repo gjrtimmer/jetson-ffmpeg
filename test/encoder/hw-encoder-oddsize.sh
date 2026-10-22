@@ -11,8 +11,8 @@
 #      decodes to FRAMES frames of the input size and the luma/chroma PSNR of a
 #      still source stays above PSNR_MIN, i.e. the last chroma row is encoded.
 #      Odd sizes decode as the even-rounded size (4:2:0 crop units); PSNR runs
-#      on the cropped w x h area. Odd-width NV12 is an explicit XFAIL
-#      (jetson-nvmpi#154); XPASS fails.
+#      on the exact top-left w x h crop of each decoded frame (no scaling).
+#      Odd-width NV12 is an explicit XFAIL (jetson-nvmpi#154); XPASS fails.
 # Code under test: ffmpeg/dev/common/libavcodec/nvmpi_enc_runtime.c
 #   (nvmpienc_fill_plane_sizes, extradata blank frame, software send path)
 # Issue: gjrtimmer/jetson-ffmpeg#138
@@ -27,9 +27,27 @@ echo "=== hw-encoder-oddsize on variant: ${variant} ==="
 FRAMES=10
 PSNR_MIN=30
 OUT=/tmp/nvmpi-out-oddsize.mp4
-REF=/tmp/nvmpi-ref-oddsize.mkv
-DEC=/tmp/nvmpi-dec-oddsize.mkv
-trap 'rm -f "$OUT" "$REF" "$DEC" /tmp/nvmpi-raw-oddsize.h264 /tmp/nvmpi-raw-oddsize.hevc' EXIT
+PSNR_LOG=/tmp/nvmpi-psnr-oddsize.log
+trap 'rm -f "$OUT" "$PSNR_LOG" /tmp/nvmpi-raw-oddsize.h264 /tmp/nvmpi-raw-oddsize.hevc' EXIT
+
+# crop_psnr DEC SIZE CW CH CX CY : "Y U V" minimum PSNR over all FRAMES frames
+# of the CW x CH window at (CX, CY) of DEC (decoded) vs the smptebars source at
+# SIZE. The first FRAMES frames are paired by index (trim, setpts=N/TB; a raw
+# Annex B stream has no timestamps). crop needs exact=1: without it crop
+# rounds w/h/x/y down to the 4:2:0 subsampling (641x357 -> 640x356), and a
+# rescale back to w x h shifts every edge (~31 dB on smptebars, the earlier
+# false result).
+# No scale: psnr refuses mismatched sizes instead of silently resampling.
+crop_psnr() {
+  local dec="$1" size="$2" crop="crop=${3}:${4}:${5}:${6}:exact=1"
+  local pre="trim=end_frame=${FRAMES},setpts=N/TB,format=yuv420p"
+  run_ff_must "psnr compare" -T 60 -loglevel error \
+    -f lavfi -i "smptebars=s=${size}:r=30" -i "$dec" \
+    -lavfi "[0:v]${pre},${crop}[a];[1:v]${pre},${crop}[b];[a][b]psnr=stats_file=${PSNR_LOG}" \
+    -f null -
+  # stats_file lines: n:1 mse_avg:.. psnr_y:48.3 psnr_u:.. psnr_v:..; inf -> 99
+  awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^psnr_[yuv]:/) { split($i, a, ":"); k = substr(a[1], 6, 1); v = (a[2] == "inf") ? 99 : a[2]; if (!(k in m) || v + 0 < m[k] + 0) m[k] = v } } END { printf "%s %s %s\n", m["y"], m["u"], m["v"] }' "$PSNR_LOG"
+}
 
 # odd_check ENC SIZE PIXFMT: encode a still FRAMES times, check count (+ quality on hw).
 odd_check() {
@@ -57,7 +75,7 @@ odd_check() {
   # Decoded size from the elementary stream (decoder output), not from the
   # container header: copy the packets to a raw .h264/.hevc file and probe the
   # first decoded frame. The container's stream size is printed for comparison.
-  local raw_ext=h264 raw_fmt=h264 cont_dims dec_dims dec_n ew eh dw dh dec_ref="$OUT"
+  local raw_ext=h264 raw_fmt=h264 cont_dims dec_dims dec_n ew eh dw dh
   case "$enc" in hevc*) raw_ext=hevc; raw_fmt=hevc ;; esac
   local RAW="/tmp/nvmpi-raw-oddsize.${raw_ext}"
   run_ff_must "${label} raw copy" -T 60 -i "$OUT" -c:v copy -bsf:v "${raw_fmt}_mp4toannexb" -f "$raw_fmt" "$RAW"
@@ -73,16 +91,16 @@ odd_check() {
   if [ "$dec_n" != "$FRAMES" ] || [ "$dw" != "$ew" ] || [ "$dh" != "$eh" ]; then
     ff_fail "${label}: decoded ${dec_dims} x${dec_n}, expected ${ew},${eh} x${FRAMES}."
   fi
-  if [ "$dw" != "$w" ] || [ "$dh" != "$h" ]; then
-    # Compare the original w x h area (top-left); no scaling of the decode.
-    run_ff_must "${label} crop" -T 60 -i "$OUT" -vf "crop=${w}:${h}:0:0" -c:v ffv1 "$DEC"
-    dec_ref="$DEC"
-  fi
-
-  run_ff_must "${label} reference" -T 60 \
-    -f lavfi -i "smptebars=s=${size}:r=30" -frames:v ${FRAMES} -c:v ffv1 "$REF"
-  psnr=$(plane_psnr "$REF" "$dec_ref" "$w" "$h")
+  # PSNR on the original w x h area: top-left crop of each decoded frame of
+  # the elementary stream, no scaling, paired by index with the w x h source.
+  psnr=$(crop_psnr "$RAW" "$size" "$w" "$h" 0 0)
   echo "   ${label}: PSNR Y/U/V = ${psnr}"
+  # Every frame must be paired: psnr stops at the shorter input.
+  if [ "$(wc -l < "$PSNR_LOG")" -ne "$FRAMES" ]; then
+    ff_fail "${label}: PSNR compared $(wc -l < "$PSNR_LOG") frames, expected ${FRAMES}."
+  fi
+  # Information only: the bottom 4 visible rows (next to the encoder padding).
+  echo "   ${label}: bottom-4-rows PSNR Y/U/V = $(crop_psnr "$RAW" "$size" "$w" 4 0 $((h - 4)))"
   local ok=1
   echo "$psnr" | awk -v m="$PSNR_MIN" '{ exit !($1 >= m && $2 >= m && $3 >= m) }' || ok=0
   # Known libnvmpi defect (jetson-nvmpi#154): the MMAP copy uses NvBuffer's
