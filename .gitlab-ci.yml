@@ -641,8 +641,9 @@ test:hw-full:ffmpeg-9.0:                         # path B
 # Full tier on real Jetson hardware for every FFmpeg version: every suite, no
 # exclusions, no mock/stub. Each job extends the matching test:hw-full job (same
 # script, needs and runner), overriding only what a release needs. dist:* and
-# release `needs` ALL of these jobs, so one red hardware run means no package, no
-# S3 upload and no release. Non-tag pipelines never create these jobs.
+# release `needs` ALL of these jobs, so one red hardware run means no S3 upload
+# and no release. dist:* run in parallel (they only build tarballs).
+# Non-tag pipelines never create these jobs.
 # New FFmpeg version: add its release:test job here and to .release-gate.
 # ---------------------------------------------------------------------------
 .release-gate-job:
@@ -655,7 +656,7 @@ test:hw-full:ffmpeg-9.0:                         # path B
     HW_TIER: "full"
     HW_SUITES_EXCLUDE: ""
 
-# Gate job list for dist:* (release lists the same jobs explicitly).
+# Gate job list (release lists the same jobs explicitly).
 .release-gate:
   needs:
     - job: "release:test:ffmpeg-6.0"
@@ -707,8 +708,16 @@ release:test:ffmpeg-9.0:
 # ---------------------------------------------------------------------------
 .dist:
   stage: dist
+  extends: .ccache
   <<: *only-tag
-  needs: !reference [.release-gate, needs]
+  # No gate dependency: dist only builds and tars (no upload), so it runs in
+  # parallel with the Orin gate. release needs the gate AND dist, so a red
+  # hardware run still means no S3 upload and no release. libnvmpi is fetched
+  # in the script, so nothing from the build stage is needed.
+  needs: []
+  variables:
+    # Fixed clone dir so ccache hashes identical paths across tags.
+    CCACHE_BASEDIR: "/tmp/ffmpeg"
   script:
     - export VERSION="${CI_COMMIT_TAG#v}"
     - PFX="${CI_PROJECT_DIR}/_pkg"
@@ -727,11 +736,16 @@ release:test:ffmpeg-9.0:
       probe gnutls        --enable-gnutls
       echo "[i] optional flags:${OPT:- (none)}"
     - bash ./scripts/fetch-nvmpi.sh --version "${NVMPI_VERSION}" --l4t "${L4T_TAG}" --dest "${PFX}"
+    - |
+      # ccache masquerade: FFmpeg's default gcc resolves to ccache first.
+      mkdir -p /tmp/ccbin && ln -sf "$(command -v ccache)" /tmp/ccbin/gcc
+      export PATH="/tmp/ccbin:${PATH}"
     - >-
       bash ./scripts/build.sh --no-libx264 --no-libx265
-      --ffmpeg "${FFVER}" --install
+      --ffmpeg "${FFVER}" --ffmpeg-dir /tmp/ffmpeg --install
       --nvmpi-prefix "${PFX}" --ffmpeg-prefix "${PFX}" -j"$(nproc)"
       --ffmpeg-args "--enable-shared --disable-static --enable-gpl ${OPT}"
+    - ccache -s
     - test -f "${PFX}/lib/libnvmpi.so"
     - >-
       bash ./scripts/package.sh --prefix "${PFX}" --version "${VERSION}"
