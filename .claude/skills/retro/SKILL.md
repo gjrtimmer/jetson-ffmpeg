@@ -26,7 +26,7 @@ Invoke: **`/retro`** or **`/retro <session-id-prefix>`** (target one session).
 
 ## Skill Version
 
-<!-- retro:version:23 -->
+<!-- retro:version:24 -->
 Track version here. Each self-improvement pass increments this counter and
 logs what changed in the commit message.
 
@@ -105,6 +105,14 @@ Also scan for assistant-side signals:
   tool results containing error strings).
 - Repeated tool calls (same tool + same args within 3 turns = thrashing).
 - Tasks that took >10 turns to complete (potential inefficiency).
+
+### 0e. Hub mode (multi-root workspace)
+
+When the session started in a workspace hub (e.g. `~/Work/Workspaces/Rockchip`,
+not a git repo), route findings by scope: cross-repo rules go to the hub
+`CLAUDE.md` or `.claude/rules/*.md` (personal, not committed); only
+jetson-ffmpeg-specific rules land in this repo's `CLAUDE.md`. Hub memories are
+per start dir and stay unless stale or redundant.
 
 ---
 

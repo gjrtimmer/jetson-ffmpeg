@@ -487,8 +487,8 @@ auto-triggers, missing variable gates, and `changes:paths` rules that fire
 when renamed/new files land on the default branch. Lesson: image build jobs
 once had `changes:paths` rules that bypassed their variable gate, causing
 hour-long builds on every main push that touched a Dockerfile. CI images are
-no longer built here: they come from the separate `timmertech/jetson-builder`
-repo and are pinned as immutable tags via `JETSON_BUILDER_SHA` in
+no longer built here: they come from the separate `timmertech/jetson-docker`
+repo and are pinned as immutable tags via `JETSON_DOCKER_SHA` in
 `.gitlab-ci.yml` (bump it to adopt new images).
 
 ## Output style
