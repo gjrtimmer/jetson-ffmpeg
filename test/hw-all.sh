@@ -75,7 +75,8 @@ MOCK_SUITES="smoke decoder-blocking-wait decoder-chunk decoder-codecs
   decoder-av1 decoder-downscale decoder-drmprime-planes decoder-flush
   decoder-lifecycle
   decoder-pool encoder-gop
-  encoder-header encoder-modes encoder-pools encoder-thread-safety
+  encoder-header encoder-modes encoder-oddsize encoder-pools
+  encoder-thread-safety
   filter-scale-vic format-pixfmt lifecycle-stress rtp-sdp"
 if [ "${NVMPI_MOCK:-0}" = "1" ]; then
   : "${HW_SUITES:=${MOCK_SUITES}}"

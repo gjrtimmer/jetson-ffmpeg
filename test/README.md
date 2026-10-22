@@ -34,6 +34,7 @@ test/
 │   ├── hw-encoder-jpeg.sh
 │   ├── hw-encoder-level.sh
 │   ├── hw-encoder-modes.sh
+│   ├── hw-encoder-oddsize.sh
 │   ├── hw-encoder-pools.sh
 │   └── hw-encoder-thread-safety.sh
 ├── filter/                # VIC filter suites
