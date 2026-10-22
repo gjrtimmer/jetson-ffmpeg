@@ -28,7 +28,8 @@ FRAMES=10
 PSNR_MIN=30
 OUT=/tmp/nvmpi-out-oddsize.mp4
 REF=/tmp/nvmpi-ref-oddsize.mkv
-trap 'rm -f "$OUT" "$REF"' EXIT
+DEC=/tmp/nvmpi-dec-oddsize.mkv
+trap 'rm -f "$OUT" "$REF" "$DEC" /tmp/nvmpi-raw-oddsize.h264 /tmp/nvmpi-raw-oddsize.hevc' EXIT
 
 # odd_check ENC SIZE PIXFMT: encode a still FRAMES times, check count (+ quality on hw).
 odd_check() {
