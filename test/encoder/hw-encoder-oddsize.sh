@@ -12,7 +12,8 @@
 #      still source stays above PSNR_MIN, i.e. the last chroma row is encoded.
 #      Odd sizes decode as the even-rounded size (4:2:0 crop units); PSNR runs
 #      on the exact top-left w x h crop of each decoded frame (no scaling).
-#      Odd-width NV12 is an explicit XFAIL (jetson-nvmpi#154); XPASS fails.
+#      Odd width is an explicit XFAIL (jetson-nvmpi#154) for the codec +
+#      pix_fmt pairs in XFAIL_154; XPASS fails, every other case is strict.
 # Code under test: ffmpeg/dev/common/libavcodec/nvmpi_enc_runtime.c
 #   (nvmpienc_fill_plane_sizes, extradata blank frame, software send path)
 # Issue: gjrtimmer/jetson-ffmpeg#138
@@ -26,6 +27,9 @@ echo "=== hw-encoder-oddsize on variant: ${variant} ==="
 
 FRAMES=10
 PSNR_MIN=30
+# jetson-nvmpi#154 odd-width chroma edge XFAILs, "<encoder>+<pix_fmt>" (Orin,
+# pipeline 57572: h264 yuv420p is clean, hevc yuv420p is not).
+XFAIL_154="h264_nvmpi+nv12 hevc_nvmpi+yuv420p hevc_nvmpi+nv12"
 OUT=/tmp/nvmpi-out-oddsize.mp4
 PSNR_LOG=/tmp/nvmpi-psnr-oddsize.log
 trap 'rm -f "$OUT" "$PSNR_LOG" /tmp/nvmpi-raw-oddsize.h264 /tmp/nvmpi-raw-oddsize.hevc' EXIT
@@ -103,13 +107,13 @@ odd_check() {
   echo "   ${label}: bottom-4-rows PSNR Y/U/V = $(crop_psnr "$RAW" "$size" "$w" 4 0 $((h - 4)))"
   local ok=1
   echo "$psnr" | awk -v m="$PSNR_MIN" '{ exit !($1 >= m && $2 >= m && $3 >= m) }' || ok=0
-  # Known libnvmpi defect (jetson-nvmpi#154): the MMAP copy uses NvBuffer's
-  # floored chroma geometry, so the last chroma column of an odd-WIDTH NV12
-  # frame is never copied. Expected to fail; a pass (XPASS) is a hard failure
-  # so the marker is removed once a fixed libnvmpi is pinned.
-  if [ "$pf" = nv12 ] && [ $((w % 2)) -eq 1 ]; then
+  # Known libnvmpi defect (jetson-nvmpi#154): the last chroma column of an
+  # odd-WIDTH frame is not encoded correctly. Expected to fail only for the
+  # (codec, pix_fmt) pairs in XFAIL_154; a pass (XPASS) is a hard failure, so a
+  # wrong entry or a fixed libnvmpi (drop the entry) is flagged.
+  if [ $((w % 2)) -eq 1 ] && [[ " ${XFAIL_154} " == *" ${enc}+${pf} "* ]]; then
     if [ "$ok" -eq 1 ]; then
-      ff_fail "${label}: XPASS - jetson-nvmpi#154 looks fixed; drop the XFAIL for odd-width NV12."
+      ff_fail "${label}: XPASS - jetson-nvmpi#154 looks fixed for ${enc}+${pf}; drop it from XFAIL_154."
     fi
     echo "   XFAIL: chroma edge, jetson-nvmpi#154 (${label}, PSNR ${psnr})"
     return 0
