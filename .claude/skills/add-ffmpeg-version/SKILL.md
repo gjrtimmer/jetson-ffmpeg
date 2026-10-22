@@ -126,7 +126,7 @@ Use these names exactly as they exist today (verify with `grep -n "ffmpeg-9.0"`)
   for each carrier (`glab ci lint` does not catch a duplicate fast job).
 - Release gate: add `release:test:ffmpeg-<ver>` (extends
   `["test:hw-full:ffmpeg-<ver>", ".release-gate-job"]`), and list it in
-  `.release-gate` and in the `release` job's `needs`. Every version needs a
+  the `release` job's `needs`. Every version needs a
   `test:hw-full:ffmpeg-<ver>` job because the gate extends it.
 - Unchanged: `HW_SUITES_EXCLUDE` (only `soak-decode`), `MOCK_SUITES` in
   `test/hw-all.sh`, `.code-paths`.

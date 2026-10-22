@@ -42,7 +42,7 @@
 #      full-tier carrier of its wrapper path, use .hw-full for it instead and
 #      demote the previous carrier to a fast job + .hw-full-twin twin
 #   3. Add release:test:ffmpeg-<ver> (extends test:hw-full:ffmpeg-<ver> and
-#      .release-gate-job) and list it in .release-gate and in release: needs
+#      .release-gate-job) and list it in release: needs
 #   HW_SUITES_EXCLUDE and MOCK_SUITES (test/hw-all.sh) stay untouched.
 
 stages:
@@ -644,7 +644,7 @@ test:hw-full:ffmpeg-9.0:                         # path B
 # release `needs` ALL of these jobs, so one red hardware run means no S3 upload
 # and no release. dist:* run in parallel (they only build tarballs).
 # Non-tag pipelines never create these jobs.
-# New FFmpeg version: add its release:test job here and to .release-gate.
+# New FFmpeg version: add its release:test job here and to the release job's needs.
 # ---------------------------------------------------------------------------
 .release-gate-job:
   stage: release-test
@@ -655,24 +655,6 @@ test:hw-full:ffmpeg-9.0:                         # path B
   variables:
     HW_TIER: "full"
     HW_SUITES_EXCLUDE: ""
-
-# Gate job list (release lists the same jobs explicitly).
-.release-gate:
-  needs:
-    - job: "release:test:ffmpeg-6.0"
-      artifacts: false
-    - job: "release:test:ffmpeg-6.1"
-      artifacts: false
-    - job: "release:test:ffmpeg-7.0"
-      artifacts: false
-    - job: "release:test:ffmpeg-7.1"
-      artifacts: false
-    - job: "release:test:ffmpeg-8.0"
-      artifacts: false
-    - job: "release:test:ffmpeg-8.1"
-      artifacts: false
-    - job: "release:test:ffmpeg-9.0"
-      artifacts: false
 
 release:test:ffmpeg-6.0:
   extends: ["test:hw-full:ffmpeg-6.0", ".release-gate-job"]
