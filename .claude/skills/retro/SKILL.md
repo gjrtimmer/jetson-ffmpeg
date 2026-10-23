@@ -26,7 +26,7 @@ Invoke: **`/retro`** or **`/retro <session-id-prefix>`** (target one session).
 
 ## Skill Version
 
-<!-- retro:version:24 -->
+<!-- retro:version:25 -->
 Track version here. Each self-improvement pass increments this counter and
 logs what changed in the commit message.
 
@@ -105,6 +105,11 @@ Also scan for assistant-side signals:
   tool results containing error strings).
 - Repeated tool calls (same tool + same args within 3 turns = thrashing).
 - Tasks that took >10 turns to complete (potential inefficiency).
+- Self-reported rule slips: assistant messages admitting a rule break ("I broke
+  a rule", "rule slip", "should have used") — these never show up as user
+  corrections but are real violations.
+- The same environment error 2+ times (e.g. zsh word-splitting, full disk):
+  a missing tooling rule, not a one-off.
 
 ### 0e. Hub mode (multi-root workspace)
 
@@ -335,7 +340,8 @@ const PATTERNS = {
     /\bwait\s+(for|till|until)\b/i, /\bstop\b/i, /\bnot yet\b/i,
     /\bhold\b/i, /\bdo not.*yet\b/i, /\bbefore I\b/i, /\btill I\b/i,
     /\blet me\b.*\bfirst\b/i, /\bpause\b/i,
-    /\bdo not\s+(start|create|push|merge)\b/i
+    /\bdo not\s+(start|create|push|merge)\b/i,
+    /\bfix\b.*\bpipeline\b.*\bfirst\b/i, /\bfirst\b.*\bthen continue\b/i
   ],
   tool_misuse: [
     /\byou\b.*\binstead\b/i, /\bshould.*use\b/i, /\bwrong\b/i,
@@ -360,7 +366,9 @@ const PATTERNS = {
     /\bdo not forget\b/i, /\bensure that\b.*\bshould\b/i,
     /\bensure.*all\b/i, /\bcover all\b/i, /\bat least cover\b/i,
     /\bhave you (updated|checked|done|added|posted)\b/i,
-    /\bdid you (update|check|do|add|post)\b/i
+    /\bdid you (update|check|do|add|post)\b/i,
+    /\bwho is running what\b/i, /\bwhich session\b/i,
+    /\bsubagent is running\b/i
   ],
   unrequested_addition: [
     /\bwhy\s+(is|was)\s+this\s+added\b/i, /\bshould not have been added\b/i,

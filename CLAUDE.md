@@ -735,6 +735,12 @@ default for all sessions in this repo — do not wait for the user to request it
   standalone re-run of that suite is sufficient — don't gate on a full matrix
   re-run. Stochastic V4L2 driver crashes on rapid open/close are expected
   and do not indicate code bugs.
+- **Quality checks on lossy codecs test the failure mode, not an absolute
+  number.** A one-sample sentinel or edge is always blurred by coding, so a
+  fixed PSNR/diff threshold fails a working fix. Compare against what the bug
+  produces (e.g. "decoded ≈ replicated neighbour" = lost; jetson-nvmpi #154)
+  and keep the absolute numbers informational. Crop odd sizes with
+  `crop=...:exact=1` (plain `crop` rounds 4:2:0 sizes down).
 - **Never write stress tests that rapid-cycle V4L2 device open/close.**
   The Tegra V4L2 driver has stochastic segfaults on rapid encoder/decoder
   init/teardown cycles (especially HEVC, >~100 iterations). Stress tests
