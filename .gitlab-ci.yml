@@ -9,13 +9,13 @@
 # Two kinds of pipeline:
 #
 #   Branch / MR pipelines (NOT a tag, deduplicated — see workflow:rules):
-#     build      - fetch the pinned libnvmpi package + patch/build each ffmpeg version
+#     build      - patch/build each ffmpeg version (fetches the pinned libnvmpi package)
 #     test:stub  - mockable suites against the nvmpi mock on plain K3s runners
 #     test:hw-fast / test:hw-full - hw suites (test/hw-all.sh) on the Jetson
 #                  runner, per HW_TIER (see workflow:rules below)
 #
 #   Tag pipelines (v<X.Y.Z>):  -> see https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Release-Process
-#     build        - nvmpi:fetch:jp6 + ffmpeg:jp6 (the artifacts the release gate tests)
+#     build        - ffmpeg:jp6 (fetches libnvmpi itself; the artifacts the release gate tests)
 #     release-test - RELEASE GATE: full tier (HW_TIER=full, every suite) on real
 #                    Jetson hardware for every FFmpeg version; dist and release
 #                    `needs` all of it, so any failure = red pipeline, no release
@@ -159,16 +159,16 @@ default:
     pull_policy: if-not-present
 
 # ---------------------------------------------------------------------------
-# Stage: build — fetch the pinned libnvmpi package, then patch/build each
-# ffmpeg version
+# Stage: build — patch/build each ffmpeg version
 #
-# nvmpi:fetch:jp6 / nvmpi:fetch:jp5 download and verify the released
-# jetson-nvmpi tarball for the JetPack generation (the real libnvmpi, linked
-# against the Multimedia API; this project's job token is on the jetson-nvmpi
-# allowlist) and expose it as _nvmpi/.
-# ffmpeg:jp6 / ffmpeg:jp5 clone, patch, configure, and build each FFmpeg
-# version via parallel:matrix on FFVER. FFmpeg dlopens libnvmpi, so the build
-# itself needs neither its headers nor its libraries.
+# ffmpeg:jp6 / ffmpeg:jp5 first download and verify the released jetson-nvmpi
+# tarball for the JetPack generation (the real libnvmpi, linked against the
+# Multimedia API; this project's job token is on the jetson-nvmpi allowlist)
+# into _nvmpi/ (a ~1 s fetch, so no separate job), then clone, patch,
+# configure, and build each FFmpeg version via parallel:matrix on FFVER.
+# FFmpeg dlopens libnvmpi, so the build itself needs neither its headers nor
+# its libraries; the libnvmpi is copied into the _ffmpeg/ artifact, which is
+# all the test jobs consume.
 # ---------------------------------------------------------------------------
 # Docs-only MRs: nothing to build or test. This keeps the MR pipeline
 # non-empty so the "pipeline must succeed" merge gate is satisfied.
@@ -202,33 +202,6 @@ ci:docs-only:
     - if: '$CI_COMMIT_TAG =~ /^v[0-9]+\.[0-9]+\.[0-9]+$/'
     - !reference [.not-on-tag, rules]
 
-nvmpi:fetch:jp6:
-  stage: build
-  rules: !reference [.jp6-build-rules, rules]
-  script:
-    - bash ./scripts/fetch-nvmpi.sh --version "${NVMPI_VERSION}" --l4t "${L4T_TAG}" --dest "${NVMPI_PREFIX}"
-  artifacts:
-    paths:
-      - _nvmpi/
-    expire_in: 1 hour
-
-# JetPack 5.x (kernel 5.10) package: FFmpeg compile check against the JP5
-# toolchain image, no hw tests. Covers all JP5 releases (5.0.2-5.1.6).
-nvmpi:fetch:jp5:
-  stage: build
-  <<: *not-on-tag
-  image:
-    name: "${BUILDER_IMAGE_JP5}"
-    pull_policy: if-not-present
-  variables:
-    L4T_TAG: "${L4T_TAG_JP5}"
-  script:
-    - bash ./scripts/fetch-nvmpi.sh --version "${NVMPI_VERSION}" --l4t "${L4T_TAG}" --dest "${NVMPI_PREFIX}"
-  artifacts:
-    paths:
-      - _nvmpi/
-    expire_in: 1 hour
-
 .ffmpeg-build: &ffmpeg-build
   extends: .ccache
   stage: build
@@ -238,6 +211,7 @@ nvmpi:fetch:jp5:
     CCACHE_BASEDIR: "/tmp/ffmpeg"
   script:
     - echo "=== ffmpeg ${FFVER} ==="
+    - bash ./scripts/fetch-nvmpi.sh --version "${NVMPI_VERSION}" --l4t "${L4T_TAG}" --dest "${NVMPI_PREFIX}"
     - bash ./scripts/clone-ffmpeg.sh -o /tmp/ffmpeg "${FFVER}"
     - bash ./scripts/ffpatch.sh /tmp/ffmpeg
     - cd /tmp/ffmpeg
@@ -276,7 +250,7 @@ nvmpi:fetch:jp5:
 ffmpeg:jp6:
   <<: *ffmpeg-build
   rules: !reference [.jp6-build-rules, rules]
-  needs: ["nvmpi:fetch:jp6"]
+  needs: []
   parallel:
     matrix:
       - FFVER: ["6.0", "6.1", "7.0", "7.1", "8.0", "8.1", "9.0"]
@@ -287,7 +261,10 @@ ffmpeg:jp5:
   image:
     name: "${BUILDER_IMAGE_JP5}"
     pull_policy: if-not-present
-  needs: ["nvmpi:fetch:jp5"]
+  needs: []
+  variables:
+    CCACHE_BASEDIR: "/tmp/ffmpeg"
+    L4T_TAG: "${L4T_TAG_JP5}"
   parallel:
     matrix:
       - FFVER: ["6.0", "9.0"]
