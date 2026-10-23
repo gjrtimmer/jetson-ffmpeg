@@ -678,8 +678,15 @@ release:test:ffmpeg-9.0:
   # No gate dependency: dist only builds and tars (no upload), so it runs in
   # parallel with the Orin gate. release needs the gate AND dist, so a red
   # hardware run still means no S3 upload and no release. libnvmpi is fetched
-  # in the script, so nothing from the build stage is needed.
-  needs: []
+  # in the script. The only ordering is behind one jp6 build (a cheap
+  # canary, present in tag pipelines via .jp6-build-rules), so dist does not
+  # compete with the builds for runners at pipeline start.
+  needs:
+    - job: "ffmpeg:jp6"
+      parallel:
+        matrix:
+          - FFVER: ["7.1"]
+      artifacts: false
   variables:
     # Fixed clone dir so ccache hashes identical paths across tags.
     CCACHE_BASEDIR: "/tmp/ffmpeg"
