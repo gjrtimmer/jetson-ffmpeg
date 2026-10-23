@@ -80,9 +80,15 @@ stages:
 # auto_cancel: a failed job cancels every other pending/running job of the
 # pipeline, so a broken build never leaves the shared Orin churning through
 # doomed hardware jobs (GitLab >= 16.10).
+# on_new_commit: a push to a branch/MR cancels the superseded pipeline's
+# interruptible jobs (builds, mock, stub tests). Orin hw jobs, release gate,
+# dist and release are NOT interruptible, so a started hw/release run is never
+# killed mid-flight on the shared Jetson; GitLab still cancels non-interruptible
+# jobs that have not started yet.
 workflow:
   auto_cancel:
     on_job_failure: all
+    on_new_commit: interruptible
   rules:
     - if: '$CI_COMMIT_TAG'
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
@@ -211,6 +217,7 @@ ci:docs-only:
 .ffmpeg-build: &ffmpeg-build
   extends: .ccache
   stage: build
+  interruptible: true
   <<: *not-on-tag
   variables:
     # Paths inside the cloned tree must hash identically across jobs.
@@ -283,6 +290,7 @@ ffmpeg:jp5:
 # commit SHA to take an unreleased mock fix without a new release.
 nvmpi-mock:jp6:
   stage: build
+  interruptible: true
   <<: *not-on-tag
   needs: []
   variables:
@@ -322,6 +330,7 @@ nvmpi-mock:jp6:
 # ---------------------------------------------------------------------------
 .stub-test:
   stage: test:stub
+  interruptible: true
   timeout: 15m
   <<: *not-on-tag
   variables:
