@@ -17,6 +17,9 @@
 # "Mock (stub) runs". The mock is ADDITIVE: every suite below also runs on the
 # Orin, and a green mock run never substitutes for a hardware run.
 #   NVMPI_MOCK=1 test/hw-all.sh
+# On the mock, suites run HW_JOBS (default 3) at a time, except the serial ones
+# (SERIAL_SUITES below); output is buffered per suite and printed whole. Real
+# hardware is always strictly serial.
 #
 # CI log contract (what you see when something breaks):
 #   - PASSING suites are wrapped in collapsed GitLab sections (noise hidden).
@@ -117,21 +120,37 @@ gen-all
 section_start() { [ -n "${GITLAB_CI:-}" ] && printf '\e[0Ksection_start:%s:%s[collapsed=true]\r\e[0K' "$2" "$1" || true; }
 section_end()   { [ -n "${GITLAB_CI:-}" ] && printf '\e[0Ksection_end:%s:%s\r\e[0K' "$(date +%s)" "$1" || true; }
 
+# Mock-only parallelism: with NVMPI_MOCK=1 up to HW_JOBS suites run at once
+# (default 3, 1 = serial). Real hardware is ALWAYS serial: the Tegra V4L2 driver
+# crashes on concurrent device access. SERIAL_SUITES stay serial even on the
+# mock: fixed ports / timing-sensitive / thread stress (rtp-sdp binds fixed
+# ports, decoder-blocking-wait measures timing, lifecycle-stress and
+# encoder-thread-safety are load-sensitive). Everything else uses distinct
+# /tmp names per suite.
+HW_JOBS="${HW_JOBS:-3}"
+SERIAL_SUITES=" decoder-blocking-wait lifecycle-stress rtp-sdp encoder-thread-safety "
+[ "${NVMPI_MOCK:-0}" = "1" ] || HW_JOBS=1
+
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/hw-all.XXXXXX")"
+trap 'rm -rf "$WORK"' EXIT
+
+# run_suite NAME SCRIPT: run one suite, buffering output to $WORK/NAME.out and
+# the outcome to $WORK/NAME.res ("rc secs"). Never fails (safe as a bg job).
+run_suite() {
+  local s="$1" script="$2" t0 rc=0
+  t0="$(date +%s)"
+  timeout --kill-after="${KILL_GRACE}" "${SUITE_TIMEOUT}" bash "$script" >"${WORK}/${s}.out" 2>&1 || rc=$?
+  echo "${rc} $(( $(date +%s) - t0 )) ${t0}" >"${WORK}/${s}.res"
+}
+
 results="" fail=0 t_all="$(date +%s)"
-for s in $SUITES; do
-  case " ${HW_SUITES_EXCLUDE:-} " in *" $s "*) echo "[i] skipping suite ${s} (HW_SUITES_EXCLUDE)"; continue ;; esac
-  script="$(resolve_script "$s")"
-  if [ -z "$script" ] || [ ! -f "$script" ]; then
-    echo "[E] unknown suite: ${s} (no ${script})" >&2
-    results="${results}${s}:MISSING:0\n"
-    fail=1
-    continue
-  fi
-  ts_before="$(date +%s)"
-  rc=0
-  secs=0
-  out="$(timeout --kill-after="${KILL_GRACE}" "${SUITE_TIMEOUT}" bash "$script" 2>&1)" || rc=$?
-  secs=$(( $(date +%s) - ts_before ))
+
+# report_suite NAME: print the buffered output of a finished suite (CI log
+# contract above) and record its verdict.
+report_suite() {
+  local s="$1" rc secs ts_before out
+  read -r rc secs ts_before <"${WORK}/${s}.res"
+  out="$(cat "${WORK}/${s}.out")"
   if [ "$rc" -eq 124 ] || [ "$rc" -eq 137 ]; then
     echo "######## suite: hw-${s} — TIMEOUT (${SUITE_TIMEOUT}s) ########"
     printf '%s\n' "$out"
@@ -140,9 +159,7 @@ for s in $SUITES; do
     d_state_report
     results="${results}${s}:TIMEOUT:${secs}\n"
     fail=1
-    continue
-  fi
-  if [ "$rc" -eq 0 ]; then
+  elif [ "$rc" -eq 0 ]; then
     # Passing suite: full log inside a collapsed section.
     section_start "hw_${s//-/_}" "$ts_before"
     echo "######## suite: hw-${s} — PASS ########"
@@ -159,6 +176,44 @@ for s in $SUITES; do
     results="${results}${s}:FAIL:${secs}\n"
     fail=1
   fi
+}
+
+# Resolve every suite first (skips/missing reported in order), then split into
+# the parallel batch and the serial list.
+par_list=() ser_list=() scripts=()
+for s in $SUITES; do
+  case " ${HW_SUITES_EXCLUDE:-} " in *" $s "*) echo "[i] skipping suite ${s} (HW_SUITES_EXCLUDE)"; continue ;; esac
+  script="$(resolve_script "$s")"
+  if [ -z "$script" ] || [ ! -f "$script" ]; then
+    echo "[E] unknown suite: ${s} (no ${script})" >&2
+    results="${results}${s}:MISSING:0\n"
+    fail=1
+    continue
+  fi
+  scripts+=("${s}=${script}")
+  if [ "$HW_JOBS" -gt 1 ] && [[ "$SERIAL_SUITES" != *" $s "* ]]; then
+    par_list+=("$s")
+  else
+    ser_list+=("$s")
+  fi
+done
+script_of() { local e; for e in "${scripts[@]}"; do [ "${e%%=*}" = "$1" ] && { echo "${e#*=}"; return; }; done; }
+
+if [ "${#par_list[@]}" -gt 0 ]; then
+  echo "[i] mock: running ${#par_list[@]} suites ${HW_JOBS} at a time (serial: ${SERIAL_SUITES})"
+  running=0
+  for s in "${par_list[@]}"; do
+    if [ "$running" -ge "$HW_JOBS" ]; then wait -n || true; running=$((running - 1)); fi
+    run_suite "$s" "$(script_of "$s")" &
+    running=$((running + 1))
+  done
+  wait
+  # Output is printed whole, in suite order, once everything finished.
+  for s in "${par_list[@]}"; do report_suite "$s"; done
+fi
+for s in ${ser_list[@]+"${ser_list[@]}"}; do
+  run_suite "$s" "$(script_of "$s")"
+  report_suite "$s"
 done
 
 echo ""

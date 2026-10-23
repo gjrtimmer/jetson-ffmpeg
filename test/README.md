@@ -177,6 +177,12 @@ on plain K3s runners (about 2 min per version), in parallel with the hw jobs.
 Prepare a host with the mock libs on `LD_LIBRARY_PATH` and
 `jetson-nvmpi/scripts/mock-dev-nodes.sh` (codec device nodes).
 
+On the mock, `hw-all.sh` runs `HW_JOBS` suites at once (default 3; `1` = serial)
+with per-suite output buffered and printed whole. `SERIAL_SUITES` in
+`hw-all.sh` (fixed ports, timing, stress) always run serially afterwards. Real
+hardware is always serial. A new suite with fixed ports or shared fixed `/tmp`
+names must be added to `SERIAL_SUITES`.
+
 The mock is **additive**: every suite also runs on the Orin in the hw tiers, a
 green mock run never replaces a hardware run, and the mock never runs on release
 tags (the release gate is real hardware). It catches logic, lifecycle and
