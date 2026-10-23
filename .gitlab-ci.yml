@@ -74,6 +74,8 @@ stages:
 #   branch w/ open MR  -> none (the MR pipeline covers it)
 #   main push          -> builds only (hw tests already ran in the MR)
 #   other branch push  -> builds only, and only if code changed vs main
+# MR pipelines also set CCACHE_POLICY=pull: they read the ccache but never
+# write it, so branches do not churn the cache that main/tag runs populate.
 # Variables set here lose against UI/schedule/trigger variables.
 # auto_cancel: a failed job cancels every other pending/running job of the
 # pipeline, so a broken build never leaves the shared Orin churning through
@@ -86,6 +88,7 @@ workflow:
     - if: '$CI_PIPELINE_SOURCE == "merge_request_event"'
       variables:
         HW_TIER: "tiered"
+        CCACHE_POLICY: "pull"
     - if: '$CI_PIPELINE_SOURCE =~ /^(pipeline|trigger)$/'
       variables:
         HW_TIER: "full"
@@ -105,6 +108,8 @@ workflow:
         HW_TIER: "none"
 
 variables:
+  # ccache cache policy; MR pipelines override it to pull (see workflow:rules).
+  CCACHE_POLICY: "pull-push"
   HW_TIER:
     value: "none"
     description: "Hardware test tier: none = builds only, tiered = 7.1/9.0 full + other versions fast (stress suites skipped), full = all suites on all versions"
@@ -193,6 +198,7 @@ ci:docs-only:
     CCACHE_COMPRESS: "1"
   cache:
     key: "ccache-${CI_JOB_NAME_SLUG}"
+    policy: $CCACHE_POLICY
     paths:
       - .ccache
 
