@@ -5,14 +5,15 @@
 # regenerate shared inputs. Source, don't execute.
 #
 # Conventions:
-#   - one specific sample path per case: /tmp/nvmpi-sample-{type}.mp4
+#   - one specific sample path per case: ${NVMPI_SAMPLE_DIR:-/tmp}/nvmpi-sample-{type}.mp4
+#     (CI points NVMPI_SAMPLE_DIR into the project dir so it can be cached)
 #     (never reuse a generic name for a different kind of content)
 #   - generators are named gen-sample-{name-or-type}
 
 # shellcheck disable=SC2034  # consumed by the sourcing hw-* suites
-SAMPLE_H264_720P="/tmp/nvmpi-sample-h264-720p.mp4"
+SAMPLE_H264_720P="${NVMPI_SAMPLE_DIR:-/tmp}/nvmpi-sample-h264-720p.mp4"
 # shellcheck disable=SC2034
-SAMPLE_H264_OVERSIZED="/tmp/nvmpi-sample-h264-oversized-qp0.mp4"
+SAMPLE_H264_OVERSIZED="${NVMPI_SAMPLE_DIR:-/tmp}/nvmpi-sample-h264-oversized-qp0.mp4"
 
 # Short software-encoded H.264 sample (transcode/RTP-suite input).
 #   gen-sample-h264 FILE [SECONDS]
@@ -36,24 +37,24 @@ gen-sample-oversized() {
 }
 
 # shellcheck disable=SC2034  # consumed by hw-decoder-codecs.sh
-SAMPLE_MPEG2_720P="/tmp/nvmpi-sample-mpeg2-720p.mkv"
+SAMPLE_MPEG2_720P="${NVMPI_SAMPLE_DIR:-/tmp}/nvmpi-sample-mpeg2-720p.mkv"
 # shellcheck disable=SC2034
-SAMPLE_MPEG4_720P="/tmp/nvmpi-sample-mpeg4-720p.mkv"
+SAMPLE_MPEG4_720P="${NVMPI_SAMPLE_DIR:-/tmp}/nvmpi-sample-mpeg4-720p.mkv"
 # shellcheck disable=SC2034
-SAMPLE_VP8_720P="/tmp/nvmpi-sample-vp8-720p.mkv"
+SAMPLE_VP8_720P="${NVMPI_SAMPLE_DIR:-/tmp}/nvmpi-sample-vp8-720p.mkv"
 # shellcheck disable=SC2034
-SAMPLE_VP9_720P="/tmp/nvmpi-sample-vp9-720p.mkv"
+SAMPLE_VP9_720P="${NVMPI_SAMPLE_DIR:-/tmp}/nvmpi-sample-vp9-720p.mkv"
 
 # shellcheck disable=SC2034
-SAMPLE_H264_SEEK="/tmp/nvmpi-sample-h264-seek.mp4"       # 5 s, g=30 (seek/flush/lifecycle)
+SAMPLE_H264_SEEK="${NVMPI_SAMPLE_DIR:-/tmp}/nvmpi-sample-h264-seek.mp4"       # 5 s, g=30 (seek/flush/lifecycle)
 # shellcheck disable=SC2034
-SAMPLE_H264_SHORT="/tmp/nvmpi-sample-h264-short.mp4"     # 0.3 s (EOS drain)
+SAMPLE_H264_SHORT="${NVMPI_SAMPLE_DIR:-/tmp}/nvmpi-sample-h264-short.mp4"     # 0.3 s (EOS drain)
 # shellcheck disable=SC2034
-SAMPLE_H264_720P_LONG="/tmp/nvmpi-sample-h264-720p-long.mp4"
+SAMPLE_H264_720P_LONG="${NVMPI_SAMPLE_DIR:-/tmp}/nvmpi-sample-h264-720p-long.mp4"
 # shellcheck disable=SC2034
-SAMPLE_HEVC_720P="/tmp/nvmpi-sample-hevc-720p.mp4"
+SAMPLE_HEVC_720P="${NVMPI_SAMPLE_DIR:-/tmp}/nvmpi-sample-hevc-720p.mp4"
 # shellcheck disable=SC2034  # consumed by hw-format-pixfmt.sh
-SAMPLE_HEVC10_720P="/tmp/nvmpi-sample-hevc10-720p.mp4"
+SAMPLE_HEVC10_720P="${NVMPI_SAMPLE_DIR:-/tmp}/nvmpi-sample-hevc10-720p.mp4"
 
 # Longer H.264 sample for benchmarking (enough frames to measure steady-state fps).
 #   gen-sample-h264-long FILE [SECONDS]
@@ -114,9 +115,9 @@ gen-sample-vp9() {
 }
 
 # shellcheck disable=SC2034
-SAMPLE_MJPEG_720P="/tmp/nvmpi-sample-mjpeg-720p.mkv"
+SAMPLE_MJPEG_720P="${NVMPI_SAMPLE_DIR:-/tmp}/nvmpi-sample-mjpeg-720p.mkv"
 # shellcheck disable=SC2034
-SAMPLE_MJPEG_480P="/tmp/nvmpi-sample-mjpeg-480p.mkv"
+SAMPLE_MJPEG_480P="${NVMPI_SAMPLE_DIR:-/tmp}/nvmpi-sample-mjpeg-480p.mkv"
 
 # Baseline JPEG sequence in MKV container (hw-decodable).
 #   gen-sample-mjpeg FILE [SECONDS]
@@ -214,14 +215,29 @@ has_sw_encoder() {
   ffmpeg -hide_banner -encoders 2>/dev/null | awk '{print $2}' | grep -qx "$1"
 }
 
-# gen-all: generate every shared sample once (forced, so stale files from an
-# earlier job on the same host never leak in). Samples needing an optional sw
-# encoder (libx265, libvpx*) are skipped when it is missing; suites that use
-# them already SKIP in that case. Prints one line per sample for the job log.
+# gen-all: generate every shared sample once. A sample that already exists and
+# is non-empty is kept (CI restores them from the job cache; samples are plain
+# software-encoded inputs, independent of the nvmpi build under test). Each one
+# is written to a temp name and renamed, so a killed run leaves no partial file.
+# Samples needing an optional sw encoder (libx265, libvpx*) are skipped when it
+# is missing; suites that use them already SKIP in that case. Prints one line
+# per run for the job log.
 gen-all() {
-  local t0 n=0
+  local t0 n=0 kept=0
   t0=$(date +%s)
-  _gen() { local fn="gen-$1"; shift; "$fn" "$@" && n=$((n + 1)) || echo "[W] ${fn} failed"; }
+  mkdir -p "${NVMPI_SAMPLE_DIR:-/tmp}"
+  _gen() {
+    local fn="gen-$1" out="$2" tmp
+    shift 2
+    if [ -s "$out" ]; then kept=$((kept + 1)); return 0; fi
+    # Same extension as the target: ffmpeg picks the muxer from it.
+    tmp="$(dirname "$out")/.part-$$-$(basename "$out")"
+    if "$fn" "$tmp" "$@" && mv -f "$tmp" "$out"; then
+      n=$((n + 1))
+    else
+      rm -f "$tmp"; echo "[W] ${fn} failed"
+    fi
+  }
   _gen sample-h264 "${SAMPLE_H264_720P}" 3
   _gen sample-h264-long "${SAMPLE_H264_720P_LONG}" 10
   _gen sample-h264-seek "${SAMPLE_H264_SEEK}" 5
@@ -238,5 +254,5 @@ gen-all() {
   has_sw_encoder libvpx && _gen sample-vp8 "${SAMPLE_VP8_720P}" 3
   has_sw_encoder libvpx-vp9 && _gen sample-vp9 "${SAMPLE_VP9_720P}" 3
   unset -f _gen
-  echo "gen-all: ${n} samples in $(( $(date +%s) - t0 ))s"
+  echo "gen-all: ${n} generated, ${kept} cached in $(( $(date +%s) - t0 ))s"
 }

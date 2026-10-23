@@ -336,6 +336,14 @@ nvmpi-mock:jp6:
   variables:
     NVMPI_MOCK: "1"
     JETSON_VARIANT: "mock"
+    NVMPI_SAMPLE_DIR: "${CI_PROJECT_DIR}/.samples"
+  cache:
+    key:
+      prefix: hw-samples
+      files: [test/gen-samples.sh]
+    paths:
+      - .samples/
+    policy: pull-push
   script:
     - echo "=== stub test (${CI_JOB_NAME}) against the nvmpi mock ==="
     - export PATH="${FFMPEG_PREFIX}/bin:${PATH}"
@@ -404,6 +412,14 @@ nvmpi-mock:jp6:
   variables:
     NVIDIA_VISIBLE_DEVICES: "all"
     NVIDIA_DRIVER_CAPABILITIES: "all"
+    NVMPI_SAMPLE_DIR: "${CI_PROJECT_DIR}/.samples"
+  cache:
+    key:
+      prefix: hw-samples
+      files: [test/gen-samples.sh]
+    paths:
+      - .samples/
+    policy: pull-push
   before_script: []
   script:
     - echo "=== HW test (${CI_JOB_NAME}) on ${JETSON_VARIANT} ==="

@@ -135,6 +135,8 @@ subdirectory.
 - **Shared samples are generated once** (`gen-all` in `hw-all.sh`). A suite
   never regenerates a shared sample; for standalone runs it calls
   `ensure_sample VAR GEN [secs]`, which generates only when the file is missing.
+  `gen-all` also keeps existing non-empty samples; the directory is
+  `NVMPI_SAMPLE_DIR` (default `/tmp`; CI uses `.samples/` and caches it).
 - **Failure style**: print `FAIL: <reason>` and exit non-zero; keep going only
   when later checks are independent. Negative tests must assert the *clean*
   failure mode (error message present, process not killed by a signal).

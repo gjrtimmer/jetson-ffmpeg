@@ -37,3 +37,6 @@ _ffmpeg/
 # Local working dir for specs/plans/design docs (not tracked)
 .work/
 .DS_Store
+
+# hw test samples cached by CI (NVMPI_SAMPLE_DIR)
+.samples/
