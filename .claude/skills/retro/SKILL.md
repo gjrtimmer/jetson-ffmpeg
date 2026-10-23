@@ -26,7 +26,7 @@ Invoke: **`/retro`** or **`/retro <session-id-prefix>`** (target one session).
 
 ## Skill Version
 
-<!-- retro:version:25 -->
+<!-- retro:version:26 -->
 Track version here. Each self-improvement pass increments this counter and
 logs what changed in the commit message.
 
@@ -368,7 +368,7 @@ const PATTERNS = {
     /\bhave you (updated|checked|done|added|posted)\b/i,
     /\bdid you (update|check|do|add|post)\b/i,
     /\bwho is running what\b/i, /\bwhich session\b/i,
-    /\bsubagent is running\b/i
+    /\bsubagent is running\b/i, /\bcommunicate with\b.*\bsession\b/i
   ],
   unrequested_addition: [
     /\bwhy\s+(is|was)\s+this\s+added\b/i, /\bshould not have been added\b/i,
@@ -388,7 +388,8 @@ const PATTERNS = {
   pipeline_abort: [
     /\bif.*not.*green.*(stop|abort)\b/i, /\bstop and abort\b/i,
     /\bif\b.*\bfail\b.*\b(stop|diagnose|abort)\b/i,
-    /\babort\b.*\b(release|tag|pipeline)\b/i
+    /\babort\b.*\b(release|tag|pipeline)\b/i,
+    /^\s*(pipeline\s+)?(failed|error)\s*[.!?]?\s*$/i
   ],
   positive_signal: [
     /\byes exactly\b/i, /\bperfect\b/i, /\bgood\b.*\bapproach\b/i,

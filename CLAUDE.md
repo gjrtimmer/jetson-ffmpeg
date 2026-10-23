@@ -28,7 +28,7 @@ deliberately no `test` alias (it would shadow the shell builtin).
 
 ```bash
 # libnvmpi comes from a jetson-nvmpi release: libnvmpi1 deb, or a tarball prefix
-./scripts/fetch-nvmpi.sh --version 4.1.0 --dest ~/nvmpi   # public GitHub release, no token; --source gitlab needs GITLAB_TOKEN
+./scripts/fetch-nvmpi.sh --version 4.6.3 --dest ~/nvmpi   # public GitHub release, no token; --source gitlab needs GITLAB_TOKEN
 # Patch + build a full FFmpeg <ver> with nvmpi (alias: build)
 ./scripts/build.sh --ffmpeg 7.1 [--nvmpi-prefix ~/nvmpi] [--install]
 
@@ -547,6 +547,12 @@ default for all sessions in this repo — do not wait for the user to request it
   explicitly on Agent calls — never inherit the parent model by default.
   Wasting tokens on an expensive model for a `glab api` call or file grep
   is a violation of this rule.
+- **Subagent prompts carry the push rules.** A prompt that lets an agent push
+  to an MR branch says "plain push, never `-o ci.skip` on an MR branch" (agents
+  planned it twice on !83). A correction sent to a running agent starts with
+  "this supersedes my earlier message" and names what to keep; crossed
+  messages produced a wrong commit plus a revert that also dropped a needed
+  fix (#138).
 - **No tag, release, or version bump without an explicit order.** Never in any
   repo unless the user orders that specific release at that moment. Approving a
   plan does not authorize a release step inside it. Subagent prompts must state
@@ -600,7 +606,8 @@ default for all sessions in this repo — do not wait for the user to request it
   no pipeline (MRs get a `ci:docs-only` job). The weekly schedule on `main`
   (Sunday 02:00) and web runs set `HW_TIER=full` (every suite × every version on the Orin).
   MRs are merged fast-forward (`merge_method=ff`): rebase the MR branch when
-  main moved, then wait for its new head pipeline.
+  main moved (`glab mr rebase <iid>`, server-side; never a local rebase plus
+  force-push), then wait for its new head pipeline and re-arm auto-merge.
 - **`NVMPI_VERSION` policy.** Bump it only for jetson-nvmpi releases that change
   libnvmpi itself (`src/`, packaging); mock/test/docs-only releases are not
   followed.
@@ -617,7 +624,9 @@ default for all sessions in this repo — do not wait for the user to request it
   V4L2 driver (pipeline 56911, 8.1 jobs stuck in decoder-teardown). A
   runner-level limit (`limit = 1` / `concurrent = 1`) is needed; until then
   check for other running Orin jobs before starting hw work and retry a
-  hung job only once the runner is idle.
+  hung job only once the runner is idle. When your own Orin run ends (pass or
+  fail), message the other session "Orin clear" at once and say what you need
+  next; never leave the Orin idle unannounced.
 - **Coordinate before pushing to main or opening an MR.** First check open
   MRs and running pipelines in both jetson repos (`glab mr list` /
   `glab ci list` in jetson-ffmpeg and jetson-nvmpi). If other Claude sessions
@@ -740,7 +749,17 @@ default for all sessions in this repo — do not wait for the user to request it
   fixed PSNR/diff threshold fails a working fix. Compare against what the bug
   produces (e.g. "decoded ≈ replicated neighbour" = lost; jetson-nvmpi #154)
   and keep the absolute numbers informational. Crop odd sizes with
-  `crop=...:exact=1` (plain `crop` rounds 4:2:0 sizes down).
+  `crop=...:exact=1` (plain `crop` rounds 4:2:0 sizes down), and never scale
+  before PSNR: a 1-pixel misalignment rescaled reads as ~31 dB. H.264/HEVC
+  4:2:0 code odd sizes as the next even size (crop step 2, by spec), so expect
+  that as a pass, not a driver bug; read the decoded size from the elementary
+  stream, not the container (mp4/mkv keep the original size).
+- **Hw-only test code runs end to end off-device before any Orin run.** The
+  mock skips hw-only branches, so a new or changed hw test is run locally with
+  a `PATH` shim mapping `*_nvmpi` to libx264/libx265, plus emulated defects:
+  clean encodes must score high and the emulated defects must be caught.
+  `hw-encoder-oddsize` burned five Orin runs on harness bugs (unset variable,
+  rounding crop, scaled compare) that this catches.
 - **Never write stress tests that rapid-cycle V4L2 device open/close.**
   The Tegra V4L2 driver has stochastic segfaults on rapid encoder/decoder
   init/teardown cycles (especially HEVC, >~100 iterations). Stress tests
