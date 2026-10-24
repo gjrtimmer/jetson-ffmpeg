@@ -726,6 +726,11 @@ default for all sessions in this repo — do not wait for the user to request it
   (python3 `pty`): a normal run must finish, and Ctrl-C must leave no ffmpeg
   behind. `test/integration/hw-tty-harness.sh` guards this. #136: `timeout`
   plus a tty on stdin hung every suite, and Ctrl-C orphaned V4L2 users.
+- **Test code must run on the oldest supported userland.** JetPack 5 is
+  Ubuntu 20.04: Python 3.8, coreutils 8.30, ffmpeg 4.2 tools. CI and dev
+  hosts are newer and miss it. Check new test helpers in `ubuntu:20.04`
+  (arm64 on node8, or Docker locally). #148: `os.waitstatus_to_exitcode`
+  (3.9+) broke `hw-tty-harness` on JP5.
 - **Watcher scripts: no self-matching `pgrep`.** Never `pgrep -f <name>` from a
   `bash -c` whose command line contains that name (self-match, infinite wait);
   use `wait <pid>` or `pgrep -f '[n]ame'`. Wrap long `docker run` in `timeout`.
