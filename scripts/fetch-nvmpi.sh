@@ -17,7 +17,7 @@
 #   scripts/fetch-nvmpi.sh --version VER --dest DIR [options]
 #
 # Options:
-#   --version VER   jetson-nvmpi release, e.g. 4.6.5 (default: $NVMPI_VERSION).
+#   --version VER   jetson-nvmpi release, e.g. 4.7.0 (default: $NVMPI_VERSION).
 #   --l4t TAG       L4T tag of the package: r36.4.0 (JP6) or r35.4.1 (JP5)
 #                   (default: $L4T_TAG, else r36.4.0).
 #   --dest DIR      Install prefix to unpack into (lib/, include/).
