@@ -56,6 +56,11 @@ SAMPLE_HEVC_720P="${NVMPI_SAMPLE_DIR:-/tmp}/nvmpi-sample-hevc-720p.mp4"
 # shellcheck disable=SC2034  # consumed by hw-format-pixfmt.sh
 SAMPLE_HEVC10_720P="${NVMPI_SAMPLE_DIR:-/tmp}/nvmpi-sample-hevc10-720p.mp4"
 
+# shellcheck disable=SC2034  # consumed by hw-decoder-eos-count.sh
+SAMPLE_H264_BFRAMES="${NVMPI_SAMPLE_DIR:-/tmp}/nvmpi-sample-h264-bframes.mp4"  # 60 frames, B-frames (EOS tail)
+# shellcheck disable=SC2034
+SAMPLE_HEVC_BFRAMES="${NVMPI_SAMPLE_DIR:-/tmp}/nvmpi-sample-hevc-bframes.mp4"
+
 # Longer H.264 sample for benchmarking (enough frames to measure steady-state fps).
 #   gen-sample-h264-long FILE [SECONDS]
 gen-sample-h264-long() {
@@ -209,6 +214,25 @@ gen-sample-h264-upsize() {
   gen-sample-h264-reschange "$1" 1280x720 642x358
 }
 
+# H.264 / HEVC samples of exactly FRAMES frames (default 60) with B-frames in
+# every mini-GOP (bframes=3, adaptive placement off, pyramid on): the decoder
+# holds back its reorder depth until EOS, so a lost tail shows as a short
+# frame count (jetson-ffmpeg#149).
+#   gen-sample-h264-bframes FILE [FRAMES]
+#   gen-sample-hevc-bframes FILE [FRAMES]
+gen-sample-h264-bframes() {
+  ffmpeg -y -hide_banner -loglevel error \
+    -f lavfi -i testsrc2=s=1280x720:r=30 -frames:v "${2:-60}" \
+    -c:v libx264 -x264-params bframes=3:b-adapt=0:b-pyramid=normal "$1"
+}
+
+gen-sample-hevc-bframes() {
+  ffmpeg -y -hide_banner -loglevel error \
+    -f lavfi -i testsrc2=s=1280x720:r=30 -frames:v "${2:-60}" \
+    -c:v libx265 -preset ultrafast \
+    -x265-params bframes=3:b-adapt=0:b-pyramid=1:log-level=error "$1"
+}
+
 # has_sw_encoder NAME: true when the software encoder is compiled into ffmpeg
 # (needed to generate samples; the nvmpi codecs under test never fall back).
 has_sw_encoder() {
@@ -243,6 +267,7 @@ gen-all() {
   _gen sample-h264-seek "${SAMPLE_H264_SEEK}" 5
   _gen sample-h264-short "${SAMPLE_H264_SHORT}" 0.3
   _gen sample-oversized "${SAMPLE_H264_OVERSIZED}" 1
+  _gen sample-h264-bframes "${SAMPLE_H264_BFRAMES}" 60
   _gen sample-mpeg2 "${SAMPLE_MPEG2_720P}" 3
   _gen sample-mpeg4 "${SAMPLE_MPEG4_720P}" 3
   _gen sample-mjpeg "${SAMPLE_MJPEG_720P}" 3
@@ -250,6 +275,7 @@ gen-all() {
   if has_sw_encoder libx265; then
     _gen sample-hevc "${SAMPLE_HEVC_720P}" 5
     _gen sample-hevc10 "${SAMPLE_HEVC10_720P}" 3
+    _gen sample-hevc-bframes "${SAMPLE_HEVC_BFRAMES}" 60
   fi
   has_sw_encoder libvpx && _gen sample-vp8 "${SAMPLE_VP8_720P}" 3
   has_sw_encoder libvpx-vp9 && _gen sample-vp9 "${SAMPLE_VP9_720P}" 3

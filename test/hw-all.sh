@@ -75,7 +75,8 @@ discover() {
 #   soak-decode, perf-bench,
 #   perf-mode                     timing/throughput numbers need the engines
 MOCK_SUITES="smoke decoder-blocking-wait decoder-chunk decoder-codecs
-  decoder-av1 decoder-downscale decoder-drmprime-planes decoder-flush
+  decoder-av1 decoder-downscale decoder-drmprime-planes decoder-eos-count
+  decoder-flush
   decoder-lifecycle
   decoder-pool encoder-gop
   encoder-header encoder-modes encoder-oddsize encoder-pools

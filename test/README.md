@@ -23,6 +23,7 @@ test/
 │   ├── hw-decoder-codecs.sh
 │   ├── hw-decoder-downscale.sh
 │   ├── hw-decoder-drmprime-planes.sh  # video DRM_PRIME plane offsets (libnvmpi fd2), res change
+│   ├── hw-decoder-eos-count.sh        # EOS tail: nvmpi frame count == software count, H.264/HEVC with B-frames (#149)
 │   ├── hw-decoder-flush.sh
 │   ├── hw-decoder-lifecycle.sh
 │   ├── hw-decoder-mjpeg.sh
