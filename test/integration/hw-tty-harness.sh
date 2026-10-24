@@ -76,7 +76,8 @@ while True:
         os.kill(pid, 9); out += b"\n[pty] TIMEOUT: killed\n"; break
 _, st = os.waitpid(pid, 0)
 sys.stdout.write(out.decode(errors="replace"))
-print("pty-rc=%d" % (os.waitstatus_to_exitcode(st) if os.WIFEXITED(st) else 128 + os.WTERMSIG(st)))
+# os.WEXITSTATUS, not waitstatus_to_exitcode (3.9+): JetPack 5 ships Python 3.8.
+print("pty-rc=%d" % (os.WEXITSTATUS(st) if os.WIFEXITED(st) else 128 + os.WTERMSIG(st)))
 EOP
 pty_run() { python3 -I "$T/pty.py" "$1" "$2" "$T/marks" "${@:3}"; }
 
@@ -86,18 +87,18 @@ fail() { echo "FAIL: $1"; printf '%s\n' "${OUT:-}" | tail -25; exit 1; }
 hwall() { env PATH="$T/bin:$PATH" NVMPI_SAMPLE_DIR="${NVMPI_SAMPLE_DIR:-/tmp}" "$@" bash "$T/test/hw-all.sh"; }
 
 echo "== 1. suite directly on a tty completes =="
-OUT="$(pty_run 60 0 bash "$T/test/hw-ttyprobe.sh" 2>&1)"
+OUT="$(pty_run 60 0 bash "$T/test/hw-ttyprobe.sh" 2>&1)" || true
 case "$OUT" in *"tty ok"*"pty-rc=0"*) echo "   OK" ;; *) fail "suite did not complete on a tty (hang: stdin still the terminal?)" ;; esac
 
 echo "== 2. hw-all.sh on a tty completes =="
-OUT="$(pty_run 120 0 env PATH="$T/bin:$PATH" NVMPI_SAMPLE_DIR="${NVMPI_SAMPLE_DIR:-/tmp}" HW_SUITES=ttyprobe bash "$T/test/hw-all.sh" 2>&1)"
+OUT="$(pty_run 120 0 env PATH="$T/bin:$PATH" NVMPI_SAMPLE_DIR="${NVMPI_SAMPLE_DIR:-/tmp}" HW_SUITES=ttyprobe bash "$T/test/hw-all.sh" 2>&1)" || true
 case "$OUT" in *"OK: all hw suites passed"*"pty-rc=0"*) echo "   OK" ;; *) fail "hw-all.sh did not finish cleanly on a tty" ;; esac
 
 # ^C: needs the suite(s) to be inside ffmpeg (marks), then everything must stop.
 ctrlc_case() {
   local label="$1" n="$2"; shift 2
   rm -f "$T"/marks/*
-  OUT="$(pty_run 120 "$n" env PATH="$T/bin:$PATH" NVMPI_SAMPLE_DIR="${NVMPI_SAMPLE_DIR:-/tmp}" "$@" bash "$T/test/hw-all.sh" 2>&1)"
+  OUT="$(pty_run 120 "$n" env PATH="$T/bin:$PATH" NVMPI_SAMPLE_DIR="${NVMPI_SAMPLE_DIR:-/tmp}" "$@" bash "$T/test/hw-all.sh" 2>&1)" || true
   case "$OUT" in *"pty-rc=130"*) ;; *) fail "${label}: Ctrl-C did not end hw-all.sh with rc 130" ;; esac
   sleep 1
   local left; left="$(leftovers)"
