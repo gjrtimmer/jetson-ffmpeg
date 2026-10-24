@@ -28,6 +28,11 @@ name: CI
 #     branches: [master, main]
 on:
   workflow_dispatch:
+    inputs:
+      base_image:
+        description: "l4t-jetpack base image for the patch jobs (set to your own registry if needed)"
+        required: false
+        default: "nvcr.io/nvidia/l4t-jetpack:r36.4.0"
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -37,7 +42,7 @@ jobs:
     name: Patch ffmpeg ${{ matrix.ffmpeg }}
     runs-on: ubuntu-latest
     container:
-      image: harbor.local/jetson/l4t-jetpack:r36.4.0
+      image: ${{ inputs.base_image }}
     strategy:
       fail-fast: false
       matrix:

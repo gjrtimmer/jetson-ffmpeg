@@ -55,13 +55,22 @@ See the **[Compatibility](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Compat
 wiki page for the supported codecs, the full Jetson/JetPack support matrix, and
 the list of tested FFmpeg releases.
 
+## Requirements
+
+- A Jetson module with JetPack 5.x or 6.x (see Compatibility above).
+- A released jetson-nvmpi package (`libnvmpi1`), loaded by FFmpeg at runtime.
+- To build: a C toolchain, `git` and the FFmpeg source of a supported version.
+  The patched FFmpeg needs no libnvmpi headers or libraries at build time.
+
+See [Build and Install](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Build-and-Install)
+for the full dependency list.
+
 ## Quick Start
 
 ```bash
 # 1. Install libnvmpi from the public jetson-nvmpi GitHub release
 #    (https://github.com/gjrtimmer/jetson-nvmpi/releases): pick the package set
-#    that matches your JetPack (.jp6 for JetPack 6, .jp5 for JetPack 5; the
-#    GitLab registry names them ~jp6 / ~jp5)
+#    that matches your JetPack (.jp6 for JetPack 6, .jp5 for JetPack 5)
 sudo apt install ./libnvmpi1_<version>-1.jp6_arm64.deb
 
 # 2. Patch and build FFmpeg (needs no libnvmpi headers: it is loaded at runtime)
@@ -88,13 +97,41 @@ wiki page.
 
 ## Documentation
 
-📖 **Full documentation lives in the [project wiki](https://github.com/gjrtimmer/jetson-ffmpeg/wiki).**
+**Full documentation lives in the [project wiki](https://github.com/gjrtimmer/jetson-ffmpeg/wiki).**
 
 - **[Build and Install](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Build-and-Install)** — Complete build, installation, and usage instructions
 - **[Compatibility](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Compatibility)** — Supported codecs, Jetson/JetPack support matrix, FFmpeg versions
 - **[Scripts and Commands](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Scripts-and-Commands)** — Every script, command, and dev-container alias
 - **[FAQ & Known Limitations](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/FAQ)** — HEVC/RTMP, 4K encode cap, Orin Nano NVENC, mod-16, pkg-config, performance
 - **[Development Guide](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Development-Guide)** — Architecture, patch system, and how to add new FFmpeg versions
+
+## Testing
+
+Per-feature hardware suites live in `test/` and run with `test/hw-all.sh`
+against the `ffmpeg` in `PATH`. They need a real Jetson: the nvmpi codecs have
+no software fallback. Mock-based suites run without hardware. See
+[test/README.md](test/README.md) and the
+[Development Guide](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Development-Guide).
+
+## CI and releases
+
+GitLab CI with a self-hosted Jetson runner; tags `vX.Y.Z` release; GitHub is a
+mirror. See the
+[Release Process](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Release-Process)
+wiki page.
+
+## Contributing
+
+Issues are tracked on GitHub:
+[gjrtimmer/jetson-ffmpeg](https://github.com/gjrtimmer/jetson-ffmpeg/issues).
+The GitHub repository is a read-only mirror, so open an issue rather than a pull
+request. Commits follow
+[Conventional Commits](https://www.conventionalcommits.org/). Details are in the
+[Development Guide](https://github.com/gjrtimmer/jetson-ffmpeg/wiki/Development-Guide).
+
+## License
+
+MIT, see [LICENSE](LICENSE).
 
 ## Support This Project
 

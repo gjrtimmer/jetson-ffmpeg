@@ -2,12 +2,15 @@
 # Dev container for jetson-ffmpeg
 # Runs ON Jetson hardware via VS Code Remote SSH + Dev Containers
 #
-# Base images by JetPack version:
-#   JetPack 5.x (L4T R35): harbor.local/jetson/l4t-jetpack:r35.4.1
-#   JetPack 6.0 (L4T R36): harbor.local/jetson/l4t-jetpack:r36.3.0
-#   JetPack 6.1 (L4T R36): harbor.local/jetson/l4t-jetpack:r36.4.0
+# Base image: BASE_IMAGE:L4T_VERSION. BASE_IMAGE defaults to NVIDIA's public
+# l4t-jetpack; override it with the JETSON_BASE_IMAGE environment variable
+# (see devcontainer.json) to use your own registry.
+#   JetPack 5.x (L4T R35): r35.4.1
+#   JetPack 6.0 (L4T R36): r36.3.0
+#   JetPack 6.1 (L4T R36): r36.4.0
+ARG BASE_IMAGE=nvcr.io/nvidia/l4t-jetpack
 ARG L4T_VERSION=r36.4.0
-FROM harbor.local/jetson/l4t-jetpack:${L4T_VERSION}
+FROM ${BASE_IMAGE}:${L4T_VERSION}
 
 ARG DEBIAN_FRONTEND=noninteractive
 

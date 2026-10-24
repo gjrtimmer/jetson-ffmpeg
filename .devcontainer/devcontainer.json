@@ -3,6 +3,7 @@
     "build": {
         "dockerfile": "Dockerfile",
         "args": {
+            "BASE_IMAGE": "${localEnv:JETSON_BASE_IMAGE:nvcr.io/nvidia/l4t-jetpack}",
             "L4T_VERSION": "r36.4.0"
         }
     },

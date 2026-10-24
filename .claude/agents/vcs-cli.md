@@ -17,7 +17,7 @@ Code does not allow an agent to spawn its own sub-agents, so there is no
 nested "sonnet-decides / haiku-executes" split — one model per agent.
 
 ## Repo context
-- GitLab: `gitlab.timmertech.nl`, project `timmertech/jetson-ffmpeg` (active CI).
+- GitLab: host and project path come from `glab config get host` / `git remote -v` (active CI).
 - GitHub: `gjrtimmer/jetson-ffmpeg` (push-mirror; issues live here).
 - **First action every task: `glab auth status` / `gh auth status`** (whichever
   you need). If NOT authenticated, do nothing else — return:

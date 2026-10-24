@@ -190,7 +190,7 @@ names must be added to `SERIAL_SUITES`.
 The mock is **additive**: every suite also runs on the Orin in the hw tiers, a
 green mock run never replaces a hardware run, and the mock never runs on release
 tags (the release gate is real hardware). It catches logic, lifecycle and
-wrapper bugs and, via `auto_cancel`, keeps such failures off the shared Orin.
+wrapper bugs and, via `auto_cancel`, keeps such failures off the the Jetson runner.
 
 The mockable list is `MOCK_SUITES` in `hw-all.sh` (opt-in; new suites are not
 mocked until listed). Not mockable: `decoder-mjpeg`, `decoder-mjpeg-drmprime`, `encoder-jpeg` (NvJPEG
