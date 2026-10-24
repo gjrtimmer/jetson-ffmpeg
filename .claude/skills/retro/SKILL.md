@@ -26,7 +26,7 @@ Invoke: **`/retro`** or **`/retro <session-id-prefix>`** (target one session).
 
 ## Skill Version
 
-<!-- retro:version:26 -->
+<!-- retro:version:27 -->
 Track version here. Each self-improvement pass increments this counter and
 logs what changed in the commit message.
 
@@ -364,6 +364,7 @@ const PATTERNS = {
     /\bforgot\b/i, /\bshould have\b/i,
     /\byou need to\b/i, /\bwas supposed to\b/i,
     /\bdo not forget\b/i, /\bensure that\b.*\bshould\b/i,
+    /\bmake sure\b.*\b(real|actually|user)\b/i,
     /\bensure.*all\b/i, /\bcover all\b/i, /\bat least cover\b/i,
     /\bhave you (updated|checked|done|added|posted)\b/i,
     /\bdid you (update|check|do|add|post)\b/i,

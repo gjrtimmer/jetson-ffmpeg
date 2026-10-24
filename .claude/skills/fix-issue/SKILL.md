@@ -112,6 +112,10 @@ gh issue comment NR -R gjrtimmer/jetson-ffmpeg --body "<plan>"
 
 Plan covers: root cause, files to change, test strategy, risks.
 
+Settle the closing footer at plan time: a pushed branch needs `Fixes #NR` /
+`Closes #NR` (hard gate). If the fix may cover only part of the report, say
+so in the plan and still use `Fixes`; any leftover gets a new issue.
+
 **Gate**: Ask user for "go". A "go" approves the presented plan. If execution
 reveals material scope change → stop and re-confirm.
 

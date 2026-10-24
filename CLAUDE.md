@@ -715,6 +715,11 @@ default for all sessions in this repo — do not wait for the user to request it
   progress — each call wastes tokens and context. One check to confirm the
   monitor is armed, then stop. If you need interim visibility, set up the
   Monitor with the right grep filter upfront, not by polling manually.
+- **Test harness changes must work from a terminal, not only CI.** CI has no
+  tty. After editing `test/hw-all.sh` or `test/lib/`, run it under a pty
+  (python3 `pty`): a normal run must finish, and Ctrl-C must leave no ffmpeg
+  behind. `test/integration/hw-tty-harness.sh` guards this. #136: `timeout`
+  plus a tty on stdin hung every suite, and Ctrl-C orphaned V4L2 users.
 - **Watcher scripts: no self-matching `pgrep`.** Never `pgrep -f <name>` from a
   `bash -c` whose command line contains that name (self-match, infinite wait);
   use `wait <pid>` or `pgrep -f '[n]ame'`. Wrap long `docker run` in `timeout`.
