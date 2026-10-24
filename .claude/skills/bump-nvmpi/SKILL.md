@@ -20,10 +20,9 @@ gh release list -R gjrtimmer/jetson-nvmpi --limit 5
 grep -n 'NVMPI_VERSION:' .gitlab-ci.yml
 ```
 
-Read the jetson-nvmpi CHANGELOG between the current pin and the target. Apply
-the `NVMPI_VERSION` policy from CLAUDE.md: bump only if the range changes
-libnvmpi itself (`src/`, packaging). Mock/test/docs-only releases are not
-followed. If the pin is bumped anyway, the docs must follow (step 4).
+Read the jetson-nvmpi CHANGELOG between the current pin and the target (for the
+MR description). Policy (CLAUDE.md): always adopt the latest release, whatever
+it changed; the docs must follow (step 4).
 
 ## 2. Coordinate
 
