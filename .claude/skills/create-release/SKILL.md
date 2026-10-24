@@ -233,6 +233,10 @@ CMake version moved to jetson-nvmpi). The libnvmpi release bundled into the
 archives is `NVMPI_VERSION` in `.gitlab-ci.yml`: confirm it is the intended
 jetson-nvmpi release before tagging.
 
+**Gate:** run the sync check from `/bump-nvmpi` step 6. If it prints anything
+(a current-version example differs from `NVMPI_VERSION`), stop the release and
+fix via `/bump-nvmpi` step 4 first.
+
 ### 4b. Regenerate CHANGELOG.md
 
 ```bash
@@ -367,7 +371,8 @@ Create on invocation:
 4. Wait for MRs to merge (if any) — monitor pipelines
 5. Wait for main pipeline green AND a full-tier (`HW_TIER=full`) pipeline green on the HEAD SHA
 6. Validate release scope — list commits since last tag
-7. Confirm `NVMPI_VERSION` (bundled libnvmpi release)
+7. Confirm `NVMPI_VERSION` (bundled libnvmpi release) and run the `/bump-nvmpi`
+   step 6 sync check; any output stops the release
 8. Regenerate CHANGELOG.md with git-cliff
 9. Commit: `docs: update CHANGELOG for vX.Y.Z release`
 10. Push main with `-o ci.skip`
