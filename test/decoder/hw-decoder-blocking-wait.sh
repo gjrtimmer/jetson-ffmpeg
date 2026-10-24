@@ -119,7 +119,7 @@ first_frame_ms() {
 full_decode() {
   local t0 t1 out frames cpu_s
   t0=$(date +%s%N)
-  out=$(bash -c 'timeout -k 5 60 ffmpeg -y -hide_banner -stats "$@" \
+  out=$(bash -c 'timeout --foreground -k 5 60 ffmpeg -y -hide_banner -stats "$@" \
       -c:v h264_nvmpi -i "$0" -f null - 2>&1; times' \
       "${SAMPLE_H264_720P_LONG}" "$@" 2>&1) || true
   t1=$(date +%s%N)

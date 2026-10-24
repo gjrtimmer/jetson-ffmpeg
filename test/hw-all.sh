@@ -134,12 +134,59 @@ SERIAL_SUITES=" decoder-blocking-wait lifecycle-stress rtp-sdp encoder-thread-sa
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/hw-all.XXXXXX")"
 trap 'rm -rf "$WORK"' EXIT
 
+# Ctrl-C / SIGTERM (#136): each suite runs under `timeout`, which moves itself
+# into its own process group, so the terminal's SIGINT never reaches it and the
+# suite + ffmpeg would keep running as orphans (a stray V4L2 user crashes the
+# next Jetson run). run_suite records the timeout pid in $WORK/NAME.pid; on a
+# signal we TERM every live one (timeout relays it to its group), wait up to
+# KILL_GRACE s, SIGKILL the group of any survivor, show the partial logs, exit 130.
+on_signal() {
+  local f p s alive live=""
+  trap '' INT TERM
+  echo ""
+  echo "[W] interrupted: stopping running suites..."
+  for f in "${WORK}"/*.pid; do
+    [ -e "$f" ] || continue
+    s="$(basename "$f" .pid)"
+    [ -e "${WORK}/${s}.res" ] || live="${live} ${s}"
+    p="$(cat "$f")"; kill -TERM "$p" 2>/dev/null || true
+  done
+  for _ in $(seq 1 $((KILL_GRACE * 5))); do
+    alive=0
+    for f in "${WORK}"/*.pid; do
+      [ -e "$f" ] || continue
+      p="$(cat "$f")"; kill -0 "$p" 2>/dev/null && alive=1
+    done
+    [ "$alive" -eq 0 ] && break
+    sleep 0.2
+  done
+  for f in "${WORK}"/*.pid; do
+    [ -e "$f" ] || continue
+    p="$(cat "$f")"
+    kill -0 "$p" 2>/dev/null && { kill -KILL -- "-${p}" "$p" 2>/dev/null || true; }
+  done
+  wait 2>/dev/null || true
+  for s in $live; do
+    echo "######## suite: hw-${s} — INTERRUPTED (partial output) ########"
+    cat "${WORK}/${s}.out" 2>/dev/null || true
+  done
+  d_state_report
+  echo "[W] aborted by signal."
+  exit 130
+}
+trap on_signal INT TERM
+
 # run_suite NAME SCRIPT: run one suite, buffering output to $WORK/NAME.out and
 # the outcome to $WORK/NAME.res ("rc secs"). Never fails (safe as a bg job).
+# stdin is /dev/null and the suite is a background job + wait, so the signal
+# trap above stays responsive (a foreground command would defer it).
 run_suite() {
-  local s="$1" script="$2" t0 rc=0
+  local s="$1" script="$2" t0 rc=0 pid
   t0="$(date +%s)"
-  timeout --kill-after="${KILL_GRACE}" "${SUITE_TIMEOUT}" bash "$script" >"${WORK}/${s}.out" 2>&1 || rc=$?
+  timeout --kill-after="${KILL_GRACE}" "${SUITE_TIMEOUT}" bash "$script" </dev/null >"${WORK}/${s}.out" 2>&1 &
+  pid=$!
+  echo "$pid" >"${WORK}/${s}.pid"
+  wait "$pid" || rc=$?
   echo "${rc} $(( $(date +%s) - t0 )) ${t0}" >"${WORK}/${s}.res"
 }
 

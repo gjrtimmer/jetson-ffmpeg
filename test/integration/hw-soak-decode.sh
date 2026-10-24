@@ -51,7 +51,7 @@ rm -f "$stop"
 decode_once() {
   local t0 t1 out cpu_s
   t0=$(date +%s%N)
-  out=$(bash -c 'timeout -k 5 30 ffmpeg -y -hide_banner -loglevel error \
+  out=$(bash -c 'timeout --foreground -k 5 30 ffmpeg -y -hide_banner -loglevel error \
       -c:v h264_nvmpi -i "$0" -f null - 2>&1; times' "${SAMPLE_H264_720P_LONG}" 2>&1) || true
   t1=$(date +%s%N)
   # last line of `times` = children: "<u_min>m<u_s>s <s_min>m<s_s>s"

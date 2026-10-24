@@ -87,7 +87,7 @@ for i in $(seq 1 "$MID_ITER"); do
   # SIGTERM before EOS (timeout rc 124 is the expected outcome). rc 137 means
   # the close path hung until timeout -k SIGKILLed it; a signal death is a crash.
   rc=0
-  timeout -k 5 0.5 ffmpeg -y -hide_banner -i "$SAMPLE_H264_720P_LONG" \
+  timeout --foreground -k 5 0.5 ffmpeg -y -hide_banner -i "$SAMPLE_H264_720P_LONG" \
     -c:v h264_nvmpi -f null - >/dev/null 2>&1 || rc=$?
   if [ "$rc" -eq 137 ]; then
     echo "FAIL: close-mid-encode iter ${i}/${MID_ITER}: close hung (needed SIGKILL)."

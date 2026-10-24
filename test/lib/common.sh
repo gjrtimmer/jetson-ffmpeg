@@ -34,8 +34,16 @@ _COMMON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=gen-samples.sh
 . "${_COMMON_DIR}/../gen-samples.sh"
 
+# No terminal on stdin (#136): ffmpeg calls tcsetattr on a tty stdin, and a
+# `timeout` child (own process group, hence a background group) gets SIGTTOU and
+# stops, so every call "hung" when a suite ran from an interactive shell. CI has
+# no tty and never saw it. Suites read no stdin, so drop it for all children.
+exec </dev/null
+
 # Per-call ffmpeg wall-clock timeout (seconds) when -T is not given. A hung
 # call is hard-killed (timeout -k) instead of eating the whole suite budget.
+# Every ffmpeg `timeout` uses --foreground: ffmpeg stays in the suite's process
+# group, so Ctrl-C / a group kill reaches it (no orphaned V4L2 users).
 FF_TIMEOUT="${FF_TIMEOUT:-60}"
 FF_KILL_GRACE=5
 
@@ -61,7 +69,7 @@ run_ff() {
   local attempt
   for attempt in 1 2; do
     FF_RC=0
-    FF_OUT=$(timeout -k "$FF_KILL_GRACE" "$secs" ffmpeg -y -hide_banner "$@" 2>&1) || FF_RC=$?
+    FF_OUT=$(timeout --foreground -k "$FF_KILL_GRACE" "$secs" ffmpeg -y -hide_banner "$@" 2>&1) || FF_RC=$?
     # 137 = hard-killed after a timeout (hang): do not retry, that would double the wait.
     [ "$FF_RC" -eq 137 ] && break
     is_signal_rc "$FF_RC" || break
