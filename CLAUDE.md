@@ -28,7 +28,7 @@ deliberately no `test` alias (it would shadow the shell builtin).
 
 ```bash
 # libnvmpi comes from a jetson-nvmpi release: libnvmpi1 deb, or a tarball prefix
-./scripts/fetch-nvmpi.sh --version 4.6.5 --dest ~/nvmpi   # public GitHub release, no token; --source gitlab needs GITLAB_TOKEN
+./scripts/fetch-nvmpi.sh --version 4.7.0 --dest ~/nvmpi   # public GitHub release, no token; --source gitlab needs GITLAB_TOKEN
 # Patch + build a full FFmpeg <ver> with nvmpi (alias: build)
 ./scripts/build.sh --ffmpeg 7.1 [--nvmpi-prefix ~/nvmpi] [--install]
 
@@ -607,12 +607,11 @@ default for all sessions in this repo — do not wait for the user to request it
   MRs are merged fast-forward (`merge_method=ff`): rebase the MR branch when
   main moved (`glab mr rebase <iid>`, server-side; never a local rebase plus
   force-push), then wait for its new head pipeline and re-arm auto-merge.
-- **`NVMPI_VERSION` policy.** Bump it only for jetson-nvmpi releases that change
-  libnvmpi itself (`src/`, packaging); mock/test/docs-only releases are not
-  followed.
+- **`NVMPI_VERSION` policy.** Always adopt the latest jetson-nvmpi release,
+  whatever it changed (libnvmpi, mock, tests or docs): newest is preferred.
   At the start of jetson-ffmpeg work, compare `NVMPI_VERSION` with the latest
-  jetson-nvmpi release; if newer releases touch `src/` or packaging, propose
-  the bump (own issue + MR) unasked (4.6.5 was only caught when the user asked).
+  jetson-nvmpi release; if a newer one exists, do the bump (`/bump-nvmpi`, own
+  issue + MR, or folded into the MR that needs it) unasked.
 - **Pre-tag gate = full-tier pipeline green on the tag's SHA.** Before
   tagging, confirm the latest weekly run (or a web run with `HW_TIER=full`) on
   that exact `main` SHA is `success`; if none exists, start one and wait. A
