@@ -26,7 +26,7 @@ Invoke: **`/retro`** or **`/retro <session-id-prefix>`** (target one session).
 
 ## Skill Version
 
-<!-- retro:version:27 -->
+<!-- retro:version:28 -->
 Track version here. Each self-improvement pass increments this counter and
 logs what changed in the commit message.
 
@@ -91,6 +91,7 @@ messages matching correction/feedback patterns. The script must:
 | `workaround_before_fix` | retry logic instead of actual fix, analyse before timing | Added test-level workaround (retry/sleep/delay) instead of investigating root cause code defect |
 | `positive_signal` | yes exactly, perfect, good, correct, nice | Approach was validated — preserve what worked |
 | `preference_signal` | might be better, prefer to, should we, what if we, let's try | User suggesting an improvement or expressing a preference — validated when assistant agrees |
+| `clarity_question` | is !N on repo X, did we lose, which repo | User question caused by unclear reporting (repo not named, gap described vaguely) — fix the reporting rule |
 | `frustration` | idiot, moron, stupid, wtf, ffs, profanity | Strong negative signal — the preceding action was seriously wrong; always pair with another category from context |
 
 5. For each correction, also extract the **preceding assistant message** (the
@@ -105,6 +106,8 @@ Also scan for assistant-side signals:
   tool results containing error strings).
 - Repeated tool calls (same tool + same args within 3 turns = thrashing).
 - Tasks that took >10 turns to complete (potential inefficiency).
+- Subagent claims of external writes (issue comments, MRs, pushes) that a
+  later check found missing: a verification gap, not a one-off.
 - Self-reported rule slips: assistant messages admitting a rule break ("I broke
   a rule", "rule slip", "should have used") — these never show up as user
   corrections but are real violations.
@@ -411,6 +414,10 @@ const PATTERNS = {
     /\broot cause\b.*\bnot\b.*\bworkaround\b/i,
     /\bfix\b.*\bnot\b.*\b(retry|sleep|mask)\b/i,
     /\bactual\s+(fix|cause|bug)\b/i
+  ],
+  clarity_question: [
+    /\bis\s+(MR\s*)?!?\d+\s+(on|in|for)\b/i, /\bdid we (lose|loose)\b/i,
+    /\bwhich repo\b/i
   ],
   frustration: [
     /\bidiot\b/i, /\bmoron\b/i, /\bstupid\b/i, /\bdumb\b/i,

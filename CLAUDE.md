@@ -611,6 +611,9 @@ default for all sessions in this repo — do not wait for the user to request it
 - **`NVMPI_VERSION` policy.** Bump it only for jetson-nvmpi releases that change
   libnvmpi itself (`src/`, packaging); mock/test/docs-only releases are not
   followed.
+  At the start of jetson-ffmpeg work, compare `NVMPI_VERSION` with the latest
+  jetson-nvmpi release; if newer releases touch `src/` or packaging, propose
+  the bump (own issue + MR) unasked (4.6.5 was only caught when the user asked).
 - **Pre-tag gate = full-tier pipeline green on the tag's SHA.** Before
   tagging, confirm the latest weekly run (or a web run with `HW_TIER=full`) on
   that exact `main` SHA is `success`; if none exists, start one and wait. A
@@ -697,6 +700,8 @@ default for all sessions in this repo — do not wait for the user to request it
   push, invoke `/retro` first to capture this session's lessons and improve the
   rules/skills, THEN push. The pre-push gate order is: smoke-all green →
   `/retro` → push.
+  Exception: a session shipping several MRs back to back (one batch the user
+  ordered) may run `/retro` once after the batch lands, not before each push.
 - **Verify current branch before file edits.** Run `git branch --show-current`
   before any Write/Edit to a tracked file. Wrong-branch edits are expensive to
   undo and may corrupt an in-progress release or MR. **Multi-session risk:**
