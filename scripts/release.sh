@@ -27,15 +27,7 @@ echo "=== releasing ${TAG} (version ${VERSION}) ==="
 
 # --- 1. changelog --------------------------------------------------------
 # git-cliff needs full history + tags; the CI job fetches them (GIT_DEPTH: 0).
-echo "[i] generating changelog with git-cliff"
-git-cliff --config cliff.toml --latest --strip header -o NOTES.md || {
-    echo "[!] git-cliff failed; falling back to raw git log"
-    PREV_TAG="$(git describe --tags --abbrev=0 "${TAG}^" 2>/dev/null || true)"
-    { echo "## ${VERSION}"; echo;
-      if [ -n "${PREV_TAG}" ]; then git log --pretty='- %s' "${PREV_TAG}..${TAG}";
-      else git log --pretty='- %s' "${TAG}"; fi; } > NOTES.md
-}
-echo "----- NOTES.md -----"; cat NOTES.md; echo "--------------------"
+bash "${SCRIPT_DIR}/changelog.sh"
 
 # --- 2. upload archives + changelog to S3 (MinIO) -----------------------
 shopt -s nullglob

@@ -22,8 +22,9 @@
 #     dist    - build ffmpeg per version in a plain container and bundle the
 #               released libnvmpi package (the same NVMPI_VERSION the release
 #               gate tested; FFmpeg only dlopens libnvmpi, no tegra libs needed)
-#     release - changelog (git-cliff) -> GitLab Release with package assets,
-#               and mirror to GitHub (if GITHUB_REPO/GITHUB_TOKEN are set)
+#     release - changelog (git-cliff) -> S3 + GitLab Release with package assets
+#               (release:github is a separate, independent job: GitHub Release
+#               with the same archives + CHANGELOG.md, via GITHUB_TOKEN)
 #
 # Runner tag convention:
 #   only test needs real hardware ("jetson" + "<variant>"); build/dist
@@ -42,7 +43,7 @@
 #      full-tier carrier of its wrapper path, use .hw-full for it instead and
 #      demote the previous carrier to a fast job + .hw-full-twin twin
 #   3. Add release:test:ffmpeg-<ver> (extends test:hw-full:ffmpeg-<ver> and
-#      .release-gate-job) and list it in release: needs
+#      .release-gate-job) and list it in the release and release:github needs
 #   HW_SUITES_EXCLUDE and MOCK_SUITES (test/hw-all.sh) stay untouched.
 
 stages:
@@ -652,7 +653,7 @@ test:hw-full:ffmpeg-9.0:                         # path B
 # release `needs` ALL of these jobs, so one red hardware run means no S3 upload
 # and no release. dist:* run in parallel (they only build tarballs).
 # Non-tag pipelines never create these jobs.
-# New FFmpeg version: add its release:test job here and to the release job's needs.
+# New FFmpeg version: add its release:test job here and to the needs of release and release:github.
 # ---------------------------------------------------------------------------
 .release-gate-job:
   stage: release-test
@@ -818,3 +819,40 @@ release:
   script:
     - git fetch --tags --force || true
     - bash ./scripts/release.sh
+
+# ---------------------------------------------------------------------------
+# release:github — GitHub Release + assets (per-version archives, CHANGELOG.md).
+# Tag pipelines only, independent of `release` (one failing does not block the
+# other). Same gates. Waits for the push mirror to deliver the tag, then calls
+# the GitHub API with GITHUB_TOKEN (masked CI/CD variable, contents:write);
+# GITHUB_REPO (CI/CD variable) overrides the default repo. Creates the release
+# or updates one made by hand. Notes come from scripts/changelog.sh (git-cliff).
+# ---------------------------------------------------------------------------
+release:github:
+  stage: release
+  <<: *only-tag
+  image:
+    name: "${RELEASE_IMAGE}"
+    pull_policy: if-not-present
+  needs:
+    - job: "release:test:ffmpeg-6.0"
+      artifacts: false
+    - job: "release:test:ffmpeg-6.1"
+      artifacts: false
+    - job: "release:test:ffmpeg-7.0"
+      artifacts: false
+    - job: "release:test:ffmpeg-7.1"
+      artifacts: false
+    - job: "release:test:ffmpeg-8.0"
+      artifacts: false
+    - job: "release:test:ffmpeg-8.1"
+      artifacts: false
+    - job: "release:test:ffmpeg-9.0"
+      artifacts: false
+    - job: "dist:jp6"
+    - job: "dist:jp5"
+  variables:
+    GIT_DEPTH: "0"   # full history + tags for git-cliff
+  script:
+    - git fetch --tags --force || true
+    - bash ./scripts/release-github.sh
