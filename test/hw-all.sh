@@ -80,7 +80,7 @@ MOCK_SUITES="smoke decoder-blocking-wait decoder-chunk decoder-codecs
   decoder-pool encoder-gop
   encoder-header encoder-modes encoder-oddsize encoder-pools
   encoder-thread-safety
-  filter-scale-vic format-pixfmt lifecycle-stress rtp-sdp"
+  filter-scale-vic format-pixfmt lifecycle-stress rtp-sdp tty-harness"
 if [ "${NVMPI_MOCK:-0}" = "1" ]; then
   : "${HW_SUITES:=${MOCK_SUITES}}"
   SUITE_TIMEOUT="${HW_SUITE_TIMEOUT:-120}"
