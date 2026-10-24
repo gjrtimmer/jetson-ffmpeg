@@ -57,7 +57,7 @@ test/
 | `encoder/` | NVENC encode paths: lifecycle, GOP, headers, levels, pools, blocking, JPEG, thread safety |
 | `filter/` | VIC hardware scale/CSC filter |
 | `format/` | Pixel format and container support |
-| `integration/` | Cross-subsystem smoke tests, RTP/SDP, soak tests, lifecycle stress (open/close + pthread guard) |
+| `integration/` | Cross-subsystem smoke tests, RTP/SDP, soak tests, lifecycle stress (open/close + pthread guard), terminal/Ctrl-C harness guard (`tty-harness`, no hardware) |
 | `perf/` | Performance benchmarks and latency measurements (non-fatal) |
 
 ## Running
@@ -78,7 +78,10 @@ test/smoke-all.sh -v "6.1 8.0"    # subset
 ```
 
 `JETSON_VARIANT` is a display label for logs/CI matrices — it does not change
-behavior. The dev container exposes the alias `hw-all` (there is deliberately
+behavior. Running from an interactive terminal is supported: suites run with
+stdin on `/dev/null` and Ctrl-C stops `hw-all.sh`, the running suites and their
+ffmpeg processes cleanly (partial logs, exit 130). `integration/hw-tty-harness`
+guards both on the mock. The dev container exposes the alias `hw-all` (there is deliberately
 no `test` alias; it would shadow the shell builtin).
 
 ## How the runner works
@@ -151,7 +154,7 @@ subdirectory.
 
 | Helper | Purpose |
 |--------|---------|
-| `run_ff [-T secs] ARGS` | `ffmpeg -y -hide_banner ARGS` under `timeout -k` (default 60 s, `FF_TIMEOUT`); one retry after a signal-kill (200 ms cooldown); stdout+stderr in `FF_OUT`, rc in `FF_RC` (124/137 = timeout) |
+| `run_ff [-T secs] ARGS` | `ffmpeg -y -hide_banner ARGS` under `timeout --foreground -k` (default 60 s, `FF_TIMEOUT`); one retry after a signal-kill (200 ms cooldown); stdout+stderr in `FF_OUT`, rc in `FF_RC` (124/137 = timeout) |
 | `run_ff_must LABEL [-T secs] ARGS` | `run_ff` plus `FAIL` with the last 15 output lines on timeout, crash or error |
 | `ff_fail MSG` | print `FAIL: MSG` + tail-15 of `FF_OUT`, exit 1 |
 | `assert_frames MIN [label]` | last `frame=` counter in `FF_OUT` must be >= MIN (needs ffmpeg stats, no `-loglevel error`) |
