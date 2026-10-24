@@ -103,11 +103,10 @@ Sequence: `git push origin main -o ci.skip` then `git push origin v<ver>`.
 **Release names must be `vX.Y.Z`.** Both GitLab and GitHub releases use the
 tag name as the display title — never `jetson-ffmpeg X.Y.Z` or any other
 format. The release script (`scripts/release.sh`) passes `--name "v${VERSION}"`
-to `release-cli create`. After a tag pipeline creates the GitLab release,
-manually create the matching GitHub release:
-`gh release create v<ver> -R gjrtimmer/jetson-ffmpeg --title "v<ver>" --generate-notes`.
-The push-mirror syncs tags to GitHub but does NOT create GitHub releases —
-that is a separate step.
+to `release-cli create`. The tag pipeline's `release:github` job
+(`scripts/release-github.sh`) creates (or updates) the matching GitHub release
+with the same name, notes and assets; do not create it by hand. The push-mirror
+only syncs the tag.
 
 **Never put `[ci skip]` or `[skip ci]` in commit messages.** These tokens
 poison every pipeline that includes the commit — branch pipelines AND MR
