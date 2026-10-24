@@ -219,6 +219,13 @@ typedef int       (*fn_nvmpi_surface_alloc)(unsigned int width,
     unsigned int height, int *dmabuf_fd);
 typedef int       (*fn_nvmpi_surface_destroy)(int dmabuf_fd);
 
+/* Capability bits returned by nvmpi_get_caps() (libnvmpi 4.7.0+). Mirrored
+ * from nvmpi.h because FFmpeg builds without the libnvmpi headers. */
+#ifndef NVMPI_CAP_DEC_EOS_DRAIN
+#define NVMPI_CAP_DEC_EOS_DRAIN (1u << 0)  /* zero-size put_packet drains to the last frame */
+#endif
+typedef unsigned int (*fn_nvmpi_get_caps)(void);
+
 /* ------------------------------------------------------------------ */
 /* Static function pointers (one set per translation unit)             */
 /* ------------------------------------------------------------------ */
@@ -228,6 +235,7 @@ static fn_nvmpi_create_decoder           nvmpi_create_decoder_dl;
 static fn_nvmpi_decoder_put_packet       nvmpi_decoder_put_packet_dl;
 static fn_nvmpi_decoder_get_frame        nvmpi_decoder_get_frame_dl;
 static fn_nvmpi_decoder_get_frame2       nvmpi_decoder_get_frame2_dl;  /* NULL when libnvmpi < 4.6.0 */
+static fn_nvmpi_get_caps                 nvmpi_get_caps_dl;            /* NULL when libnvmpi < 4.7.0 */
 static fn_nvmpi_decoder_flush            nvmpi_decoder_flush_dl;
 static fn_nvmpi_decoder_close            nvmpi_decoder_close_dl;
 
@@ -361,6 +369,10 @@ static int nvmpi_dynlink_load(void)
      * output (nvmpi_dec_sw.h, jetson-ffmpeg#137). */
     NVMPI_LOAD_SYM_OPT(nvmpi_decoder_get_frame2_dl, nvmpi_decoder_get_frame2);
 
+    /* Capability bits (4.7.0+): optional; a missing symbol means no optional
+     * capability, e.g. no decoder EOS drain (nvmpi_dec_drain.h). */
+    NVMPI_LOAD_SYM_OPT(nvmpi_get_caps_dl, nvmpi_get_caps);
+
     return 0;
 
 fail:
@@ -394,6 +406,7 @@ static inline int nvmpi_has_jpeg_fd(void)
 #define nvmpi_decoder_put_packet      nvmpi_decoder_put_packet_dl
 #define nvmpi_decoder_get_frame       nvmpi_decoder_get_frame_dl
 #define nvmpi_decoder_get_frame2      nvmpi_decoder_get_frame2_dl
+#define nvmpi_get_caps                nvmpi_get_caps_dl
 #define nvmpi_decoder_flush           nvmpi_decoder_flush_dl
 #define nvmpi_decoder_close           nvmpi_decoder_close_dl
 

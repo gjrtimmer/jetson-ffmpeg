@@ -49,6 +49,7 @@
 #include "nvmpi_dec_drm.h"
 #include "nvmpi_dec_fd2.h"
 #include "nvmpi_dec_sw.h"
+#include "nvmpi_dec_drain.h"
 
 /*
  * libavcodec 63 (FFmpeg 9.0+): pix_fmts moved from the public AVCodec (.p)
@@ -106,6 +107,7 @@ typedef struct {
 	AVFrame *bufFrame;     //pre-allocated frame the next decode copies into
 	AVPacket *pkt;         //input holder for ff_decode_get_packet(); empty between calls
 	int draining;          //ff_decode_get_packet() hit EOF; cleared by flush
+	int eos_sent;          //EOS marker put to libnvmpi (once per stream); cleared by flush
 	/* pkt_dts hints for output frames: FIFO of the dts of every packet put,
 	 * one popped per output frame (see nvmpi_receive_frame). Fixed ring,
 	 * oldest entry overwritten when full (frames libnvmpi dropped). */
@@ -173,6 +175,7 @@ static int nvmpi_init_decoder(AVCodecContext *avctx)
 	if (!nvmpi_context->pkt)
 		return AVERROR(ENOMEM);
 	nvmpi_context->draining = 0;
+	nvmpi_context->eos_sent = 0;
 	nvmpi_context->dts_rd = nvmpi_context->dts_wr = 0;
 
 	param.codingType =nvmpi_get_codingtype(avctx);
@@ -493,9 +496,9 @@ static int nvmpi_dec_put_pkt(AVCodecContext *avctx)
 	int size = pkt->size;
 	int res;
 
-	/* An empty payload is libnvmpi's EOS marker, which stops its capture
-	 * loop at once (in-flight frames lost). Never forward one: draining
-	 * is done by the bounded blocking get in nvmpi_receive_frame. */
+	/* An empty payload is libnvmpi's EOS marker. Input packets never
+	 * forward one: the marker is sent once, at end of input, by
+	 * nvmpi_dec_send_eos(). */
 	if (!size) {
 		av_packet_unref(pkt);
 		return 0;
@@ -526,13 +529,50 @@ static int nvmpi_dec_put_pkt(AVCodecContext *avctx)
 	return 0;
 }
 
+/* Put the EOS marker (zero-size packet) to libnvmpi, once per stream, when
+ * the input is exhausted. The decoder then flushes the frames it holds for
+ * reordering instead of keeping them (jetson-ffmpeg#149). Called only from
+ * the draining branch of nvmpi_receive_frame_core, i.e. after the filled
+ * queue was drained non-blocking, so the put cannot be back-pressured by
+ * frames this thread has yet to collect (same ordering as #132). Only with
+ * a libnvmpi that keeps draining after the marker (nvmpi_has_dec_eos_drain);
+ * older ones stop capture on it and lose the tail.
+ * Returns 1 when the marker was sent (blocking gets until LAST follow), 0
+ * when not sent (legacy bounded get). A failed put is logged and treated
+ * as not sent; eos_sent stays set so it is never retried. */
+static int nvmpi_dec_send_eos(AVCodecContext *avctx)
+{
+	nvmpiDecodeContext *nvmpi_context = avctx->priv_data;
+	nvPacket packet = {0};   /* payload_size 0, payload NULL: the EOS marker */
+	int res;
+
+	if (nvmpi_context->eos_sent)
+		return nvmpi_context->eos_sent > 0;
+	if (!nvmpi_has_dec_eos_drain()) {
+		nvmpi_context->eos_sent = -1;   /* legacy: decided once, nothing sent */
+		return 0;
+	}
+	packet.pts = NVMPI_DEC_NOPTS_US;
+	res = nvmpi_decoder_put_packet(nvmpi_context->ctx, &packet);
+	if (res < 0) {
+		av_log(avctx, AV_LOG_WARNING,
+		       "EOS marker rejected by libnvmpi (code=%d); tail frames may be lost.\n", res);
+		nvmpi_context->eos_sent = -1;
+		return 0;
+	}
+	nvmpi_context->eos_sent = 1;
+	return 1;
+}
+
 //Core of the receive_frame callback (FF_CODEC_RECEIVE_FRAME_CB,
 //libavcodec 60-63), wrapped by nvmpi_receive_frame below:
 //the decoder pulls its own input with ff_decode_get_packet(), which also
 //runs the codec's bsfs (h264/hevc mp4toannexb). Order per iteration:
 //  1. return a ready frame if there is one (non-blocking get);
-//  2. at end of input, wait (bounded) for frames still in the hw pipeline,
-//     then report AVERROR_EOF;
+//  2. at end of input put the EOS marker (once) and wait for frames still in
+//     the hw pipeline, then report AVERROR_EOF. With a libnvmpi that drains
+//     after EOS every call is one blocking get until its end of stream (-1);
+//     older libnvmpi keeps the bounded get without a marker;
 //  3. otherwise take the next packet (AVERROR(EAGAIN) = feed me) and put it.
 //Draining before every put keeps libnvmpi's filled-frame queue from
 //building up lag. The old decode callback (one packet in, at most one
@@ -550,10 +590,13 @@ static int nvmpi_receive_frame_core(AVCodecContext *avctx, AVFrame *frame)
 			return ret;   //got a frame (0) or an error (<0)
 
 		if (nvmpi_context->draining) {
-			//Input exhausted: frames may still be in the hw pipeline. Wait
-			//for each with libnvmpi's bounded timeout; a timeout ends the
+			//Input exhausted: frames may still be in the hw pipeline. Send
+			//the EOS marker once (gated, see nvmpi_dec_send_eos), then wait
+			//for each frame with libnvmpi's blocking get; -1 (end of stream
+			//after LAST, or the bounded timeout on older libnvmpi) ends the
 			//stream. libavcodec stops calling after AVERROR_EOF until
-			//flush, which clears draining.
+			//flush, which clears draining and eos_sent.
+			nvmpi_dec_send_eos(avctx);
 			ret = nvmpi_dec_output_frame(avctx, frame, 1);
 			return (ret == 1) ? AVERROR_EOF : ret;
 		}
