@@ -624,10 +624,11 @@ default for all sessions in this repo — do not wait for the user to request it
 - **The Orin runner is shared with jetson-nvmpi.** `resource_group` only
   serializes within one project, so jetson-nvmpi `test:api` jobs and
   jetson-ffmpeg hw jobs can run on the Orin concurrently and hang the Tegra
-  V4L2 driver (pipeline 56911, 8.1 jobs stuck in decoder-teardown). A
-  runner-level limit (`limit = 1` / `concurrent = 1`) is needed; until then
-  check for other running Orin jobs before starting hw work and retry a
-  hung job only once the runner is idle. When your own Orin run ends (pass or
+  V4L2 driver (pipeline 56911, 8.1 jobs stuck in decoder-teardown). The
+  runner now has `limit = 1` (#120), so CI jobs from both projects queue
+  instead of overlapping. Local hw runs on the Orin bypass that limit: check
+  for running Orin jobs before starting local hw work, and retry a hung job
+  only once the runner is idle. When your own Orin run ends (pass or
   fail), message the other session "Orin clear" at once and say what you need
   next; never leave the Orin idle unannounced.
 - **Coordinate before pushing to main or opening an MR.** First check open
