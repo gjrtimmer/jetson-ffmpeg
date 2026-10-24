@@ -337,7 +337,7 @@ commands: [
 
 - [ ] GitLab release exists with correct tag and assets
 - [ ] GitHub mirror has the tag (auto-synced)
-- [ ] GitHub release exists (if the pipeline creates it)
+- [ ] GitHub release `vX.Y.Z` exists with the archives + CHANGELOG.md (created by the `release:github` job; never by hand)
 - [ ] CHANGELOG.md on main matches the release notes
 
 Report final status to user.
@@ -354,7 +354,7 @@ If anything fails after the tag is pushed:
 4. Cancel pipeline if running.
 5. Report what went wrong.
 
-GitLab auto-mirrors tag deletions to GitHub — no separate GitHub cleanup needed.
+GitLab auto-mirrors tag deletions to GitHub. A GitHub release already created by `release:github` is not removed by that: delete it too (`gh release delete vX.Y.Z -R gjrtimmer/jetson-ffmpeg`).
 
 The release commit on main can stay (it's just a changelog update). Fix the
 underlying issue, then re-run the skill.
