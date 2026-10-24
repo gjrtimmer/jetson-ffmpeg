@@ -458,7 +458,7 @@ cause, ≤3 files, mechanical fix), keep it as one issue and say so.
 
 ## Interacting with GitLab and GitHub
 
-Use the official CLIs — **`glab`** for GitLab (`gitlab.timmertech.nl`) and **`gh`**
+Use the official CLIs — **`glab`** for GitLab (the self-hosted instance) and **`gh`**
 for GitHub — for all remote operations (pipelines, releases, tags, variables,
 issues, API calls). Prefer them over raw `curl`/REST. The project's GitLab repo
 auto-syncs (push-mirrors) tags/branches to the GitHub mirror, so a tag deleted on
@@ -729,7 +729,7 @@ default for all sessions in this repo — do not wait for the user to request it
 - **Test code must run on the oldest supported userland.** JetPack 5 is
   Ubuntu 20.04: Python 3.8, coreutils 8.30, ffmpeg 4.2 tools. CI and dev
   hosts are newer and miss it. Check new test helpers in `ubuntu:20.04`
-  (arm64 on node8, or Docker locally). #148: `os.waitstatus_to_exitcode`
+  (arm64 on the Orin runner host, or Docker locally). #148: `os.waitstatus_to_exitcode`
   (3.9+) broke `hw-tty-harness` on JP5.
 - **Watcher scripts: no self-matching `pgrep`.** Never `pgrep -f <name>` from a
   `bash -c` whose command line contains that name (self-match, infinite wait);
