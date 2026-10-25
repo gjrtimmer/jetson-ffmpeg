@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Run scripts/release-github.sh against a local fake GitHub API (python stub).
 # Never talks to real GitHub. Covers: create, re-run (update + asset replace),
-# and a pre-existing release (the hand-made case). No hardware needed.
+# a pre-existing release (the hand-made case), a URL-form GITHUB_REPO and the
+# GitLab push-mirror trigger (called with a token, skipped without). No hardware needed.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -41,14 +42,22 @@ class H(BaseHTTPRequestHandler):
     def do_GET(self):
         global have
         self.auth(); p = self.path
-        if "/git/ref/tags/" in p: return self.send(200, {"object": {"type": "commit", "sha": sha}})
+        if "/git/ref/tags/" in p:
+            assert "/repos/o/r/" in p, p  # repo normalised to owner/repo
+            return self.send(200, {"object": {"type": "commit", "sha": sha}})
         if p.endswith("/releases/tags/v9.9.9"): return self.send(200, {"id": 1}) if have else self.send(404, {"message": "Not Found"})
         if "/releases/1/assets" in p:
             return self.send(200, [{"id": i, "name": n} for i, n in rel["assets"].items()])
+        if p.endswith("/projects/7/remote_mirrors"):
+            if self.headers.get("PRIVATE-TOKEN") != "fake-mirror-token": return self.send(401, {})
+            return self.send(200, [{"id": 5, "url": "https://*****:*****@example.invalid/x.git"},
+                                   {"id": 6, "url": "https://*****:*****@github.com/o/r.git"}])
         self.send(404, {"message": "unhandled " + p})
     def do_POST(self):
         global have
         self.auth(); b = self.body(); p = self.path
+        if p.endswith("/projects/7/remote_mirrors/6/sync"):
+            open(state_file, "a").write("mirror-sync\n"); return self.send(204)
         if p.endswith("/releases"):
             d = json.loads(b); assert d["name"] == "v9.9.9" and d["body"], d
             have = True; open(state_file, "a").write("create\n"); return self.send(201, {"id": 1})
@@ -69,7 +78,7 @@ open(sys.argv[1], "w").write(str(srv.server_port))
 srv.serve_forever()
 PY
 
-run_case() { # <precreated 0|1> <runs>
+run_case() { # <precreated 0|1> <runs> [GITHUB_REPO value] [mirror token]
     : > "${WORK}/state"; : > "${WORK}/tokens"; rm -f "${WORK}/port"
     python3 -I "${WORK}/stub.py" "${WORK}/port" "${SHA}" "${WORK}/state" "${WORK}/tokens" "$1" &
     SRV_PID=$!
@@ -78,12 +87,12 @@ run_case() { # <precreated 0|1> <runs>
     url="http://127.0.0.1:$(cat "${WORK}/port")"
     for i in $(seq "$2"); do
         CI_COMMIT_TAG=v9.9.9 CI_COMMIT_SHA="${SHA}" GITHUB_TOKEN=fake-token-value \
-            GITHUB_REPO=o/r GITHUB_API="${url}" GITHUB_UPLOADS="${url}" \
+            GITHUB_REPO="${3:-o/r}" GITLAB_MIRROR_TOKEN="${4:-}" CI_API_V4_URL="${url}/api/v4" CI_PROJECT_ID=7 GITHUB_API="${url}" GITHUB_UPLOADS="${url}" \
             MIRROR_WAIT_TIMEOUT=5 MIRROR_POLL_INTERVAL=1 \
             bash scripts/release-github.sh > "${WORK}/out" 2>&1 || { cat "${WORK}/out"; echo "FAIL: run ${i}"; exit 1; }
     done
     kill "${SRV_PID}"; SRV_PID=""
-    if grep -q fake-token-value "${WORK}/out"; then echo "FAIL: token in log"; exit 1; fi
+    if grep -q 'fake-token-value\|fake-mirror-token' "${WORK}/out"; then echo "FAIL: token in log"; exit 1; fi
     grep -qx "Bearer fake-token-value" "${WORK}/tokens" || { echo "FAIL: token header missing"; exit 1; }
 }
 expect() { grep -qx "$1" "${WORK}/state" || { echo "FAIL: expected '$1'"; cat "${WORK}/state"; exit 1; }; }
@@ -98,3 +107,11 @@ run_case 1 1   # release made by hand: updated, never created
 expect patch
 if grep -qx create "${WORK}/state"; then echo "FAIL: created over existing release"; exit 1; fi
 echo "release-github fake API: OK"
+
+run_case 0 1 https://github.com/o/r.git fake-mirror-token   # URL repo + mirror trigger
+expect create; expect mirror-sync
+run_case 0 1 git@github.com:o/r.git                         # scp-style repo, no token: no trigger
+expect create
+if grep -qx mirror-sync "${WORK}/state"; then echo "FAIL: mirror triggered without token"; exit 1; fi
+grep -q 'GITLAB_MIRROR_TOKEN unset' "${WORK}/out" || { echo "FAIL: missing skip note"; exit 1; }
+echo "release-github URL repo + mirror trigger: OK"

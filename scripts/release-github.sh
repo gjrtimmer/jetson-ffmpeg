@@ -8,10 +8,17 @@
 # Required (CI/CD variables; missing = hard failure):
 #   CI_COMMIT_TAG, CI_COMMIT_SHA, GITHUB_TOKEN (masked CI/CD variable, contents:write)
 # Optional:
-#   GITHUB_REPO          owner/repo (default gjrtimmer/jetson-ffmpeg; CI/CD variable overrides)
+#   GITHUB_REPO          owner/repo or a URL (https://github.com/owner/repo[.git],
+#                        git@github.com:owner/repo.git); normalised to owner/repo
+#                        (default gjrtimmer/jetson-ffmpeg; CI/CD variable overrides)
 #   GITHUB_API           API base (default https://api.github.com)
 #   GITHUB_UPLOADS       upload base (default https://uploads.github.com)
-#   MIRROR_WAIT_TIMEOUT  seconds to wait for the mirrored tag (default 600)
+#   MIRROR_WAIT_TIMEOUT  seconds to wait for the mirrored tag (default 1800)
+#   GITLAB_MIRROR_TOKEN  masked CI/CD variable: personal/project access token (api scope,
+#                        Maintainer) used to trigger the GitLab push mirror before waiting.
+#                        CI_JOB_TOKEN cannot call the remote_mirrors API. Unset = no trigger,
+#                        the job only waits for the scheduled mirror run.
+#   CI_API_V4_URL, CI_PROJECT_ID  GitLab API base and project (predefined in CI)
 #   MIRROR_POLL_INTERVAL seconds between polls (default 20)
 # Inputs:
 #   dist/*.tar.gz              per-version archives from the dist jobs
@@ -33,9 +40,16 @@ COMMIT_SHA="${CI_COMMIT_SHA:?CI_COMMIT_SHA is required}"
 : "${GITHUB_TOKEN:?GITHUB_TOKEN is required}"
 VERSION="${TAG#v}"
 GITHUB_REPO="${GITHUB_REPO:-gjrtimmer/jetson-ffmpeg}"
+# Accept owner/repo or a URL: strip scheme+host (`*://*/`), scp-style host
+# (`git@host:`), a trailing slash and `.git`. The CI variable once held the
+# full URL, which made every API path 404.
+GITHUB_REPO="${GITHUB_REPO#*://*/}"
+GITHUB_REPO="${GITHUB_REPO#*@*:}"
+GITHUB_REPO="${GITHUB_REPO%/}"
+GITHUB_REPO="${GITHUB_REPO%.git}"
 GITHUB_API="${GITHUB_API:-https://api.github.com}"
 GITHUB_UPLOADS="${GITHUB_UPLOADS:-https://uploads.github.com}"
-MIRROR_WAIT_TIMEOUT="${MIRROR_WAIT_TIMEOUT:-600}"
+MIRROR_WAIT_TIMEOUT="${MIRROR_WAIT_TIMEOUT:-1800}"
 MIRROR_POLL_INTERVAL="${MIRROR_POLL_INTERVAL:-20}"
 DIST="${REPO_ROOT}/dist"
 
@@ -61,6 +75,44 @@ fail_http() {
     msg="$(jq -r '.message // empty' "${BODY_FILE}" 2>/dev/null || true)"
     echo "[E] ${1}: HTTP ${2} ${msg}" >&2
     exit 1
+}
+
+# gl_curl <curl args...>: GitLab API request, same stdin-config rule as gh_curl.
+gl_curl() {
+    curl --silent --show-error --config - --output "${BODY_FILE}" \
+         --write-out '%{http_code}' "$@" <<CFG
+header = "PRIVATE-TOKEN: ${GITLAB_MIRROR_TOKEN}"
+CFG
+}
+
+# --- 0. kick the GitLab push mirror so the tag does not wait for its schedule
+# Best effort: a failure here is only a warning, the wait below still runs.
+trigger_mirror() {
+    local api="${CI_API_V4_URL:-}" pid="${CI_PROJECT_ID:-}" code mid
+    if [ -z "${GITLAB_MIRROR_TOKEN:-}" ]; then
+        echo "[i] GITLAB_MIRROR_TOKEN unset - not triggering the push mirror"
+        return 0
+    fi
+    if [ -z "${api}" ] || [ -z "${pid}" ]; then
+        echo "[w] CI_API_V4_URL/CI_PROJECT_ID unset - not triggering the push mirror" >&2
+        return 0
+    fi
+    code="$(gl_curl "${api}/projects/${pid}/remote_mirrors")"
+    if [ "${code}" != "200" ]; then
+        echo "[w] listing push mirrors: HTTP ${code} - not triggering" >&2
+        return 0
+    fi
+    mid="$(jq -r '[.[] | select(.url | test("@?github\\.com[/:]")) | .id][0] // empty' "${BODY_FILE}")"
+    if [ -z "${mid}" ]; then
+        echo "[w] no github.com push mirror found - not triggering" >&2
+        return 0
+    fi
+    code="$(gl_curl --request POST "${api}/projects/${pid}/remote_mirrors/${mid}/sync")"
+    if [ "${code}" = "204" ]; then
+        echo "[i] triggered push mirror ${mid}"
+    else
+        echo "[w] push mirror sync: HTTP ${code} - waiting for the scheduled run" >&2
+    fi
 }
 
 # --- 1. wait for the mirrored tag, verify it points at this commit --------
@@ -177,6 +229,7 @@ main() {
     local files=( "${DIST}"/*.tar.gz )
     if [ ${#files[@]} -eq 0 ]; then echo "[E] no archives in ${DIST}" >&2; exit 1; fi
 
+    trigger_mirror
     wait_for_tag
     local id f
     id="$(ensure_release)"
