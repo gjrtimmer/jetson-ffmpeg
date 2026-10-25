@@ -182,6 +182,19 @@ gen-sample-h264-still() {
     -c:v libx264 -g 15 -bf 0 -f h264 "$1"
 }
 
+# Raw Annex B H.264 whose VUI signals the colour range (jetson-ffmpeg#152).
+# RANGE is pc (full, video_full_range_flag=1) or tv (limited). x264 writes no
+# range VUI for limited streams, so a tv clip carries no range information.
+#   gen-sample-h264-range FILE pc|tv SECONDS
+gen-sample-h264-range() {
+  local full=off
+  [ "$2" = pc ] && full=on
+  ffmpeg -y -hide_banner -loglevel error \
+    -f lavfi -i "testsrc2=s=640x360:r=30" -t "$3" -pix_fmt yuv420p \
+    -color_range "$2" -c:v libx264 -x264-params "fullrange=${full}" \
+    -g 15 -bf 0 -f h264 "$1"
+}
+
 # Raw MJPEG stream whose image size GROWS mid-stream: 1 s of 640x360, then
 # 1 s of 1280x720 (still pictures), concatenated JPEGs (demux with -f mjpeg).
 # The parts are kept as FILE-a.mkv / FILE-b.mkv for per-part checks

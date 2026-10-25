@@ -21,6 +21,7 @@ test/
 │   ├── hw-decoder-blocking-wait.sh
 │   ├── hw-decoder-chunk.sh
 │   ├── hw-decoder-codecs.sh
+│   ├── hw-decoder-colorrange.sh       # stream colour range on DRM_PRIME (fd2) frames
 │   ├── hw-decoder-downscale.sh
 │   ├── hw-decoder-drmprime-planes.sh  # video DRM_PRIME plane offsets (libnvmpi fd2), res change
 │   ├── hw-decoder-eos-count.sh        # EOS tail: nvmpi frame count == software count, H.264/HEVC with B-frames (#149)
