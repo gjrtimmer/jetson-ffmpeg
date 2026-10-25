@@ -1,5 +1,20 @@
 # Changelog
 
+## 4.0.4 - 2026-10-25
+Bundles jetson-nvmpi 4.10.3: decoder flush no longer deadlocks after the first
+resolution event, decoder output keeps the stream colorimetry and is bit-exact with a
+software decode, JPEG encode from DMA-BUF surfaces, and the codec capability query.
+The tag pipeline's GitHub release job now accepts a URL-form GITHUB_REPO, can trigger
+the push mirror and waits longer for the mirrored tag (#151).
+
+### Build
+
+
+**ci**
+
+
+- Bump NVMPI_VERSION to 4.10.3
+
 ## 4.0.3 - 2026-10-25
 Decoders no longer drop the last frames at end of stream: with jetson-nvmpi 4.7.0
 (bundled) the FFmpeg layer sends EOS and drains the reorder tail, so `*_nvmpi`
