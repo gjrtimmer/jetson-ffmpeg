@@ -237,21 +237,30 @@ jetson-nvmpi release before tagging.
 (a current-version example differs from `NVMPI_VERSION`), stop the release and
 fix via `/bump-nvmpi` step 4 first.
 
-### 4b. Regenerate CHANGELOG.md
+### 4b. Prepend the new CHANGELOG.md section
+
+Never regenerate the whole file: a full `git-cliff -o CHANGELOG.md` wipes the
+hand-written per-version summary paragraphs (e.g. under 4.0.2). Prepend only:
 
 ```bash
-git-cliff --config cliff.toml --tag vX.Y.Z -o CHANGELOG.md
+PREV=$(git describe --tags --abbrev=0)   # vPREV
+git-cliff --config cliff.toml --tag vX.Y.Z "${PREV}..HEAD" --strip header > /tmp/section.md
 ```
+
+Insert `/tmp/section.md` into CHANGELOG.md directly above the previous version
+heading (below `# Changelog`), then add a one-paragraph hand-written summary
+under the new `## X.Y.Z - <date>` heading, in the style of the existing ones.
+Leave every older section untouched.
 
 If `git-cliff` is not available, fall back:
 ```bash
-git log --pretty='- %s' $(git describe --tags --abbrev=0)..HEAD > /tmp/notes.md
+git log --pretty='- %s' "${PREV}..HEAD" > /tmp/section.md
 ```
-Then manually prepend to CHANGELOG.md with proper header.
+and write the heading and summary by hand.
 
 ### 4c. Review changes
 
-Show diff of CHANGELOG.md. If user is connected, get
+Show diff of CHANGELOG.md (additions only). If user is connected, get
 confirmation. If autonomous (walk-away mode), proceed — the version was
 specified upfront.
 
@@ -299,7 +308,7 @@ The tag push triggers the release pipeline (`dist` + `release` stages).
 ## Phase 6: Monitor Release Pipeline
 
 The tag pipeline builds each FFmpeg version, bundles the released libnvmpi, uploads archives
-to S3 and GitLab Package Registry, creates the GitLab Release.
+to S3 and GitLab Package Registry, creates the GitLab Release and, via `release:github`, the GitHub release. That job triggers the push mirror (when `GITLAB_MIRROR_TOKEN` is set) and waits up to 30 min for the tag to arrive on GitHub; a lagging mirror is not a failed release.
 
 ### 6a. Get pipeline ID
 
@@ -373,7 +382,7 @@ Create on invocation:
 6. Validate release scope — list commits since last tag
 7. Confirm `NVMPI_VERSION` (bundled libnvmpi release) and run the `/bump-nvmpi`
    step 6 sync check; any output stops the release
-8. Regenerate CHANGELOG.md with git-cliff
+8. Prepend the new CHANGELOG.md section (git-cliff `vPREV..HEAD --strip header` + hand summary)
 9. Commit: `docs: update CHANGELOG for vX.Y.Z release`
 10. Push main with `-o ci.skip`
 11. Create annotated tag `vX.Y.Z`, push tag
