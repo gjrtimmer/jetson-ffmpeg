@@ -68,7 +68,23 @@ typedef struct {
     size_t size;                  /* total bytes behind fd */
     int width, height;
     int64_t pts;
+    enum AVColorRange color_range; /* copied to frame->color_range */
 } NvmpiDRMFrameInfo;
+
+/* Map nvmpi_fd_frame.flags to an AVColorRange. NVMPI_FD_FRAME_FULL_RANGE is
+ * the only range information libnvmpi gives: a set bit always means full
+ * range. A clear bit means limited only when the producer is known to set the
+ * bit for every stream (JPEG decoder; libnvmpi >= 4.10.1 video decoder). The
+ * video decoder of older libraries never set it and libnvmpi exposes no
+ * capability bit for it, so there a clear bit stays UNSPECIFIED instead of
+ * claiming limited range for a full-range stream. */
+static inline enum AVColorRange nvmpi_fd_color_range(uint32_t flags,
+                                                     int limited_known)
+{
+    if (flags & NVMPI_FD_FRAME_FULL_RANGE)
+        return AVCOL_RANGE_JPEG;
+    return limited_known ? AVCOL_RANGE_MPEG : AVCOL_RANGE_UNSPECIFIED;
+}
 
 /* AVBufferRef free callback for DRM_PRIME frames. Runs when FFmpeg drops
  * the last reference to frame->buf[0]. The ORDER is part of the contract
@@ -167,6 +183,7 @@ static inline int nvmpi_drm_wrap_frame(AVFrame *frame, const NvmpiDRMFrameInfo *
     frame->height  = in->height;
     frame->pts     = in->pts;
     frame->pkt_dts = AV_NOPTS_VALUE;
+    frame->color_range = in->color_range;
 
     if (hw_frames_ctx) {
         frame->hw_frames_ctx = av_buffer_ref(hw_frames_ctx);

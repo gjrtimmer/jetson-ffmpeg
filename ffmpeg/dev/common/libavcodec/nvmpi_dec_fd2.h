@@ -141,6 +141,11 @@ static inline int nvmpi_dec_get_drm_info(AVCodecContext *avctx, nvmpictx *ctx,
         info->width        = (int)fdf.width;
         info->height       = (int)fdf.height;
         info->pts          = fdf.timestamp;
+        /* flags is inside the V1 layout, so it is filled whenever fd2 exists.
+         * Limited range is not asserted: see nvmpi_fd_color_range(). The
+         * stream's colorspace is not exposed by libnvmpi, so it is left
+         * unspecified. */
+        info->color_range  = nvmpi_fd_color_range(fdf.flags, 0);
         return 0;
     } else {
         /* Legacy path (libnvmpi < 4.3.0): one pitch only, so the chroma

@@ -190,8 +190,7 @@ static inline int nvmpi_decode_mjpeg_fd(AVCodecContext *avctx, AVFrame *frame,
 
     /* Range from the library flag (bit0 = full); applied per frame and to
      * avctx (init already defaulted avctx to JPEG/full). */
-    frame->color_range = (fdf.flags & NVMPI_FD_FRAME_FULL_RANGE)
-                         ? AVCOL_RANGE_JPEG : AVCOL_RANGE_MPEG;
+    frame->color_range = nvmpi_fd_color_range(fdf.flags, 1);
     avctx->color_range = frame->color_range;
 
     *got_frame = 1;

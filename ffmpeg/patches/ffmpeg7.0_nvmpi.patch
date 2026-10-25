@@ -1473,10 +1473,10 @@ index 0000000..736de70
 +#endif /* NVMPI_DEC_DRAIN_H */
 diff --git a/libavcodec/nvmpi_dec_drm.h b/libavcodec/nvmpi_dec_drm.h
 new file mode 100644
-index 0000000..44bc06b
+index 0000000..730e203
 --- /dev/null
 +++ b/libavcodec/nvmpi_dec_drm.h
-@@ -0,0 +1,238 @@
+@@ -0,0 +1,255 @@
 +/*
 + * nvmpi_dec_drm.h -- DRM_PRIME frame wrapping shared by the nvmpi decoders
 + * (nvmpi_dec.c: V4L2 video decoders, nvmpi_dec_mjpeg.c: NvJPEG decoder).
@@ -1547,7 +1547,23 @@ index 0000000..44bc06b
 +    size_t size;                  /* total bytes behind fd */
 +    int width, height;
 +    int64_t pts;
++    enum AVColorRange color_range; /* copied to frame->color_range */
 +} NvmpiDRMFrameInfo;
++
++/* Map nvmpi_fd_frame.flags to an AVColorRange. NVMPI_FD_FRAME_FULL_RANGE is
++ * the only range information libnvmpi gives: a set bit always means full
++ * range. A clear bit means limited only when the producer is known to set the
++ * bit for every stream (JPEG decoder; libnvmpi >= 4.10.1 video decoder). The
++ * video decoder of older libraries never set it and libnvmpi exposes no
++ * capability bit for it, so there a clear bit stays UNSPECIFIED instead of
++ * claiming limited range for a full-range stream. */
++static inline enum AVColorRange nvmpi_fd_color_range(uint32_t flags,
++                                                     int limited_known)
++{
++    if (flags & NVMPI_FD_FRAME_FULL_RANGE)
++        return AVCOL_RANGE_JPEG;
++    return limited_known ? AVCOL_RANGE_MPEG : AVCOL_RANGE_UNSPECIFIED;
++}
 +
 +/* AVBufferRef free callback for DRM_PRIME frames. Runs when FFmpeg drops
 + * the last reference to frame->buf[0]. The ORDER is part of the contract
@@ -1646,6 +1662,7 @@ index 0000000..44bc06b
 +    frame->height  = in->height;
 +    frame->pts     = in->pts;
 +    frame->pkt_dts = AV_NOPTS_VALUE;
++    frame->color_range = in->color_range;
 +
 +    if (hw_frames_ctx) {
 +        frame->hw_frames_ctx = av_buffer_ref(hw_frames_ctx);
@@ -1717,10 +1734,10 @@ index 0000000..44bc06b
 +#endif /* NVMPI_DEC_DRM_H */
 diff --git a/libavcodec/nvmpi_dec_fd2.h b/libavcodec/nvmpi_dec_fd2.h
 new file mode 100644
-index 0000000..501b2ca
+index 0000000..b90684a
 --- /dev/null
 +++ b/libavcodec/nvmpi_dec_fd2.h
-@@ -0,0 +1,218 @@
+@@ -0,0 +1,223 @@
 +/*
 + * nvmpi_dec_fd2.h -- DRM_PRIME frame description for the V4L2 video decoders
 + * (h264/hevc/vp8/vp9/mpeg2/mpeg4/av1_nvmpi).
@@ -1864,6 +1881,11 @@ index 0000000..501b2ca
 +        info->width        = (int)fdf.width;
 +        info->height       = (int)fdf.height;
 +        info->pts          = fdf.timestamp;
++        /* flags is inside the V1 layout, so it is filled whenever fd2 exists.
++         * Limited range is not asserted: see nvmpi_fd_color_range(). The
++         * stream's colorspace is not exposed by libnvmpi, so it is left
++         * unspecified. */
++        info->color_range  = nvmpi_fd_color_range(fdf.flags, 0);
 +        return 0;
 +    } else {
 +        /* Legacy path (libnvmpi < 4.3.0): one pitch only, so the chroma
@@ -2310,10 +2332,10 @@ index 0000000..fc85ae8
 +};
 diff --git a/libavcodec/nvmpi_dec_mjpeg_fd.h b/libavcodec/nvmpi_dec_mjpeg_fd.h
 new file mode 100644
-index 0000000..814da97
+index 0000000..62505ec
 --- /dev/null
 +++ b/libavcodec/nvmpi_dec_mjpeg_fd.h
-@@ -0,0 +1,201 @@
+@@ -0,0 +1,200 @@
 +/*
 + * nvmpi_dec_mjpeg_fd.h -- DRM_PRIME (zero-copy) output of the mjpeg_nvmpi
 + * decoder, using libnvmpi 4.1.0's nvmpi_jpeg_decoder_get_frame_fd.
@@ -2506,8 +2528,7 @@ index 0000000..814da97
 +
 +    /* Range from the library flag (bit0 = full); applied per frame and to
 +     * avctx (init already defaulted avctx to JPEG/full). */
-+    frame->color_range = (fdf.flags & NVMPI_FD_FRAME_FULL_RANGE)
-+                         ? AVCOL_RANGE_JPEG : AVCOL_RANGE_MPEG;
++    frame->color_range = nvmpi_fd_color_range(fdf.flags, 1);
 +    avctx->color_range = frame->color_range;
 +
 +    *got_frame = 1;
