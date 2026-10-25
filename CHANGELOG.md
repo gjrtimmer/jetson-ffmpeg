@@ -1,5 +1,36 @@
 # Changelog
 
+## 4.0.5 - 2026-10-25
+DRM_PRIME decoder frames now carry the stream colour range: full-range streams are
+marked `pc` when libnvmpi flags them (jetson-nvmpi 4.10.1+); new hw-decoder-colorrange
+suite (#152). Bundles jetson-nvmpi 4.10.4.
+
+### Build
+
+
+**ci**
+
+
+- Bump NVMPI_VERSION to 4.10.4
+
+
+### Features
+
+
+**ffmpeg**
+
+
+- Propagate the stream colour range on DRM_PRIME frames
+
+
+### Testing
+
+
+**decoder**
+
+
+- Check the stream colour range on DRM_PRIME frames
+
 ## 4.0.4 - 2026-10-25
 Bundles jetson-nvmpi 4.10.3: decoder flush no longer deadlocks after the first
 resolution event, decoder output keeps the stream colorimetry and is bit-exact with a
