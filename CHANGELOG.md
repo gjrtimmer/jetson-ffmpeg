@@ -1,5 +1,55 @@
 # Changelog
 
+## 4.0.3 - 2026-10-25
+Decoders no longer drop the last frames at end of stream: with jetson-nvmpi 4.7.0
+(bundled) the FFmpeg layer sends EOS and drains the reorder tail, so `*_nvmpi`
+frame counts match software decode (#149; new hw-decoder-eos-count suite). The tag
+pipeline now also creates the GitHub release with the per-version archives (#150).
+
+### Bug Fixes
+
+
+**ffmpeg**
+
+
+- Send EOS to libnvmpi and drain the decoder tail
+
+
+**test**
+
+
+- Run suites tty-free and stop cleanly on Ctrl-C
+- Close terminal-run harness hang
+- Make tty harness pty helper work on Python 3.8
+
+
+### Build
+
+
+**ci**
+
+
+- Bump NVMPI_VERSION to 4.7.0
+
+
+### Performance
+
+
+**test**
+
+
+- Cache hw test samples across jobs
+- Run mock suites in parallel
+
+
+### Testing
+
+
+**decoder**
+
+
+- Assert nvmpi frame count equals software at EOS
+
 ## 4.0.2 - 2026-10-22
 
 Fixes encoding at odd frame sizes: plane payload sizes now round the chroma
