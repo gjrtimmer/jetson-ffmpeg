@@ -12,11 +12,7 @@
             "compilerPath": "/usr/bin/g++",
             "cStandard": "c11",
             "cppStandard": "c++11",
-            "intelliSenseMode": "linux-gcc-arm64",
-            "excludePath": [
-                "${workspaceFolder}/ffmpeg/dev",
-                "${workspaceFolder}/ffmpeg/patches"
-            ]
+            "intelliSenseMode": "linux-gcc-arm64"
         }
     ],
     "version": 4
